@@ -135,7 +135,7 @@ function treeAfterDevinPaneWithWorkspaceTitle(title: string): string {
 
 const treeAfterClaudePane = treeAfterClaudePaneWithWorkspaceTitle("old");
 const treeAfterDevinPane = treeAfterDevinPaneWithWorkspaceTitle("old");
-const treeAfterWorkspaceRename = treeAfterDevinPaneWithWorkspaceTitle("project-x");
+const treeAfterWorkspaceRename = treeAfterDevinPaneWithWorkspaceTitle("Project-X");
 
 describe("shellQuote", () => {
   test("quotes single quotes safely for zsh -lc commands", () => {
@@ -146,14 +146,27 @@ describe("shellQuote", () => {
 describe("prepareConductor", () => {
   test("outside cMUX does one workspace handoff and exits", async () => {
     const { runner, calls } = runnerFor({
-      "cmux new-workspace --name project-x --cwd /work/project-x --focus true --command aicc": { stdout: "workspace:9\n" },
+      "cmux new-workspace --name Project-X --cwd /work/project-x --focus true --command aicc": { stdout: "workspace:9\n" },
     });
 
     const result = await prepareConductor({ cwd: "/work/project-x", env: {}, runner });
 
     expect(result.mode).toBe("handoff");
     expect(calls).toEqual([
-      ["cmux", "new-workspace", "--name", "project-x", "--cwd", "/work/project-x", "--focus", "true", "--command", "aicc"],
+      ["cmux", "new-workspace", "--name", "Project-X", "--cwd", "/work/project-x", "--focus", "true", "--command", "aicc"],
+    ]);
+  });
+
+  test("outside cMUX capitalizes workspace name words from the directory basename", async () => {
+    const { runner, calls } = runnerFor({
+      "cmux new-workspace --name Wb-Gitlore --cwd /work/wb-gitlore --focus true --command aicc": { stdout: "workspace:9\n" },
+    });
+
+    const result = await prepareConductor({ cwd: "/work/wb-gitlore", env: {}, runner });
+
+    expect(result.mode).toBe("handoff");
+    expect(calls).toEqual([
+      ["cmux", "new-workspace", "--name", "Wb-Gitlore", "--cwd", "/work/wb-gitlore", "--focus", "true", "--command", "aicc"],
     ]);
   });
 
@@ -191,7 +204,7 @@ describe("prepareConductor", () => {
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
-      "cmux rename-workspace --workspace workspace-uuid --window window-uuid project-x": { stdout: "" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
 
     const result = await prepareConductor({
@@ -222,7 +235,7 @@ describe("prepareConductor", () => {
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "Devin"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "project-x"],
+      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
     ]);
   });
@@ -249,8 +262,8 @@ describe("prepareConductor", () => {
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
-      "cmux rename-workspace --workspace workspace-uuid --window window-uuid project-x": { stdout: "OK workspace:1\n" },
-      "cmux workspace-action --action rename --workspace workspace-uuid --window window-uuid --title project-x": { stdout: "OK action=rename workspace=workspace:1 window=window:1\n" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "OK workspace:1\n" },
+      "cmux workspace-action --action rename --workspace workspace-uuid --window window-uuid --title Project-X": { stdout: "OK action=rename workspace=workspace:1 window=window:1\n" },
     });
 
     const result = await prepareConductor({
@@ -262,9 +275,9 @@ describe("prepareConductor", () => {
     expect(result.mode).toBe("ready");
     expect(calls.slice(-5)).toEqual([
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "project-x"],
+      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "workspace-action", "--action", "rename", "--workspace", "workspace-uuid", "--window", "window-uuid", "--title", "project-x"],
+      ["cmux", "workspace-action", "--action", "rename", "--workspace", "workspace-uuid", "--window", "window-uuid", "--title", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
     ]);
   });

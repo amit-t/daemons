@@ -62,7 +62,11 @@ export function shellQuote(value: string): string {
 }
 
 function workspaceName(cwd: string): string {
-  return basename(cwd.replace(/\/+$/, "")) || "workspace";
+  const name = basename(cwd.replace(/\/+$/, "")) || "workspace";
+  return name.replace(/[\p{L}\p{N}]+/gu, (word) => {
+    const [first = "", ...rest] = Array.from(word);
+    return `${first.toLocaleUpperCase()}${rest.join("").toLocaleLowerCase()}`;
+  });
 }
 
 function displayArg(arg: string): string {
@@ -387,7 +391,7 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, verifies the workspace is named after the current directory, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, verifies the workspace is named after the title-cased current directory, then opens Codex as the base orchestrator.
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command: zsh -lc 'cd <cwd> && dey'
