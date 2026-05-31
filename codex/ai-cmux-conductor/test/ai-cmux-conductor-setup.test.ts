@@ -6,7 +6,9 @@ import {
   type CommandRunner,
 } from "../src/ai-cmux-conductor/conductor.ts";
 
-function runnerFor(responses: Record<string, { code?: number; stdout?: string; stderr?: string }>): { runner: CommandRunner; calls: string[][] } {
+type RunnerResponse = { code?: number; stdout?: string; stderr?: string };
+
+function runnerFor(responses: Record<string, RunnerResponse>): { runner: CommandRunner; calls: string[][] } {
   const calls: string[][] = [];
   return {
     calls,
@@ -20,20 +22,49 @@ function runnerFor(responses: Record<string, { code?: number; stdout?: string; s
   };
 }
 
-const treeWithClaudeOnly = JSON.stringify({
+function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerResponse[]>): { runner: CommandRunner; calls: string[][] } {
+  const calls: string[][] = [];
+  const queues = new Map(
+    Object.entries(responses).map(([key, value]) => [key, Array.isArray(value) ? value.slice() : [value]]),
+  );
+  return {
+    calls,
+    runner: async (cmd, args) => {
+      const call = [cmd, ...args];
+      calls.push(call);
+      const key = call.join(" ");
+      const queue = queues.get(key);
+      if (!queue?.length) {
+        return { code: 99, stdout: "", stderr: `unexpected call: ${key}` };
+      }
+      const response = queue.shift()!;
+      return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
+    },
+  };
+}
+
+const treeWithStaleAgentsAndUuidBase = JSON.stringify({
   windows: [
     {
+      ref: "window:1",
+      id: "window-uuid",
       workspaces: [
         {
           ref: "workspace:1",
+          id: "workspace-uuid",
           title: "old",
           panes: [
             {
-              ref: "pane:1",
-              surfaces: [
-                { ref: "surface:1", title: "Base", type: "terminal", pane_ref: "pane:1" },
-                { ref: "surface:2", title: "Claude", type: "terminal", pane_ref: "pane:1" },
-              ],
+              ref: "pane:base",
+              surfaces: [{ id: "base-surface-uuid", ref: "surface:base", title: "Base", type: "terminal", pane_ref: "pane:base" }],
+            },
+            {
+              ref: "pane:stale-claude",
+              surfaces: [{ id: "stale-claude-uuid", ref: "surface:old-claude", title: "Claude", type: "terminal", pane_ref: "pane:stale-claude" }],
+            },
+            {
+              ref: "pane:stale-devin",
+              surfaces: [{ id: "stale-devin-uuid", ref: "surface:old-devin", title: "Devin", type: "terminal", pane_ref: "pane:stale-devin" }],
             },
           ],
         },
@@ -42,20 +73,54 @@ const treeWithClaudeOnly = JSON.stringify({
   ],
 });
 
-const treeWithBoth = JSON.stringify({
+const treeAfterClaudePane = JSON.stringify({
   windows: [
     {
+      ref: "window:1",
+      id: "window-uuid",
       workspaces: [
         {
           ref: "workspace:1",
+          id: "workspace-uuid",
           title: "project-x",
           panes: [
             {
-              ref: "pane:1",
-              surfaces: [
-                { ref: "surface:2", title: "Claude", type: "terminal", pane_ref: "pane:1" },
-                { ref: "surface:4", title: "Devin", type: "terminal", pane_ref: "pane:3" },
-              ],
+              ref: "pane:base",
+              surfaces: [{ id: "base-surface-uuid", ref: "surface:base", title: "codex", type: "terminal", pane_ref: "pane:base" }],
+            },
+            {
+              ref: "pane:claude",
+              surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "~/project-x", type: "terminal", pane_ref: "pane:claude" }],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
+
+const treeAfterDevinPane = JSON.stringify({
+  windows: [
+    {
+      ref: "window:1",
+      id: "window-uuid",
+      workspaces: [
+        {
+          ref: "workspace:1",
+          id: "workspace-uuid",
+          title: "project-x",
+          panes: [
+            {
+              ref: "pane:base",
+              surfaces: [{ id: "base-surface-uuid", ref: "surface:base", title: "codex", type: "terminal", pane_ref: "pane:base" }],
+            },
+            {
+              ref: "pane:claude",
+              surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "Claude", type: "terminal", pane_ref: "pane:claude" }],
+            },
+            {
+              ref: "pane:devin",
+              surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "~/project-x", type: "terminal", pane_ref: "pane:devin" }],
             },
           ],
         },
@@ -97,30 +162,59 @@ describe("prepareConductor", () => {
     expect(result.stderr).toBe("no cmux");
   });
 
-  test("inside cMUX reuses Claude and creates missing Devin", async () => {
-    const { runner, calls } = runnerFor({
-      "cmux rename-workspace --workspace workspace:1 project-x": { stdout: "" },
-      "cmux --json tree --workspace workspace:1": { stdout: treeWithClaudeOnly },
-      "cmux new-pane --direction right --workspace workspace:1 --focus false": { stdout: "pane:3\n" },
-      "cmux --json tree --workspace workspace:1 --window window:1": { stdout: treeWithBoth },
-      "cmux rename-tab --workspace workspace:1 --surface surface:4 Devin": { stdout: "" },
-      "cmux send --workspace workspace:1 --surface surface:4 zsh -lc 'cd '\''/work/project-x'\'' && dey'\n": { stdout: "" },
+  test("inside cMUX recreates Claude right of Codex and Devin below Claude using UUID env IDs", async () => {
+    const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
+    const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey'\n";
+    const { runner, calls } = strictRunnerFor({
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface base-surface-uuid codex": { stdout: "" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid project-x": { stdout: "" },
+      "cmux --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithStaleAgentsAndUuidBase },
+        { stdout: treeAfterClaudePane },
+        { stdout: treeAfterDevinPane },
+      ],
+      "cmux close-surface --workspace workspace-uuid --window window-uuid --surface surface:old-claude": { stdout: "" },
+      "cmux close-surface --workspace workspace-uuid --window window-uuid --surface surface:old-devin": { stdout: "" },
+      "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
+      "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
+      "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
+      [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
     });
 
     const result = await prepareConductor({
       cwd: "/work/project-x",
-      env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_SURFACE_ID: "surface:1", CMUX_WINDOW_ID: "window:1" },
+      env: { CMUX_WORKSPACE_ID: "workspace-uuid", CMUX_SURFACE_ID: "base-surface-uuid", CMUX_WINDOW_ID: "window-uuid" },
       runner,
     });
 
     expect(result.mode).toBe("ready");
     if (result.mode !== "ready") throw new Error("expected ready");
-    expect(result.context.workspaceId).toBe("workspace:1");
-    expect(result.context.orchestratorSurfaceId).toBe("surface:1");
-    expect(result.context.claudeSurfaceId).toBe("surface:2");
-    expect(result.context.devinSurfaceId).toBe("surface:4");
-    expect(calls.some((call) => call.join(" ") === "cmux new-pane --direction right --workspace workspace:1 --focus false")).toBe(true);
+    expect(result.context.orchestratorSurfaceId).toBe("base-surface-uuid");
+    expect(result.context.claudeSurfaceId).toBe("surface:claude");
+    expect(result.context.devinSurfaceId).toBe("surface:devin");
+    expect(result.context.reusedClaude).toBe(false);
+    expect(result.context.reusedDevin).toBe(false);
+    expect(calls).toEqual([
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "base-surface-uuid", "codex"],
+      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "project-x"],
+      ["cmux", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:old-claude"],
+      ["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:old-devin"],
+      ["cmux", "focus-pane", "--pane", "pane:base", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "new-pane", "--direction", "right", "--workspace", "workspace-uuid", "--focus", "false", "--window", "window-uuid"],
+      ["cmux", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Claude"],
+      ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
+      ["cmux", "new-split", "down", "--workspace", "workspace-uuid", "--surface", "surface:claude", "--focus", "false", "--window", "window-uuid"],
+      ["cmux", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "Devin"],
+      ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch],
+    ]);
   });
+
 });
 
 describe("buildOrchestratorPrompt", () => {

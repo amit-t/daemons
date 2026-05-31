@@ -1,33 +1,7 @@
 #!/usr/bin/env bun
 import { parseAiCmuxConductorArgs } from "./src/ai-cmux-conductor/args.ts";
+import { runCodexLauncher } from "./src/ai-cmux-conductor/codex-launch.ts";
 import { buildOrchestratorPrompt, conductorHelpText, prepareConductor } from "./src/ai-cmux-conductor/conductor.ts";
-import { runInteractive, type ProfileConfig } from "./src/ai-cmux-conductor/runtime.ts";
-
-const config: ProfileConfig = {
-  name: "ai-cmux-conductor",
-  reasoningEffort: "low",
-  sandboxMode: "danger-full-access",
-  baseInstructions:
-    "You are ai-cmux-conductor, a Codex orchestrator for cMUX workspaces. You coordinate Claude and Devin panes using the cMUX CLI while staying in the base Codex tab.",
-  developerInstructions: `You are ai-cmux-conductor, the base Codex orchestrator in a cMUX workspace.
-
-## Operating rule
-Use cmux CLI state, not memory, before reporting side-pane status. Keep all cmux commands scoped to the workspace and surface IDs provided in the initial prompt.
-
-## Side agents
-- Claude means the cMUX surface titled Claude, launched with clscb.
-- Devin means the cMUX surface titled Devin, launched with dey.
-- When the user asks you to send work to Claude or Devin, use cmux send against the corresponding stable surface ID.
-- When checking progress, use cmux read-screen with --scrollback --lines 160.
-
-## Safety
-- Do not close, kill, respawn, or replace Claude/Devin panes unless the user explicitly approves.
-- If a side pane looks dead, wrong, or unrelated, report the concern and ask before replacing it.
-- Preserve the user's current workspace and unrelated files.
-
-## Output
-Be concise. Summarize Claude, Devin, blockers, and the next recommended action.`,
-};
 
 const args = parseAiCmuxConductorArgs(process.argv);
 
@@ -50,4 +24,4 @@ if (prepared.mode === "error") {
 }
 
 const prompt = `${buildOrchestratorPrompt(prepared.context)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;
-await runInteractive(config, prompt, args.effort);
+await runCodexLauncher(prompt, process.cwd());

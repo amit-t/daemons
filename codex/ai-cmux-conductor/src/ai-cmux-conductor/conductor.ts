@@ -32,9 +32,11 @@ export interface PrepareConductorOptions {
 }
 
 interface CmuxSurface {
+  id?: string;
   ref?: string;
   title?: string;
   type?: string;
+  pane_id?: string;
   pane_ref?: string;
 }
 
@@ -85,7 +87,11 @@ function surfaceByTitle(surfaces: CmuxSurface[], title: string): CmuxSurface | u
 }
 
 function surfaceForPane(surfaces: CmuxSurface[], paneRef: string): CmuxSurface | undefined {
-  return surfaces.find((surface) => surface.pane_ref === paneRef && surface.ref && surface.type !== "browser");
+  return surfaces.find((surface) => (surface.pane_ref === paneRef || surface.pane_id === paneRef) && (surface.ref || surface.id) && surface.type !== "browser");
+}
+
+function surfaceByIdOrRef(surfaces: CmuxSurface[], idOrRef?: string): CmuxSurface | undefined {
+  return surfaces.find((surface) => surface.ref === idOrRef || surface.id === idOrRef);
 }
 
 function firstRef(stdout: string, prefix: string): string | undefined {
@@ -107,38 +113,111 @@ async function readTree(runner: CommandRunner, workspaceId: string, windowId?: s
   return parseTreeSurfaces(tree.stdout);
 }
 
-async function ensureAgentSurface(options: {
+function windowArgs(windowId?: string): string[] {
+  return windowId ? ["--window", windowId] : [];
+}
+
+function surfaceId(surface: CmuxSurface): string | undefined {
+  return surface.ref || surface.id;
+}
+
+async function closeManagedAgentSurfaces(options: {
+  runner: CommandRunner;
+  workspaceId: string;
+  windowId?: string;
+  surfaces: CmuxSurface[];
+}): Promise<CmuxSurface[]> {
+  const managedTitles = new Set(["Claude", "Devin"]);
+  const managed = options.surfaces.filter((surface) => surface.title && managedTitles.has(surface.title) && surfaceId(surface));
+  for (const surface of managed) {
+    await runOrThrow(options.runner, "cmux", [
+      "close-surface",
+      "--workspace",
+      options.workspaceId,
+      ...windowArgs(options.windowId),
+      "--surface",
+      surfaceId(surface)!,
+    ]);
+  }
+  return options.surfaces.filter((surface) => !managed.includes(surface));
+}
+
+async function createAgentSurface(options: {
   runner: CommandRunner;
   workspaceId: string;
   windowId?: string;
   cwd: string;
   title: "Claude" | "Devin";
   command: "clscb" | "dey";
-  surfaces: CmuxSurface[];
+  direction: "right" | "down";
+  splitFromSurfaceRef?: string;
+  focusPaneRef?: string;
 }): Promise<{ surfaceId: string; reused: boolean; surfaces: CmuxSurface[] }> {
-  const existing = surfaceByTitle(options.surfaces, options.title);
-  if (existing?.ref) return { surfaceId: existing.ref, reused: true, surfaces: options.surfaces };
+  if (options.splitFromSurfaceRef) {
+    const split = await runOrThrow(options.runner, "cmux", [
+      "new-split",
+      options.direction,
+      "--workspace",
+      options.workspaceId,
+      "--surface",
+      options.splitFromSurfaceRef,
+      "--focus",
+      "false",
+      ...windowArgs(options.windowId),
+    ]);
+    const paneRef = firstRef(split.stdout, "pane");
+    const newSurfaceRef = firstRef(split.stdout, "surface");
+    const refreshed = await readTree(options.runner, options.workspaceId, options.windowId);
+    const created =
+      (newSurfaceRef && surfaceByIdOrRef(refreshed, newSurfaceRef)) ||
+      (paneRef && surfaceForPane(refreshed, paneRef)) ||
+      surfaceByTitle(refreshed, options.title);
+    const createdId = created && surfaceId(created);
+    if (!createdId) {
+      throw new Error(`Unable to find cMUX surface for ${options.title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
+    }
+    await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, options.title]);
+    const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
+    await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
+    return { surfaceId: createdId, reused: false, surfaces: refreshed };
+  }
+
+  if (options.focusPaneRef) {
+    await runOrThrow(options.runner, "cmux", [
+      "focus-pane",
+      "--pane",
+      options.focusPaneRef,
+      "--workspace",
+      options.workspaceId,
+      ...windowArgs(options.windowId),
+    ]);
+  }
 
   const newPane = await runOrThrow(options.runner, "cmux", [
     "new-pane",
     "--direction",
-    "right",
+    options.direction,
     "--workspace",
     options.workspaceId,
     "--focus",
     "false",
+    ...windowArgs(options.windowId),
   ]);
   const paneRef = firstRef(newPane.stdout, "pane");
+  const newSurfaceRef = firstRef(newPane.stdout, "surface");
   const refreshed = await readTree(options.runner, options.workspaceId, options.windowId);
-  const created = (paneRef && surfaceForPane(refreshed, paneRef)) || surfaceByTitle(refreshed, options.title);
-  if (!created?.ref) {
-    throw new Error(`Unable to find cMUX surface for ${options.title} after creating ${paneRef || "a pane"}`);
+  const created =
+    (newSurfaceRef && surfaceByIdOrRef(refreshed, newSurfaceRef)) ||
+    (paneRef && surfaceForPane(refreshed, paneRef)) ||
+    surfaceByTitle(refreshed, options.title);
+  const createdId = created && surfaceId(created);
+  if (!createdId) {
+    throw new Error(`Unable to find cMUX surface for ${options.title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
   }
-
-  await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, "--surface", created.ref, options.title]);
+  await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, options.title]);
   const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
-  await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, "--surface", created.ref, launch]);
-  return { surfaceId: created.ref, reused: false, surfaces: refreshed };
+  await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
+  return { surfaceId: createdId, reused: false, surfaces: refreshed };
 }
 
 export async function prepareConductor(options: PrepareConductorOptions): Promise<PrepareConductorResult> {
@@ -163,11 +242,37 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
 
   const windowId = options.env.CMUX_WINDOW_ID;
   const orchestratorSurfaceId = options.env.CMUX_SURFACE_ID || "current";
-  await runOrThrow(runner, "cmux", ["rename-workspace", "--workspace", workspaceId, name]);
-  let surfaces = await readTree(runner, workspaceId);
-  const claude = await ensureAgentSurface({ runner, workspaceId, windowId, cwd, title: "Claude", command: "clscb", surfaces });
+  await runOrThrow(runner, "cmux", ["rename-tab", "--workspace", workspaceId, ...windowArgs(windowId), "--surface", orchestratorSurfaceId, "codex"]);
+  await runOrThrow(runner, "cmux", ["rename-workspace", "--workspace", workspaceId, ...windowArgs(windowId), name]);
+  let surfaces = await readTree(runner, workspaceId, windowId);
+  const orchestratorSurface = surfaceByIdOrRef(surfaces, orchestratorSurfaceId);
+  surfaces = await closeManagedAgentSurfaces({ runner, workspaceId, windowId, surfaces });
+  const claude = await createAgentSurface({
+    runner,
+    workspaceId,
+    windowId,
+    cwd,
+    title: "Claude",
+    command: "clscb",
+    direction: "right",
+    focusPaneRef: orchestratorSurface?.pane_ref || orchestratorSurface?.pane_id,
+  });
   surfaces = claude.surfaces;
-  const devin = await ensureAgentSurface({ runner, workspaceId, windowId, cwd, title: "Devin", command: "dey", surfaces });
+  const claudeSurface = surfaceByIdOrRef(surfaces, claude.surfaceId);
+  const claudeSurfaceRef = claudeSurface && surfaceId(claudeSurface);
+  if (!claudeSurfaceRef) {
+    throw new Error(`Unable to find cMUX surface for Claude after creating ${claude.surfaceId}`);
+  }
+  const devin = await createAgentSurface({
+    runner,
+    workspaceId,
+    windowId,
+    cwd,
+    title: "Devin",
+    command: "dey",
+    direction: "down",
+    splitFromSurfaceRef: claudeSurfaceRef,
+  });
 
   return {
     mode: "ready",
@@ -222,7 +327,8 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames workspace to the current directory, reuses/creates Claude and Devin panes, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, then opens Codex as the base orchestrator.
+  - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command: zsh -lc 'cd <cwd> && dey'
 

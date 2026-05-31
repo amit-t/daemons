@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Run from any project directory, `aicc` makes Codex the base orchestrator tab and coordinates Claude and Devin side panes in the same cMUX workspace.
+Run from any project directory, `aicc` makes Codex the base orchestrator tab with Amit's `cxscb` launcher and coordinates Claude and Devin side panes in the same cMUX workspace.
 
 ## Behavior
 
@@ -14,13 +14,17 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab and
    cmux new-workspace --name "${PWD:t}" --cwd "$PWD" --focus true --command aicc
    ```
 
-2. Inside cMUX, rename the current workspace to the current directory basename.
-3. Reuse exact-title `Claude` and `Devin` surfaces when present.
-4. Create only missing panes.
-5. Launch missing panes with:
+2. Inside cMUX, rename the current tab to `codex` and the current workspace to the current directory basename.
+3. Close exact-title managed side-agent surfaces (`Claude`, `Devin`) so stale layouts do not survive.
+4. Recreate a deterministic layout:
+   - Codex/current pane stays on the left.
+   - Claude is created to the right of Codex.
+   - Devin is split below Claude.
+5. Launch panes with:
+   - Codex: `cxscb <orchestrator prompt>`
    - Claude: `zsh -lc 'cd <cwd> && clscb'`
    - Devin: `zsh -lc 'cd <cwd> && dey'`
-6. Open Codex as the base orchestrator with stable cMUX workspace/surface IDs.
+6. Pass stable cMUX workspace/surface IDs into the Codex orchestrator prompt.
 
 ## Files
 

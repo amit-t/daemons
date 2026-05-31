@@ -21,4 +21,4 @@ That keeps global commands available while this repository remains the source of
 
 ## Current daemons
 
-- [`codex/ai-cmux-conductor`](./codex/ai-cmux-conductor) — `aicc`, a cMUX AI workspace conductor that opens Codex as the base orchestrator and Claude/Devin side panes.
+- [`codex/ai-cmux-conductor`](./codex/ai-cmux-conductor) — `aicc`, a cMUX AI workspace conductor that opens Codex with `cxscb`, places Claude to the right, and places Devin below Claude.

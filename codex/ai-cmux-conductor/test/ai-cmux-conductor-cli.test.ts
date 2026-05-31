@@ -34,6 +34,7 @@ describe("ai-cmux-conductor CLI", () => {
     expect(code).toBe(0);
     expect(output).toContain("ai-cmux-conductor");
     expect(output).toContain("aicc");
+    expect(output).toContain("cxscb");
     expect(output).toContain("Claude");
     expect(output).toContain("Devin");
     expect(output).not.toContain(GENERIC_NAME);
