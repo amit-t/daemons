@@ -1,0 +1,23 @@
+{
+  "name": "ai-cmux-conductor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "cMUX AI conductor that launches Codex orchestration with Claude and Devin side panes",
+  "type": "module",
+  "bin": {
+    "ai-cmux-conductor": "./ai-cmux-conductor",
+    "aicc": "./ai-cmux-conductor"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.134.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5",
+    "@modelcontextprotocol/sdk": "^1.24.0"
+  }
+}

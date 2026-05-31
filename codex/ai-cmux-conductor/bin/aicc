@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+exec bun "${daemon_dir}/ai-cmux-conductor" "$@"
