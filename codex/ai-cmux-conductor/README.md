@@ -24,7 +24,7 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
    - Codex: `cxscb <orchestrator prompt>`
    - Claude: `zsh -lc 'cd <cwd> && clscb'`
    - Devin: `zsh -lc 'cd <cwd> && dey'`
-6. Rename the current workspace to the current directory basename with cMUX's native workspace action.
+6. Rename the current workspace to the current directory basename and verify cMUX reports the new title. If the direct rename command does not stick, fall back to cMUX's workspace action and verify again.
 7. Pass stable cMUX workspace/surface IDs into the Codex orchestrator prompt.
 
 ## Files

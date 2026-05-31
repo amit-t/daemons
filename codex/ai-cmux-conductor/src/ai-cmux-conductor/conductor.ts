@@ -40,6 +40,12 @@ interface CmuxSurface {
   pane_ref?: string;
 }
 
+interface CmuxWorkspace {
+  id?: string;
+  ref?: string;
+  title?: string;
+}
+
 export const defaultRunner: CommandRunner = (command, args) =>
   new Promise((resolve) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -82,6 +88,17 @@ function parseTreeSurfaces(stdout: string): CmuxSurface[] {
   return surfaces;
 }
 
+function parseTreeWorkspaces(stdout: string): CmuxWorkspace[] {
+  const parsed = JSON.parse(stdout || "{}");
+  const workspaces: CmuxWorkspace[] = [];
+  for (const window of parsed.windows || []) {
+    for (const workspace of window.workspaces || []) {
+      workspaces.push(workspace);
+    }
+  }
+  return workspaces;
+}
+
 function surfaceByTitle(surfaces: CmuxSurface[], title: string): CmuxSurface | undefined {
   return surfaces.find((surface) => surface.title === title && surface.ref);
 }
@@ -107,18 +124,57 @@ async function runOrThrow(runner: CommandRunner, command: string, args: string[]
 }
 
 async function readTree(runner: CommandRunner, workspaceId: string, windowId?: string): Promise<CmuxSurface[]> {
-  const args = ["--json", "tree", "--workspace", workspaceId];
+  const args = ["--id-format", "both", "--json", "tree", "--workspace", workspaceId];
   if (windowId) args.push("--window", windowId);
   const tree = await runOrThrow(runner, "cmux", args);
   return parseTreeSurfaces(tree.stdout);
+}
+
+async function readWorkspaces(runner: CommandRunner, workspaceId: string, windowId?: string): Promise<CmuxWorkspace[]> {
+  const args = ["--id-format", "both", "--json", "tree", "--workspace", workspaceId];
+  if (windowId) args.push("--window", windowId);
+  const tree = await runOrThrow(runner, "cmux", args);
+  return parseTreeWorkspaces(tree.stdout);
 }
 
 function windowArgs(windowId?: string): string[] {
   return windowId ? ["--window", windowId] : [];
 }
 
+function workspaceByIdOrRef(workspaces: CmuxWorkspace[], idOrRef: string): CmuxWorkspace | undefined {
+  return workspaces.find((workspace) => workspace.id === idOrRef || workspace.ref === idOrRef) || (workspaces.length === 1 ? workspaces[0] : undefined);
+}
+
+async function workspaceHasTitle(runner: CommandRunner, workspaceId: string, windowId: string | undefined, title: string): Promise<boolean> {
+  const workspaces = await readWorkspaces(runner, workspaceId, windowId);
+  return workspaceByIdOrRef(workspaces, workspaceId)?.title === title;
+}
+
 async function renameWorkspace(runner: CommandRunner, workspaceId: string, windowId: string | undefined, title: string): Promise<void> {
-  await runOrThrow(runner, "cmux", ["workspace-action", "--action", "rename", "--workspace", workspaceId, ...windowArgs(windowId), "--title", title]);
+  const initialWorkspaces = await readWorkspaces(runner, workspaceId, windowId);
+  const initialWorkspace = workspaceByIdOrRef(initialWorkspaces, workspaceId);
+  const targets = Array.from(new Set([workspaceId, initialWorkspace?.ref, initialWorkspace?.id].filter((target): target is string => Boolean(target))));
+  const errors: string[] = [];
+
+  for (const target of targets) {
+    const attempts = [
+      ["rename-workspace", "--workspace", target, ...windowArgs(windowId), title],
+      ["workspace-action", "--action", "rename", "--workspace", target, ...windowArgs(windowId), "--title", title],
+    ];
+
+    for (const args of attempts) {
+      const result = await runner("cmux", args);
+      if (result.code !== 0) {
+        errors.push(`${cmuxCommandText(["cmux", ...args])}: ${result.stderr || result.stdout}`);
+        continue;
+      }
+      if (await workspaceHasTitle(runner, workspaceId, windowId, title)) return;
+      errors.push(`${cmuxCommandText(["cmux", ...args])}: title did not change`);
+    }
+  }
+
+  const observed = workspaceByIdOrRef(await readWorkspaces(runner, workspaceId, windowId), workspaceId)?.title || "unknown";
+  throw new Error(`Unable to rename cMUX workspace to ${shellQuote(title)}; observed title is ${shellQuote(observed)}. ${errors.join("; ")}`);
 }
 
 function surfaceId(surface: CmuxSurface): string | undefined {
@@ -331,7 +387,7 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, names the workspace after the current directory, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, verifies the workspace is named after the current directory, then opens Codex as the base orchestrator.
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command: zsh -lc 'cd <cwd> && dey'
