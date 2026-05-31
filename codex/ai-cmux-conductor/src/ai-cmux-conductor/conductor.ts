@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
+import { DEVIN_PANEL_FEATURE_FLAG, isDevinPanelEnabled } from "./config.ts";
 
 export interface CommandResult {
   code: number;
@@ -15,7 +16,8 @@ export interface ConductorContext {
   workspaceId: string;
   orchestratorSurfaceId: string;
   claudeSurfaceId: string;
-  devinSurfaceId: string;
+  devinPanelEnabled: boolean;
+  devinSurfaceId?: string;
   reusedClaude: boolean;
   reusedDevin: boolean;
 }
@@ -289,6 +291,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
   const cwd = options.cwd;
   const name = workspaceName(cwd);
   const workspaceId = options.env.CMUX_WORKSPACE_ID;
+  const devinPanelEnabled = isDevinPanelEnabled(options.env);
 
   if (!workspaceId) {
     const command = ["cmux", "new-workspace", "--name", name, "--cwd", cwd, "--focus", "true", "--command", "aicc"];
@@ -326,16 +329,19 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
   if (!claudeSurfaceRef) {
     throw new Error(`Unable to find cMUX surface for Claude after creating ${claude.surfaceId}`);
   }
-  const devin = await createAgentSurface({
-    runner,
-    workspaceId,
-    windowId,
-    cwd,
-    title: "Devin",
-    command: "dey",
-    direction: "down",
-    splitFromSurfaceRef: claudeSurfaceRef,
-  });
+  let devin: { surfaceId?: string; reused: boolean } = { reused: false };
+  if (devinPanelEnabled) {
+    devin = await createAgentSurface({
+      runner,
+      workspaceId,
+      windowId,
+      cwd,
+      title: "Devin",
+      command: "dey",
+      direction: "down",
+      splitFromSurfaceRef: claudeSurfaceRef,
+    });
+  }
   await renameWorkspace(runner, workspaceId, windowId, name);
 
   return {
@@ -346,6 +352,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
       workspaceId,
       orchestratorSurfaceId,
       claudeSurfaceId: claude.surfaceId,
+      devinPanelEnabled,
       devinSurfaceId: devin.surfaceId,
       reusedClaude: claude.reused,
       reusedDevin: devin.reused,
@@ -354,6 +361,21 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
 }
 
 export function buildOrchestratorPrompt(context: ConductorContext): string {
+  const devinEnabled = context.devinPanelEnabled && context.devinSurfaceId;
+  const devinContext = devinEnabled
+    ? `- Devin surface: ${context.devinSurfaceId} (${context.reusedDevin ? "reused existing pane" : "created new pane"})`
+    : `- Devin panel: disabled (${DEVIN_PANEL_FEATURE_FLAG}=false; set it to true in environment.env to create Devin below Claude)`;
+  const devinRole = devinEnabled
+    ? ` When the user says "ask Claude", "send to Claude", "ask Devin", or "send to Devin", route the instruction to the matching pane.`
+    : ` When the user says "ask Claude" or "send to Claude", route the instruction to Claude. Devin routing is disabled by ${DEVIN_PANEL_FEATURE_FLAG}.`;
+  const devinCommands = devinEnabled
+    ? `- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160
+- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"`
+    : "";
+  const agents = devinEnabled ? "Claude and Devin" : "Claude";
+  const agentPaneNoun = devinEnabled ? "panes" : "pane";
+  const managedAgent = devinEnabled ? "Claude or Devin" : "Claude";
+
   return `You are ai-cmux-conductor, the base Codex orchestrator for this cMUX workspace.
 
 ## Workspace context
@@ -362,23 +384,22 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
 - Working directory: ${context.cwd}
 - Orchestrator surface: ${context.orchestratorSurfaceId}
 - Claude surface: ${context.claudeSurfaceId} (${context.reusedClaude ? "reused existing pane" : "created new pane"})
-- Devin surface: ${context.devinSurfaceId} (${context.reusedDevin ? "reused existing pane" : "created new pane"})
+${devinContext}
 
 ## Role
-Stay in this base tab and coordinate the Claude and Devin panes in the same workspace. The user will mostly talk to you. When the user says "ask Claude", "send to Claude", "ask Devin", or "send to Devin", route the instruction to the matching pane.
+Stay in this base tab and coordinate the ${agents} ${agentPaneNoun} in the same workspace. The user will mostly talk to you.${devinRole}
 
 ## cMUX commands
 - Read Claude: cmux read-screen --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} --scrollback --lines 160
-- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160
 - Send Claude: cmux send --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} -- "PROMPT\\n"
-- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"
+${devinCommands}
 
 ## Operating rules
-1. Periodically inspect Claude and Devin with cmux read-screen and summarize meaningful changes to the user.
+1. Periodically inspect ${agents} with cmux read-screen and summarize meaningful changes to the user.
 2. Keep tool use scoped to this workspace ID and the stable surface IDs above.
-3. If an existing Claude or Devin pane looks dead, wrong, or unrelated, report that and ask before replacing it.
+3. If an existing ${managedAgent} pane looks dead, wrong, or unrelated, report that and ask before replacing it.
 4. Do not kill, close, or respawn agent panes without explicit user approval.
-5. Use concise status updates: Claude, Devin, blockers, and recommended next action.`;
+5. Use concise status updates: ${agents}, blockers, and recommended next action.`;
 }
 
 export function conductorHelpText(): string {
@@ -391,10 +412,11 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, verifies the workspace is named after the title-cased current directory, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, optionally recreates Devin below Claude, verifies the workspace is named after the title-cased current directory, then opens Codex as the base orchestrator.
+  - Devin panel feature flag: ${DEVIN_PANEL_FEATURE_FLAG}=false by default in environment.env. Set it to true to create Devin below Claude.
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
-  - Devin pane command: zsh -lc 'cd <cwd> && dey'
+  - Devin pane command when enabled: zsh -lc 'cd <cwd> && dey'
 
 No pro- prefix. The short global alias is aicc.`;
 }

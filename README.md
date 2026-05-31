@@ -21,4 +21,4 @@ That keeps global commands available while this repository remains the source of
 
 ## Current daemons
 
-- [`codex/ai-cmux-conductor`](./codex/ai-cmux-conductor) — `aicc`, a cMUX AI workspace conductor that opens Codex with `cxscb`, places Claude to the right, places Devin below Claude, and names the workspace after the current project.
+- [`codex/ai-cmux-conductor`](./codex/ai-cmux-conductor) — `aicc`, a cMUX AI workspace conductor that opens Codex with `cxscb`, places Claude to the right, can optionally place Devin below Claude via a feature flag, and names the workspace after the current project.

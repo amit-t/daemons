@@ -2,7 +2,7 @@
   "name": "ai-cmux-conductor",
   "version": "0.1.0",
   "private": true,
-  "description": "cMUX AI conductor that launches Codex orchestration with Claude and Devin side panes",
+  "description": "cMUX AI conductor that launches Codex orchestration with Claude and optional Devin side panes",
   "type": "module",
   "bin": {
     "ai-cmux-conductor": "./ai-cmux-conductor",

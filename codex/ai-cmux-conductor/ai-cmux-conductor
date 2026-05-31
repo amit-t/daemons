@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseAiCmuxConductorArgs } from "./src/ai-cmux-conductor/args.ts";
+import { loadAiCmuxConductorEnv } from "./src/ai-cmux-conductor/config.ts";
 import { runCodexLauncher } from "./src/ai-cmux-conductor/codex-launch.ts";
 import { buildOrchestratorPrompt, conductorHelpText, prepareConductor } from "./src/ai-cmux-conductor/conductor.ts";
 
@@ -10,7 +11,8 @@ if (args.help) {
   process.exit(0);
 }
 
-const prepared = await prepareConductor({ cwd: process.cwd(), env: process.env });
+const conductorEnv = loadAiCmuxConductorEnv(process.env);
+const prepared = await prepareConductor({ cwd: process.cwd(), env: conductorEnv });
 
 if (prepared.mode === "handoff") {
   console.log(prepared.message);
