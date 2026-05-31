@@ -117,6 +117,10 @@ function windowArgs(windowId?: string): string[] {
   return windowId ? ["--window", windowId] : [];
 }
 
+async function renameWorkspace(runner: CommandRunner, workspaceId: string, windowId: string | undefined, title: string): Promise<void> {
+  await runOrThrow(runner, "cmux", ["workspace-action", "--action", "rename", "--workspace", workspaceId, ...windowArgs(windowId), "--title", title]);
+}
+
 function surfaceId(surface: CmuxSurface): string | undefined {
   return surface.ref || surface.id;
 }
@@ -243,7 +247,6 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
   const windowId = options.env.CMUX_WINDOW_ID;
   const orchestratorSurfaceId = options.env.CMUX_SURFACE_ID || "current";
   await runOrThrow(runner, "cmux", ["rename-tab", "--workspace", workspaceId, ...windowArgs(windowId), "--surface", orchestratorSurfaceId, "codex"]);
-  await runOrThrow(runner, "cmux", ["rename-workspace", "--workspace", workspaceId, ...windowArgs(windowId), name]);
   let surfaces = await readTree(runner, workspaceId, windowId);
   const orchestratorSurface = surfaceByIdOrRef(surfaces, orchestratorSurfaceId);
   surfaces = await closeManagedAgentSurfaces({ runner, workspaceId, windowId, surfaces });
@@ -273,6 +276,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
     direction: "down",
     splitFromSurfaceRef: claudeSurfaceRef,
   });
+  await renameWorkspace(runner, workspaceId, windowId, name);
 
   return {
     mode: "ready",
@@ -327,7 +331,7 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, recreates Devin below Claude, names the workspace after the current directory, then opens Codex as the base orchestrator.
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command: zsh -lc 'cd <cwd> && dey'

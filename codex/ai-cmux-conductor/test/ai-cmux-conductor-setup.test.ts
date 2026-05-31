@@ -167,7 +167,6 @@ describe("prepareConductor", () => {
     const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey'\n";
     const { runner, calls } = strictRunnerFor({
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface base-surface-uuid codex": { stdout: "" },
-      "cmux rename-workspace --workspace workspace-uuid --window window-uuid project-x": { stdout: "" },
       "cmux --json tree --workspace workspace-uuid --window window-uuid": [
         { stdout: treeWithStaleAgentsAndUuidBase },
         { stdout: treeAfterClaudePane },
@@ -182,6 +181,7 @@ describe("prepareConductor", () => {
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
+      "cmux workspace-action --action rename --workspace workspace-uuid --window window-uuid --title project-x": { stdout: "" },
     });
 
     const result = await prepareConductor({
@@ -199,7 +199,6 @@ describe("prepareConductor", () => {
     expect(result.context.reusedDevin).toBe(false);
     expect(calls).toEqual([
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "base-surface-uuid", "codex"],
-      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "project-x"],
       ["cmux", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:old-claude"],
       ["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:old-devin"],
@@ -212,6 +211,7 @@ describe("prepareConductor", () => {
       ["cmux", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "Devin"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch],
+      ["cmux", "workspace-action", "--action", "rename", "--workspace", "workspace-uuid", "--window", "window-uuid", "--title", "project-x"],
     ]);
   });
 

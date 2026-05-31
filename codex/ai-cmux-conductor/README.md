@@ -14,7 +14,7 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
    cmux new-workspace --name "${PWD:t}" --cwd "$PWD" --focus true --command aicc
    ```
 
-2. Inside cMUX, rename the current tab to `codex` and the current workspace to the current directory basename.
+2. Inside cMUX, rename the current tab to `codex`.
 3. Close exact-title managed side-agent surfaces (`Claude`, `Devin`) so stale layouts do not survive.
 4. Recreate a deterministic layout:
    - Codex/current pane stays on the left.
@@ -24,7 +24,8 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
    - Codex: `cxscb <orchestrator prompt>`
    - Claude: `zsh -lc 'cd <cwd> && clscb'`
    - Devin: `zsh -lc 'cd <cwd> && dey'`
-6. Pass stable cMUX workspace/surface IDs into the Codex orchestrator prompt.
+6. Rename the current workspace to the current directory basename with cMUX's native workspace action.
+7. Pass stable cMUX workspace/surface IDs into the Codex orchestrator prompt.
 
 ## Files
 
