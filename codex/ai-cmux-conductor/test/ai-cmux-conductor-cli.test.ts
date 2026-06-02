@@ -37,6 +37,7 @@ describe("ai-cmux-conductor CLI", () => {
     expect(output).toContain("cxscb");
     expect(output).toContain("Claude");
     expect(output).toContain("Devin");
+    expect(output).toContain("auto-resume");
     expect(output).not.toContain(GENERIC_NAME);
   });
 
@@ -46,6 +47,12 @@ describe("ai-cmux-conductor CLI", () => {
       expect(code).toBe(0);
       expect(output).toContain("cMUX AI workspace conductor");
     }
+  });
+
+  test("prints Claude auto-resume status without bootstrapping cMUX", async () => {
+    const { code, output } = await runCommand("bun", ["ai-cmux-conductor", "--status"]);
+    expect(code).toBe(0);
+    expect(output).toContain("Claude auto-resume");
   });
 
   test("README documents purpose and verification", () => {

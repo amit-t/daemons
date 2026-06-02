@@ -3,6 +3,15 @@ import { parseAiCmuxConductorArgs } from "./src/ai-cmux-conductor/args.ts";
 import { loadAiCmuxConductorEnv } from "./src/ai-cmux-conductor/config.ts";
 import { runCodexLauncher } from "./src/ai-cmux-conductor/codex-launch.ts";
 import { buildOrchestratorPrompt, conductorHelpText, prepareConductor } from "./src/ai-cmux-conductor/conductor.ts";
+import {
+  FileClaudeAutoResumeStore,
+  claudeAutoResumeStatePath,
+  ensureClaudeAutoResumeDaemon,
+  loadClaudeAutoResumeStatus,
+  registerClaudeSurfaceFromConductorContext,
+  runClaudeAutoResumeDaemon,
+  stopClaudeAutoResumeDaemon,
+} from "./src/ai-cmux-conductor/claude-auto-resume.ts";
 
 const args = parseAiCmuxConductorArgs(process.argv);
 
@@ -12,6 +21,23 @@ if (args.help) {
 }
 
 const conductorEnv = loadAiCmuxConductorEnv(process.env);
+const autoResumeStore = new FileClaudeAutoResumeStore(claudeAutoResumeStatePath(conductorEnv));
+
+if (args.status) {
+  console.log(await loadClaudeAutoResumeStatus(autoResumeStore));
+  process.exit(0);
+}
+
+if (args.stopDaemon) {
+  const stopped = await stopClaudeAutoResumeDaemon(conductorEnv);
+  console.log(stopped.stopped ? `Stopped Claude auto-resume daemon pid ${stopped.pid}.` : `Claude auto-resume daemon not stopped: ${stopped.reason || "not running"}.`);
+  process.exit(stopped.stopped || stopped.reason === "not running" ? 0 : 1);
+}
+
+if (args.daemon) {
+  await runClaudeAutoResumeDaemon({ store: autoResumeStore });
+}
+
 const prepared = await prepareConductor({ cwd: process.cwd(), env: conductorEnv });
 
 if (prepared.mode === "handoff") {
@@ -23,6 +49,14 @@ if (prepared.mode === "error") {
   console.error(prepared.message);
   if (prepared.stderr) console.error(prepared.stderr.trim());
   process.exit(1);
+}
+
+try {
+  await registerClaudeSurfaceFromConductorContext(prepared.context, conductorEnv.CMUX_WINDOW_ID, autoResumeStore);
+  await ensureClaudeAutoResumeDaemon(conductorEnv);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`Claude auto-resume daemon warning: ${message}`);
 }
 
 const prompt = `${buildOrchestratorPrompt(prepared.context)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;

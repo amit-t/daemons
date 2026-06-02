@@ -2,6 +2,7 @@ export interface AiCmuxConductorArgs {
   interactive: boolean;
   quiet: boolean;
   help: boolean;
+  status: boolean;
   daemon: boolean;
   stopDaemon: boolean;
   noWarm: boolean;
@@ -17,6 +18,8 @@ const FLAG_NAMES = new Set([
   "--quiet",
   "-h",
   "--help",
+  "--status",
+  "--auto-resume-status",
   "--daemon",
   "--stop-daemon",
   "--no-warm",
@@ -27,6 +30,7 @@ export function parseAiCmuxConductorArgs(argv: string[]): AiCmuxConductorArgs {
   const interactive = args.includes("-i") || args.includes("--interactive");
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("-h") || args.includes("--help");
+  const status = args.includes("--status") || args.includes("--auto-resume-status");
   const daemon = args.includes("--daemon");
   const stopDaemon = args.includes("--stop-daemon");
   const noWarm = args.includes("--no-warm");
@@ -43,6 +47,7 @@ export function parseAiCmuxConductorArgs(argv: string[]): AiCmuxConductorArgs {
     interactive,
     quiet,
     help,
+    status,
     daemon,
     stopDaemon,
     noWarm,

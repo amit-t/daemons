@@ -399,7 +399,8 @@ ${devinCommands}
 2. Keep tool use scoped to this workspace ID and the stable surface IDs above.
 3. If an existing ${managedAgent} pane looks dead, wrong, or unrelated, report that and ask before replacing it.
 4. Do not kill, close, or respawn agent panes without explicit user approval.
-5. Use concise status updates: ${agents}, blockers, and recommended next action.`;
+5. Claude auto-resume runs in the AICC daemon. For sitrep, run: aicc --status.
+6. Use concise status updates: ${agents}, blockers, and recommended next action.`;
 }
 
 export function conductorHelpText(): string {
@@ -409,6 +410,9 @@ Usage:
   aicc                         Bootstrap current cMUX workspace and open Codex orchestrator
   aicc "initial request"        Same, with an initial request for the orchestrator
   ai-cmux-conductor --help      Show this help
+  aicc --status                 Show Claude auto-resume daemon sitrep
+  aicc --daemon                 Run Claude auto-resume watcher loop
+  aicc --stop-daemon            Stop Claude auto-resume watcher loop
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
@@ -417,6 +421,7 @@ Behavior:
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command when enabled: zsh -lc 'cd <cwd> && dey'
+  - Claude auto-resume: registers Claude panes, watches read-screen --scrollback, persists reset schedules, and sends continue after reset + 60 seconds.
 
 No pro- prefix. The short global alias is aicc.`;
 }

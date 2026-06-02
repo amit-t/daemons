@@ -39,8 +39,10 @@ describe("parseAiCmuxConductorArgs", () => {
     expect(parsed.prompt).toBe("high priority");
   });
 
-  test("reports help and no-args", () => {
+  test("reports help, status, and no-args", () => {
     expect(parseAiCmuxConductorArgs(argv("--help")).help).toBe(true);
+    expect(parseAiCmuxConductorArgs(argv("--status")).status).toBe(true);
+    expect(parseAiCmuxConductorArgs(argv("--auto-resume-status")).status).toBe(true);
     expect(parseAiCmuxConductorArgs(argv()).noArgs).toBe(true);
   });
 });
