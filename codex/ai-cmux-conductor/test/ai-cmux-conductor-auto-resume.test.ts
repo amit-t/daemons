@@ -6,9 +6,12 @@ import {
   FileClaudeAutoResumeStore,
   createEmptyClaudeAutoResumeState,
   detectClaudeUsageLimit,
+  formatClaudeAutoResumeSitrep,
+  isPlausibleClaudeSurface,
   processDueClaudeAutoResumeJobs,
   scanClaudeSurfacesOnce,
   scheduleClaudeAutoResumeJob,
+  sendClaudePromptWithHealthGuard,
   type ClaudeAutoResumeState,
 } from "../src/ai-cmux-conductor/claude-auto-resume.ts";
 import type { CommandRunner } from "../src/ai-cmux-conductor/conductor.ts";
@@ -19,7 +22,7 @@ function iso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-function treeWithClaude(surfaceRef: string, title = "Claude"): string {
+function treeWithClaude(surfaceRef: string, title = "Claude", paneRef = "pane:claude", extraSurface: Record<string, unknown> = {}): string {
   return JSON.stringify({
     windows: [
       {
@@ -32,8 +35,36 @@ function treeWithClaude(surfaceRef: string, title = "Claude"): string {
             title: "Project-X",
             panes: [
               {
+                ref: paneRef,
+                surfaces: [{ id: `${surfaceRef}-uuid`, ref: surfaceRef, title, type: "terminal", pane_ref: paneRef, ...extraSurface }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function treeWithClaudeAndCodex(surfaceRef: string, title = "Claude", extraSurface: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    windows: [
+      {
+        ref: "window:1",
+        id: "window-uuid",
+        workspaces: [
+          {
+            ref: "workspace:1",
+            id: "workspace-uuid",
+            title: "Project-X",
+            panes: [
+              {
+                ref: "pane:codex",
+                surfaces: [{ id: "surface:codex-uuid", ref: "surface:codex", title: "codex", type: "terminal", pane_ref: "pane:codex" }],
+              },
+              {
                 ref: "pane:claude",
-                surfaces: [{ id: `${surfaceRef}-uuid`, ref: surfaceRef, title, type: "terminal", pane_ref: "pane:claude" }],
+                surfaces: [{ id: `${surfaceRef}-uuid`, ref: surfaceRef, title, type: "terminal", pane_ref: "pane:claude", ...extraSurface }],
               },
             ],
           },
@@ -297,6 +328,152 @@ describe("Claude auto-resume scheduler", () => {
     expect(state.jobs[0].status).toBe("failed");
     expect(state.jobs[0].attempts).toBe(3);
     expect(state.jobs[0].lastError).toBe("cmux send failed: pane gone");
+  });
+});
+
+describe("Claude surface health guard", () => {
+  test("exact-title Claude surface with shell prompt is detected unhealthy", () => {
+    expect(
+      isPlausibleClaudeSurface(
+        { ref: "surface:stale", title: "Claude", type: "terminal", pane_ref: "pane:claude" },
+        "Last login: Tue Jun 2\n/Users/amittiwari/Projects/Tools-Utilities/wb-gitlore %\n",
+      ),
+    ).toBe(false);
+  });
+
+  test("prompt text echoed into zsh is detected unhealthy", () => {
+    expect(
+      isPlausibleClaudeSurface(
+        { ref: "surface:stale", title: "Claude", type: "terminal", pane_ref: "pane:claude" },
+        "Execute the task spec at /tmp/spec.md\nzsh: command not found: Execute\nRules:\nzsh: command not found: Rules:\nwb-gitlore %\n",
+      ),
+    ).toBe(false);
+  });
+
+  test("Claude Code UI remains healthy and untouched", async () => {
+    const state = createEmptyClaudeAutoResumeState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      workspaceName: "Project-X",
+      surfaceId: "surface:claude",
+      agentIdentity: "Claude",
+      title: "Claude",
+      cwd: "/work/project-x",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const { runner, calls } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": { stdout: treeWithClaude("surface:claude") },
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude --scrollback --lines 160": {
+        stdout: "Claude Code\n\n> Ready for your next task\n",
+      },
+      [commandKey(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "hello Claude\n"])]: {
+        stdout: "sent",
+      },
+    });
+
+    const routed = await sendClaudePromptWithHealthGuard(state, runner, {
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      cwd: "/work/project-x",
+      prompt: "hello Claude",
+      now: new Date("2026-06-02T15:10:00.000Z"),
+      readyPollIntervalMs: 0,
+    });
+
+    expect(routed.recovered).toBe(false);
+    expect(routed.surfaceId).toBe("surface:claude");
+    expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
+    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "hello Claude\n"]);
+  });
+
+
+  test("refuses to close unhealthy Claude-like surface unless title is exact Claude", async () => {
+    const state = createEmptyClaudeAutoResumeState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      workspaceName: "Project-X",
+      surfaceId: "surface:claude-like",
+      agentIdentity: "Claude",
+      title: "Claude Scratch",
+      cwd: "/work/project-x",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const { runner, calls } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": { stdout: treeWithClaude("surface:claude-like", "Claude Scratch") },
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude-like --scrollback --lines 160": {
+        stdout: "Last login: Tue Jun 2\n/work/project-x %\n",
+      },
+    });
+
+    await expect(
+      sendClaudePromptWithHealthGuard(state, runner, {
+        workspaceId: "workspace-uuid",
+        windowId: "window-uuid",
+        cwd: "/work/project-x",
+        prompt: "hello Claude",
+        now: new Date("2026-06-02T15:10:00.000Z"),
+        readyPollIntervalMs: 0,
+      }),
+    ).rejects.toThrow("Refusing to auto-close non-exact Claude surface");
+    expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
+  });
+
+  test("closes stale exact-title Claude surface, launches clscb, routes prompt to new surface, and reports recovery", async () => {
+    const state = createEmptyClaudeAutoResumeState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      workspaceName: "Project-X",
+      surfaceId: "surface:stale",
+      agentIdentity: "Claude",
+      title: "Claude",
+      cwd: "/work/project-x",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
+    const { runner, calls } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithClaudeAndCodex("surface:stale") },
+        { stdout: treeWithClaudeAndCodex("surface:fresh", "~/project-x") },
+      ],
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:stale --scrollback --lines 160": {
+        stdout: "Execute the task spec at /tmp/spec.md\nzsh: command not found: Execute\n/work/project-x %\n",
+      },
+      "cmux close-surface --workspace workspace-uuid --window window-uuid --surface surface:stale": { stdout: "" },
+      "cmux new-surface --workspace workspace-uuid --window window-uuid --pane pane:claude --type terminal --focus true": {
+        stdout: "surface:fresh\n",
+      },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:fresh Claude": { stdout: "" },
+      [commandKey(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", claudeLaunch])]: {
+        stdout: "",
+      },
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:fresh --scrollback --lines 160": {
+        stdout: "Claude Code\n\n> Ready for your next task\n",
+      },
+      [commandKey(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "--", "hello Claude\n"])]: {
+        stdout: "sent",
+      },
+    });
+
+    const routed = await sendClaudePromptWithHealthGuard(state, runner, {
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      cwd: "/work/project-x",
+      prompt: "hello Claude",
+      now: new Date("2026-06-02T15:10:00.000Z"),
+      readyPollIntervalMs: 0,
+    });
+
+    expect(routed.recovered).toBe(true);
+    expect(routed.surfaceId).toBe("surface:fresh");
+    expect(state.registrations[0].surfaceId).toBe("surface:fresh");
+    expect(calls).toContainEqual(["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:stale"]);
+    expect(calls).toContainEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", claudeLaunch]);
+    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "--", "hello Claude\n"]);
+    expect(formatClaudeAutoResumeSitrep(state)).toContain("Claude surface recovered");
+    expect(formatClaudeAutoResumeSitrep(state)).toContain("surface:stale → surface:fresh");
   });
 });
 

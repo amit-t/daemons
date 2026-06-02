@@ -38,7 +38,8 @@ export function loadAiCmuxConductorEnv(
 }
 
 export function isDevinPanelEnabled(env: Record<string, string | undefined>): boolean {
-  return env[DEVIN_PANEL_FEATURE_FLAG]?.trim().toLowerCase() === "true";
+  const value = env[DEVIN_PANEL_FEATURE_FLAG]?.trim().toLowerCase();
+  return value !== "false" && value !== "0" && value !== "no";
 }
 
 function stripOptionalQuotes(value: string): string {

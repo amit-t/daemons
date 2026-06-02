@@ -109,6 +109,11 @@ function surfaceByTitle(surfaces: CmuxSurface[], title: string): CmuxSurface | u
   return surfaces.find((surface) => surface.title === title && surface.ref);
 }
 
+function surfaceByAgentTitle(surfaces: CmuxSurface[], title: "Claude" | "Devin"): CmuxSurface | undefined {
+  const agentPattern = new RegExp(`\\b${title}\\b`, "i");
+  return surfaces.find((surface) => surface.type !== "browser" && surfaceId(surface) && agentPattern.test(surface.title || ""));
+}
+
 function surfaceForPane(surfaces: CmuxSurface[], paneRef: string): CmuxSurface | undefined {
   return surfaces.find((surface) => (surface.pane_ref === paneRef || surface.pane_id === paneRef) && (surface.ref || surface.id) && surface.type !== "browser");
 }
@@ -187,27 +192,6 @@ function surfaceId(surface: CmuxSurface): string | undefined {
   return surface.ref || surface.id;
 }
 
-async function closeManagedAgentSurfaces(options: {
-  runner: CommandRunner;
-  workspaceId: string;
-  windowId?: string;
-  surfaces: CmuxSurface[];
-}): Promise<CmuxSurface[]> {
-  const managedTitles = new Set(["Claude", "Devin"]);
-  const managed = options.surfaces.filter((surface) => surface.title && managedTitles.has(surface.title) && surfaceId(surface));
-  for (const surface of managed) {
-    await runOrThrow(options.runner, "cmux", [
-      "close-surface",
-      "--workspace",
-      options.workspaceId,
-      ...windowArgs(options.windowId),
-      "--surface",
-      surfaceId(surface)!,
-    ]);
-  }
-  return options.surfaces.filter((surface) => !managed.includes(surface));
-}
-
 async function createAgentSurface(options: {
   runner: CommandRunner;
   workspaceId: string;
@@ -218,7 +202,14 @@ async function createAgentSurface(options: {
   direction: "right" | "down";
   splitFromSurfaceRef?: string;
   focusPaneRef?: string;
+  surfaces: CmuxSurface[];
 }): Promise<{ surfaceId: string; reused: boolean; surfaces: CmuxSurface[] }> {
+  const existing = surfaceByAgentTitle(options.surfaces, options.title);
+  const existingId = existing && surfaceId(existing);
+  if (existingId) {
+    return { surfaceId: existingId, reused: true, surfaces: options.surfaces };
+  }
+
   if (options.splitFromSurfaceRef) {
     const split = await runOrThrow(options.runner, "cmux", [
       "new-split",
@@ -312,7 +303,6 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
   await runOrThrow(runner, "cmux", ["rename-tab", "--workspace", workspaceId, ...windowArgs(windowId), "--surface", orchestratorSurfaceId, "codex"]);
   let surfaces = await readTree(runner, workspaceId, windowId);
   const orchestratorSurface = surfaceByIdOrRef(surfaces, orchestratorSurfaceId);
-  surfaces = await closeManagedAgentSurfaces({ runner, workspaceId, windowId, surfaces });
   const claude = await createAgentSurface({
     runner,
     workspaceId,
@@ -322,6 +312,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
     command: "clscb",
     direction: "right",
     focusPaneRef: orchestratorSurface?.pane_ref || orchestratorSurface?.pane_id,
+    surfaces,
   });
   surfaces = claude.surfaces;
   const claudeSurface = surfaceByIdOrRef(surfaces, claude.surfaceId);
@@ -340,6 +331,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
       command: "dey",
       direction: "down",
       splitFromSurfaceRef: claudeSurfaceRef,
+      surfaces,
     });
   }
   await renameWorkspace(runner, workspaceId, windowId, name);
@@ -364,17 +356,38 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
   const devinEnabled = context.devinPanelEnabled && context.devinSurfaceId;
   const devinContext = devinEnabled
     ? `- Devin surface: ${context.devinSurfaceId} (${context.reusedDevin ? "reused existing pane" : "created new pane"})`
-    : `- Devin panel: disabled (${DEVIN_PANEL_FEATURE_FLAG}=false; set it to true in environment.env to create Devin below Claude)`;
+    : `- Devin panel: disabled (${DEVIN_PANEL_FEATURE_FLAG}=false)`;
   const devinRole = devinEnabled
     ? ` When the user says "ask Claude", "send to Claude", "ask Devin", or "send to Devin", route the instruction to the matching pane.`
     : ` When the user says "ask Claude" or "send to Claude", route the instruction to Claude. Devin routing is disabled by ${DEVIN_PANEL_FEATURE_FLAG}.`;
+  const devinLaunchCommand = `zsh -lc ${shellQuote(`cd ${shellQuote(context.cwd)} && dey`)}`;
   const devinCommands = devinEnabled
     ? `- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160
-- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"`
+- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"
+- Open/repair Devin below Claude when needed:
+  1. cmux new-split down --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} --focus true
+  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE Devin
+  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"
+  4. Wait for the Devin CLI UI, then send the pending prompt to that Devin surface.`
     : "";
   const agents = devinEnabled ? "Claude and Devin" : "Claude";
   const agentPaneNoun = devinEnabled ? "panes" : "pane";
   const managedAgent = devinEnabled ? "Claude or Devin" : "Claude";
+  const operatingRules = devinEnabled
+    ? `1. Periodically inspect ${agents} with cmux read-screen and summarize meaningful changes to the user.
+2. Keep tool use scoped to this workspace ID and the stable surface IDs above.
+3. When the user says "ask Devin" or "send to Devin", always use the Devin pane. If it is missing, closed, dead, or not running Devin, open Devin in interactive yolo mode below Claude with the commands above, then send the pending prompt to that Devin surface.
+4. If an existing ${managedAgent} pane looks dead, wrong, or unrelated outside an explicit Devin-routing request, report that and ask before replacing it.
+5. Do not kill, close, or respawn Claude, Codex, or unrelated user terminal panes without explicit user approval.
+6. Treat the user's explicit request to ask Devin as approval to open/repair only the Devin pane with \`dey\`.
+7. Claude auto-resume runs in the AICC daemon. For sitrep, run: aicc --status.
+8. Use concise status updates: ${agents}, blockers, and recommended next action.`
+    : `1. Periodically inspect ${agents} with cmux read-screen and summarize meaningful changes to the user.
+2. Keep tool use scoped to this workspace ID and the stable surface IDs above.
+3. If an existing ${managedAgent} pane looks dead, wrong, or unrelated, report that and ask before replacing it.
+4. Do not kill, close, or respawn Claude, Codex, or unrelated user terminal panes without explicit user approval.
+5. Claude auto-resume runs in the AICC daemon. For sitrep, run: aicc --status.
+6. Use concise status updates: ${agents}, blockers, and recommended next action.`;
 
   return `You are ai-cmux-conductor, the base Codex orchestrator for this cMUX workspace.
 
@@ -395,12 +408,7 @@ Stay in this base tab and coordinate the ${agents} ${agentPaneNoun} in the same 
 ${devinCommands}
 
 ## Operating rules
-1. Periodically inspect ${agents} with cmux read-screen and summarize meaningful changes to the user.
-2. Keep tool use scoped to this workspace ID and the stable surface IDs above.
-3. If an existing ${managedAgent} pane looks dead, wrong, or unrelated, report that and ask before replacing it.
-4. Do not kill, close, or respawn agent panes without explicit user approval.
-5. Claude auto-resume runs in the AICC daemon. For sitrep, run: aicc --status.
-6. Use concise status updates: ${agents}, blockers, and recommended next action.`;
+${operatingRules}`;
 }
 
 export function conductorHelpText(): string {
@@ -416,12 +424,13 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, recreates Claude to the right, optionally recreates Devin below Claude, verifies the workspace is named after the title-cased current directory, then opens Codex as the base orchestrator.
-  - Devin panel feature flag: ${DEVIN_PANEL_FEATURE_FLAG}=false by default in environment.env. Set it to true to create Devin below Claude.
+  - Inside cMUX: renames the current tab to codex, reuses existing Claude/Devin panes when present, creates missing panes, verifies the workspace is named after the title-cased current directory, then opens Codex as the base orchestrator.
+  - Devin panel feature flag: ${DEVIN_PANEL_FEATURE_FLAG}=true by default in environment.env. Set it to false to skip Devin.
   - Codex orchestrator command: cxscb
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'
   - Devin pane command when enabled: zsh -lc 'cd <cwd> && dey'
   - Claude auto-resume: registers Claude panes, watches read-screen --scrollback, persists reset schedules, and sends continue after reset + 60 seconds.
+  - Existing Claude/Devin panes are preserved; AICC does not close or respawn them during bootstrap.
 
 No pro- prefix. The short global alias is aicc.`;
 }

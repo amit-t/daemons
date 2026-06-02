@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { defaultRunner, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
+import { defaultRunner, shellQuote, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
 
 export const CLAUDE_AUTO_RESUME_MESSAGE = "continue\n";
 export const CLAUDE_AUTO_RESUME_SEND_DELAY_MS = 60_000;
@@ -24,6 +24,7 @@ export interface ClaudeSurfaceRegistration {
   windowId?: string;
   workspaceName?: string;
   title?: string;
+  cwd?: string;
   updatedAt: string;
 }
 
@@ -556,8 +557,25 @@ function parseTreeSurfaces(stdout: string): CmuxSurface[] {
   return surfaces;
 }
 
-function isPlausibleClaudeSurface(surface: CmuxSurface): boolean {
-  return surface.type !== "browser" && (!surface.title || /claude/i.test(surface.title));
+export function isPlausibleClaudeSurface(surface: CmuxSurface, screenText?: string): boolean {
+  if (surface.type === "browser") return false;
+  if (surface.title && !/claude/i.test(surface.title)) return false;
+  if (!screenText) return true;
+  if (hasClaudeUiMarkers(screenText)) return true;
+  if (hasShellPromptMarkers(screenText) || hasPromptEchoedIntoShellMarkers(screenText)) return false;
+  return true;
+}
+
+function hasClaudeUiMarkers(screenText: string): boolean {
+  return /Claude Code|Welcome to Claude|Bypassing Permissions|\bOpus\b|\bSonnet\b|\bHaiku\b|\bclaude\b.*\bready\b/i.test(screenText);
+}
+
+function hasShellPromptMarkers(screenText: string): boolean {
+  return /Last login:|(?:^|\n)[^\n]*[%$#]\s*$/m.test(screenText);
+}
+
+function hasPromptEchoedIntoShellMarkers(screenText: string): boolean {
+  return /zsh: command not found:|command not found:|parse error near|no matches found:/i.test(screenText);
 }
 
 function isClaudeTitledSurface(surface: CmuxSurface): boolean {
@@ -570,6 +588,170 @@ function surfaceId(surface: CmuxSurface): string | undefined {
 
 function windowArgs(windowId?: string): string[] {
   return windowId ? ["--window", windowId] : [];
+}
+
+
+export interface ClaudePromptWithHealthGuardOptions {
+  workspaceId: string;
+  prompt: string;
+  cwd: string;
+  windowId?: string;
+  now?: Date;
+  readyPollIntervalMs?: number;
+  maxReadyPolls?: number;
+}
+
+export interface ClaudePromptWithHealthGuardResult {
+  surfaceId: string;
+  recovered: boolean;
+}
+
+export async function sendClaudePromptWithHealthGuard(
+  state: ClaudeAutoResumeState,
+  runner: CommandRunner,
+  options: ClaudePromptWithHealthGuardOptions,
+): Promise<ClaudePromptWithHealthGuardResult> {
+  const now = options.now || new Date();
+  const registration = state.registrations.find(
+    (candidate) => candidate.workspaceId === options.workspaceId && candidate.agentIdentity.toLowerCase() === "claude",
+  );
+  if (!registration) throw new Error(`No Claude surface registered in workspace ${options.workspaceId}`);
+
+  const resolved = await resolveClaudeSurfaceDetails(runner, registration);
+  const screen = await readClaudeScreen(runner, registration, resolved.surfaceId);
+  let target = resolved;
+  let recovered = false;
+
+  if (!isPlausibleClaudeSurface(resolved.surface, screen)) {
+    target = await recoverClaudeSurface(state, runner, registration, resolved, options, now);
+    recovered = true;
+  }
+
+  const message = options.prompt.endsWith("\n") ? options.prompt : `${options.prompt}\n`;
+  const sendResult = await runner("cmux", [
+    "send",
+    "--workspace",
+    options.workspaceId,
+    ...windowArgs(options.windowId),
+    "--surface",
+    target.surfaceId,
+    "--",
+    message,
+  ]);
+  if (sendResult.code !== 0) throw new Error(exactFailure("cmux send", sendResult));
+  return { surfaceId: target.surfaceId, recovered };
+}
+
+async function recoverClaudeSurface(
+  state: ClaudeAutoResumeState,
+  runner: CommandRunner,
+  registration: ClaudeSurfaceRegistration,
+  stale: { surface: CmuxSurface; surfaceId: string },
+  options: ClaudePromptWithHealthGuardOptions,
+  now: Date,
+): Promise<{ surface: CmuxSurface; surfaceId: string }> {
+  if (stale.surface.title !== "Claude") {
+    throw new Error(`Refusing to auto-close non-exact Claude surface ${stale.surfaceId} titled ${stale.surface.title || "untitled"}`);
+  }
+  const paneRef = stale.surface.pane_ref || stale.surface.pane_id;
+  if (!paneRef) throw new Error(`Unable to recover Claude surface ${stale.surfaceId}: missing pane ref`);
+
+  const closeResult = await runner("cmux", [
+    "close-surface",
+    "--workspace",
+    options.workspaceId,
+    ...windowArgs(options.windowId),
+    "--surface",
+    stale.surfaceId,
+  ]);
+  if (closeResult.code !== 0) throw new Error(exactFailure("cmux close-surface", closeResult));
+
+  const createResult = await runner("cmux", [
+    "new-surface",
+    "--workspace",
+    options.workspaceId,
+    ...windowArgs(options.windowId),
+    "--pane",
+    paneRef,
+    "--type",
+    "terminal",
+    "--focus",
+    "true",
+  ]);
+  if (createResult.code !== 0) throw new Error(exactFailure("cmux new-surface", createResult));
+
+  const createdRef = firstCmuxRef(createResult.stdout, "surface");
+  const surfaces = await readCmuxTreeSurfaces(runner, options.workspaceId, options.windowId);
+  const createdSurface =
+    (createdRef && surfaces.find((surface) => surfaceId(surface) === createdRef)) ||
+    surfaces.find((surface) => surface.pane_ref === paneRef || surface.pane_id === paneRef);
+  const createdSurfaceId = createdSurface && surfaceId(createdSurface);
+  if (!createdSurface || !createdSurfaceId) throw new Error(`Unable to find recovered Claude surface in pane ${paneRef}`);
+
+  const renameResult = await runner("cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdSurfaceId, "Claude"]);
+  if (renameResult.code !== 0) throw new Error(exactFailure("cmux rename-tab", renameResult));
+
+  const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && clscb`)}\n`;
+  const launchResult = await runner("cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdSurfaceId, launch]);
+  if (launchResult.code !== 0) throw new Error(exactFailure("cmux send", launchResult));
+
+  await waitForClaudeUi(runner, options.workspaceId, options.windowId, createdSurfaceId, options.readyPollIntervalMs ?? 1_000, options.maxReadyPolls ?? 12);
+
+  registration.surfaceId = createdSurfaceId;
+  registration.cwd = options.cwd;
+  registration.updatedAt = now.toISOString();
+  recordEvent(state, {
+    type: "surface_recovered",
+    at: now.toISOString(),
+    workspaceId: options.workspaceId,
+    surfaceId: createdSurfaceId,
+    message: `Claude surface recovered: ${stale.surfaceId} → ${createdSurfaceId}`,
+  });
+  return { surface: createdSurface, surfaceId: createdSurfaceId };
+}
+
+async function waitForClaudeUi(
+  runner: CommandRunner,
+  workspaceId: string,
+  windowId: string | undefined,
+  surfaceIdValue: string,
+  pollIntervalMs: number,
+  maxPolls: number,
+): Promise<void> {
+  let lastScreen = "";
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    lastScreen = await readClaudeScreen(runner, { workspaceId, windowId }, surfaceIdValue);
+    if (hasClaudeUiMarkers(lastScreen)) return;
+    if (pollIntervalMs > 0) await sleep(pollIntervalMs);
+  }
+  throw new Error(`Recovered Claude surface ${surfaceIdValue} did not show Claude UI markers. Last screen: ${lastScreen.slice(0, 200)}`);
+}
+
+async function resolveClaudeSurfaceDetails(
+  runner: CommandRunner,
+  selector: Pick<ClaudeSurfaceRegistration | ClaudeAutoResumeJob, "workspaceId" | "windowId" | "surfaceId" | "agentIdentity">,
+): Promise<{ surface: CmuxSurface; surfaceId: string }> {
+  const surfaces = await readCmuxTreeSurfaces(runner, selector.workspaceId, selector.windowId);
+  const oldSurface = surfaces.find((surface) => surfaceId(surface) === selector.surfaceId);
+  const oldSurfaceId = oldSurface && surfaceId(oldSurface);
+  if (oldSurface && oldSurfaceId && isPlausibleClaudeSurface(oldSurface)) return { surface: oldSurface, surfaceId: oldSurfaceId };
+
+  const titleMatch = surfaces.find((surface) => isClaudeTitledSurface(surface));
+  const titleMatchId = titleMatch && surfaceId(titleMatch);
+  if (titleMatch && titleMatchId) return { surface: titleMatch, surfaceId: titleMatchId };
+
+  if (oldSurface && oldSurfaceId) return { surface: oldSurface, surfaceId: oldSurfaceId };
+  throw new Error(`Unable to resolve ${selector.agentIdentity} surface in workspace ${selector.workspaceId}`);
+}
+
+async function readCmuxTreeSurfaces(runner: CommandRunner, workspaceId: string, windowId?: string): Promise<CmuxSurface[]> {
+  const tree = await runner("cmux", ["--id-format", "both", "--json", "tree", "--workspace", workspaceId, ...windowArgs(windowId)]);
+  if (tree.code !== 0) throw new Error(exactFailure("cmux tree", tree));
+  return parseTreeSurfaces(tree.stdout);
+}
+
+function firstCmuxRef(stdout: string, prefix: string): string | undefined {
+  return stdout.match(new RegExp(`${prefix}:[A-Za-z0-9_-]+`))?.[0] || stdout.match(/[0-9A-Fa-f-]{36}/)?.[0];
 }
 
 export async function registerClaudeAutoResumeSurface(
@@ -651,6 +833,9 @@ export function formatClaudeAutoResumeSitrep(
     if (job.status === "sent") lines.push(`Auto-continue sent at ${job.sentAt || job.updatedAt}: ${job.lastResult || "cmux send exit 0"}.`);
     if (job.status === "failed") lines.push(`Auto-continue failed: ${job.lastError || "unknown error"}.`);
     if (job.status === "stale") lines.push(`Auto-continue stale: ${job.lastError || "beyond grace window"}.`);
+  }
+  for (const event of state.events.filter((candidate) => candidate.type === "surface_recovered").slice(-5)) {
+    lines.push(event.message);
   }
   if (!pending.length && !recentTerminal.length) lines.push("No pending Claude auto-resume jobs.");
   return lines.join("\n");
