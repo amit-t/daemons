@@ -3,12 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CLAUDE_AUTO_RESUME_DEFAULT_POLL_MS,
   FileClaudeAutoResumeStore,
   createEmptyClaudeAutoResumeState,
   detectClaudeUsageLimit,
   formatClaudeAutoResumeSitrep,
   isPlausibleClaudeSurface,
   processDueClaudeAutoResumeJobs,
+  registerClaudeSurfaceFromConductorContext,
   scanClaudeSurfacesOnce,
   scheduleClaudeAutoResumeJob,
   sendClaudePromptWithHealthGuard,
@@ -65,6 +67,34 @@ function treeWithClaudeAndCodex(surfaceRef: string, title = "Claude", extraSurfa
               {
                 ref: "pane:claude",
                 surfaces: [{ id: `${surfaceRef}-uuid`, ref: surfaceRef, title, type: "terminal", pane_ref: "pane:claude", ...extraSurface }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function treeWithTwoClaudeSurfaces(): string {
+  return JSON.stringify({
+    windows: [
+      {
+        ref: "window:1",
+        id: "window-uuid",
+        workspaces: [
+          {
+            ref: "workspace:1",
+            id: "workspace-uuid",
+            title: "Project-X",
+            panes: [
+              {
+                ref: "pane:claude-1",
+                surfaces: [{ id: "surface:claude-1-uuid", ref: "surface:claude-1", title: "Claude", type: "terminal", pane_ref: "pane:claude-1" }],
+              },
+              {
+                ref: "pane:claude-2",
+                surfaces: [{ id: "surface:claude-2-uuid", ref: "surface:claude-2", title: "Claude Research", type: "terminal", pane_ref: "pane:claude-2" }],
               },
             ],
           },
@@ -143,6 +173,56 @@ describe("Claude usage-limit detection", () => {
 });
 
 describe("Claude auto-resume scheduler", () => {
+  test("removes this workspace from auto-resume registration when the Claude panel is disabled", async () => {
+    const saved: ClaudeAutoResumeState[] = [];
+    const store = {
+      load: async (): Promise<ClaudeAutoResumeState> => ({
+        ...createEmptyClaudeAutoResumeState(),
+        registrations: [
+          {
+            workspaceId: "workspace-uuid",
+            windowId: "window-uuid",
+            workspaceName: "Project-X",
+            surfaceId: "surface:claude",
+            agentIdentity: "Claude",
+            title: "Claude",
+            updatedAt: "2026-06-02T15:00:00.000Z",
+          },
+          {
+            workspaceId: "other-workspace",
+            surfaceId: "surface:other-claude",
+            agentIdentity: "Claude",
+            title: "Claude",
+            updatedAt: "2026-06-02T15:00:00.000Z",
+          },
+        ],
+      }),
+      save: async (state: ClaudeAutoResumeState) => {
+        saved.push(state);
+      },
+    };
+
+    await registerClaudeSurfaceFromConductorContext(
+      {
+        cwd: "/work/project-x",
+        workspaceName: "Project-X",
+        workspaceId: "workspace-uuid",
+        orchestratorSurfaceId: "surface:codex",
+        claudePanelEnabled: false,
+        devinPanelEnabled: false,
+        reusedDevin: false,
+      },
+      "window-uuid",
+      store,
+    );
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0].registrations.map((registration) => registration.workspaceId)).toEqual(["other-workspace"]);
+  });
+
+  test("AICC watcher poll interval defaults to one minute", () => {
+    expect(CLAUDE_AUTO_RESUME_DEFAULT_POLL_MS).toBe(60_000);
+  });
 
   test("file store persists scheduled jobs across daemon restart", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aicc-auto-resume-"));
@@ -329,6 +409,35 @@ describe("Claude auto-resume scheduler", () => {
     expect(state.jobs[0].attempts).toBe(3);
     expect(state.jobs[0].lastError).toBe("cmux send failed: pane gone");
   });
+
+  test("discovers every Claude-titled pane in a registered workspace and schedules auto-resume", async () => {
+    const state = createEmptyClaudeAutoResumeState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      surfaceId: "surface:claude-1",
+      agentIdentity: "Claude",
+      workspaceName: "Project-X",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const { runner } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithTwoClaudeSurfaces() },
+        { stdout: treeWithTwoClaudeSurfaces() },
+        { stdout: treeWithTwoClaudeSurfaces() },
+      ],
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude-1 --scrollback --lines 160": { stdout: "Claude Code ready" },
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude-2 --scrollback --lines 160": {
+        stdout: "You've hit your session limit · resets 10:50pm (Asia/Calcutta)",
+      },
+    });
+
+    await scanClaudeSurfacesOnce(state, runner, new Date("2026-06-02T15:00:00.000Z"));
+
+    expect(state.registrations.map((registration) => registration.surfaceId).sort()).toEqual(["surface:claude-1", "surface:claude-2"]);
+    expect(state.jobs).toHaveLength(1);
+    expect(state.jobs[0].surfaceId).toBe("surface:claude-2");
+  });
 });
 
 describe("Claude surface health guard", () => {
@@ -491,6 +600,7 @@ describe("Claude auto-resume fake cMUX integration", () => {
     });
     const { runner, calls } = strictRunnerFor({
       "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithClaude("surface:claude") },
         { stdout: treeWithClaude("surface:claude") },
         { stdout: treeWithClaude("surface:claude") },
       ],

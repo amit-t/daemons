@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import { shellQuote } from "./conductor.ts";
 
 export const CODEX_ORCHESTRATOR_COMMAND = "cxscb";
+export const CODEX_ORCHESTRATOR_FLAGS = "--disable apps -c 'mcp_servers={}'";
 
 export function buildCodexLaunchShellCommand(prompt: string): string {
-  return `${CODEX_ORCHESTRATOR_COMMAND} ${shellQuote(prompt)}`;
+  return `${CODEX_ORCHESTRATOR_COMMAND} ${CODEX_ORCHESTRATOR_FLAGS} ${shellQuote(prompt)}`;
 }
 
 export async function runCodexLauncher(prompt: string, cwd = process.cwd()): Promise<never> {

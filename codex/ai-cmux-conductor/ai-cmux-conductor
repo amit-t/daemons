@@ -2,16 +2,24 @@
 import { parseAiCmuxConductorArgs } from "./src/ai-cmux-conductor/args.ts";
 import { loadAiCmuxConductorEnv } from "./src/ai-cmux-conductor/config.ts";
 import { runCodexLauncher } from "./src/ai-cmux-conductor/codex-launch.ts";
+import { runAiCmuxConductorDaemon } from "./src/ai-cmux-conductor/watcher-daemon.ts";
 import { buildOrchestratorPrompt, conductorHelpText, prepareConductor } from "./src/ai-cmux-conductor/conductor.ts";
+import { buildResetStatusText, resetAiCmuxWorkspace } from "./src/ai-cmux-conductor/reset.ts";
 import {
   FileClaudeAutoResumeStore,
   claudeAutoResumeStatePath,
   ensureClaudeAutoResumeDaemon,
   loadClaudeAutoResumeStatus,
   registerClaudeSurfaceFromConductorContext,
-  runClaudeAutoResumeDaemon,
   stopClaudeAutoResumeDaemon,
 } from "./src/ai-cmux-conductor/claude-auto-resume.ts";
+import {
+  FileDevinPollStore,
+  devinPollStatePath,
+  loadDevinPollStatus,
+  loadUnreadDevinPollEvents,
+  registerDevinPollFromConductorContext,
+} from "./src/ai-cmux-conductor/devin-poll.ts";
 
 const args = parseAiCmuxConductorArgs(process.argv);
 
@@ -22,20 +30,37 @@ if (args.help) {
 
 const conductorEnv = loadAiCmuxConductorEnv(process.env);
 const autoResumeStore = new FileClaudeAutoResumeStore(claudeAutoResumeStatePath(conductorEnv));
+const devinPollStore = new FileDevinPollStore(devinPollStatePath(conductorEnv));
 
 if (args.status) {
-  console.log(await loadClaudeAutoResumeStatus(autoResumeStore));
+  console.log(`${await loadClaudeAutoResumeStatus(autoResumeStore)}\n\n${await loadDevinPollStatus(devinPollStore)}`);
+  process.exit(0);
+}
+
+if (args.events) {
+  process.stdout.write(await loadUnreadDevinPollEvents(devinPollStore, { markRead: args.unread, now: new Date() }));
   process.exit(0);
 }
 
 if (args.stopDaemon) {
   const stopped = await stopClaudeAutoResumeDaemon(conductorEnv);
-  console.log(stopped.stopped ? `Stopped Claude auto-resume daemon pid ${stopped.pid}.` : `Claude auto-resume daemon not stopped: ${stopped.reason || "not running"}.`);
+  console.log(stopped.stopped ? `Stopped AICC watcher daemon pid ${stopped.pid}.` : `AICC watcher daemon not stopped: ${stopped.reason || "not running"}.`);
   process.exit(stopped.stopped || stopped.reason === "not running" ? 0 : 1);
 }
 
+if (args.reset) {
+  const result = await resetAiCmuxWorkspace({
+    env: conductorEnv,
+    beforeClose: async () => {
+      await stopClaudeAutoResumeDaemon(conductorEnv);
+    },
+  });
+  console.log(buildResetStatusText(result));
+  process.exit(result.mode === "reset" ? 0 : result.mode === "blocked" ? 2 : 1);
+}
+
 if (args.daemon) {
-  await runClaudeAutoResumeDaemon({ store: autoResumeStore });
+  await runAiCmuxConductorDaemon({ claudeStore: autoResumeStore, devinStore: devinPollStore, env: conductorEnv });
 }
 
 const prepared = await prepareConductor({ cwd: process.cwd(), env: conductorEnv });
@@ -53,10 +78,11 @@ if (prepared.mode === "error") {
 
 try {
   await registerClaudeSurfaceFromConductorContext(prepared.context, conductorEnv.CMUX_WINDOW_ID, autoResumeStore);
+  await registerDevinPollFromConductorContext(prepared.context, conductorEnv.CMUX_WINDOW_ID, devinPollStore);
   await ensureClaudeAutoResumeDaemon(conductorEnv);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.warn(`Claude auto-resume daemon warning: ${message}`);
+  console.warn(`AICC watcher daemon warning: ${message}`);
 }
 
 const prompt = `${buildOrchestratorPrompt(prepared.context)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;

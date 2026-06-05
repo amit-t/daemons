@@ -28,6 +28,12 @@ describe("parseAiCmuxConductorArgs", () => {
     expect(parsed.daemon).toBe(true);
   });
 
+  test("parses reset controls and exact bare Reset request", () => {
+    expect(parseAiCmuxConductorArgs(argv("--reset")).reset).toBe(true);
+    expect(parseAiCmuxConductorArgs(argv("Reset")).reset).toBe(true);
+    expect(parseAiCmuxConductorArgs(argv("Reset", "now")).reset).toBe(false);
+  });
+
   test("parses effort and removes its value from the prompt", () => {
     const parsed = parseAiCmuxConductorArgs(argv("--effort", "high", "do", "work"));
     expect(parsed.effort).toBe("high");
@@ -44,5 +50,13 @@ describe("parseAiCmuxConductorArgs", () => {
     expect(parseAiCmuxConductorArgs(argv("--status")).status).toBe(true);
     expect(parseAiCmuxConductorArgs(argv("--auto-resume-status")).status).toBe(true);
     expect(parseAiCmuxConductorArgs(argv()).noArgs).toBe(true);
+  });
+
+  test("parses unread event inbox request without treating flags as prompt text", () => {
+    const parsed = parseAiCmuxConductorArgs(argv("--events", "--unread"));
+
+    expect(parsed.events).toBe(true);
+    expect(parsed.unread).toBe(true);
+    expect(parsed.prompt).toBe("");
   });
 });

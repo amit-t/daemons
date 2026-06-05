@@ -10,7 +10,7 @@ export const CLAUDE_AUTO_RESUME_SEND_DELAY_MS = 60_000;
 export const CLAUDE_AUTO_RESUME_RETRY_DELAY_MS = 60_000;
 export const CLAUDE_AUTO_RESUME_MAX_ATTEMPTS = 3;
 export const CLAUDE_AUTO_RESUME_GRACE_WINDOW_MS = 30 * 60_000;
-export const CLAUDE_AUTO_RESUME_DEFAULT_POLL_MS = 30_000;
+export const CLAUDE_AUTO_RESUME_DEFAULT_POLL_MS = 60_000;
 export const CLAUDE_AUTO_RESUME_DEFAULT_TIME_ZONE = "Asia/Kolkata";
 export const CLAUDE_AUTO_RESUME_DISABLE_FLAG = "AICC_CLAUDE_AUTO_RESUME_DAEMON";
 export const CLAUDE_AUTO_RESUME_STATE_DIR = "AICC_STATE_DIR";
@@ -286,7 +286,11 @@ export function scheduleClaudeAutoResumeJob(
   now = new Date(),
 ): { created: boolean; job: ClaudeAutoResumeJob } {
   const existing = state.jobs.find(
-    (job) => job.workspaceId === registration.workspaceId && job.agentIdentity === registration.agentIdentity && job.resetAt === detection.resetAt,
+    (job) =>
+      job.workspaceId === registration.workspaceId &&
+      job.agentIdentity === registration.agentIdentity &&
+      job.resetAt === detection.resetAt &&
+      (job.surfaceId || registration.surfaceId) === registration.surfaceId,
   );
   if (existing) {
     existing.sourceExcerpt = detection.sourceExcerpt;
@@ -305,7 +309,7 @@ export function scheduleClaudeAutoResumeJob(
   }
 
   const job: ClaudeAutoResumeJob = {
-    id: claudeAutoResumeJobId(registration.workspaceId, registration.agentIdentity, detection.resetAt),
+    id: claudeAutoResumeJobId(registration.workspaceId, registration.agentIdentity, detection.resetAt, registration.surfaceId),
     workspaceId: registration.workspaceId,
     windowId: registration.windowId,
     workspaceName: registration.workspaceName,
@@ -334,8 +338,8 @@ export function scheduleClaudeAutoResumeJob(
   return { created: true, job };
 }
 
-function claudeAutoResumeJobId(workspaceId: string, agentIdentity: string, resetAt: string): string {
-  return `${workspaceId}:${agentIdentity}:${resetAt}`.replace(/[^A-Za-z0-9_.:-]+/g, "_");
+function claudeAutoResumeJobId(workspaceId: string, agentIdentity: string, resetAt: string, surfaceId?: string): string {
+  return `${workspaceId}:${agentIdentity}:${surfaceId || "surface"}:${resetAt}`.replace(/[^A-Za-z0-9_.:-]+/g, "_");
 }
 
 export async function scanClaudeSurfacesOnce(
@@ -344,6 +348,7 @@ export async function scanClaudeSurfacesOnce(
   now = new Date(),
   defaultTimeZone = resolveDefaultTimeZone(),
 ): Promise<void> {
+  await discoverClaudeSurfaceRegistrations(state, runner, now);
   for (const registration of state.registrations.filter((candidate) => candidate.agentIdentity.toLowerCase() === "claude")) {
     try {
       const surface = await resolveClaudeSurface(runner, registration);
@@ -361,6 +366,61 @@ export async function scanClaudeSurfacesOnce(
         workspaceId: registration.workspaceId,
         surfaceId: registration.surfaceId,
         message: `Claude auto-resume scan failed: ${errorMessage(error)}`,
+        error: errorMessage(error),
+      });
+    }
+  }
+}
+
+async function discoverClaudeSurfaceRegistrations(
+  state: ClaudeAutoResumeState,
+  runner: CommandRunner,
+  now: Date,
+): Promise<void> {
+  const workspaceRegistrations = new Map<string, ClaudeSurfaceRegistration>();
+  for (const registration of state.registrations.filter((candidate) => candidate.agentIdentity.toLowerCase() === "claude")) {
+    const key = `${registration.workspaceId}\n${registration.windowId || ""}`;
+    if (!workspaceRegistrations.has(key)) workspaceRegistrations.set(key, registration);
+  }
+
+  for (const registration of workspaceRegistrations.values()) {
+    try {
+      const surfaces = await readCmuxTreeSurfaces(runner, registration.workspaceId, registration.windowId);
+      for (const surface of surfaces.filter(isClaudeTitledSurface)) {
+        const discoveredSurfaceId = surfaceId(surface);
+        if (!discoveredSurfaceId) continue;
+        const exists = state.registrations.some(
+          (candidate) =>
+            candidate.workspaceId === registration.workspaceId &&
+            candidate.agentIdentity.toLowerCase() === "claude" &&
+            candidate.surfaceId === discoveredSurfaceId,
+        );
+        if (exists) continue;
+        state.registrations.push({
+          workspaceId: registration.workspaceId,
+          windowId: registration.windowId,
+          workspaceName: registration.workspaceName,
+          cwd: registration.cwd,
+          surfaceId: discoveredSurfaceId,
+          agentIdentity: "Claude",
+          title: surface.title || "Claude",
+          updatedAt: now.toISOString(),
+        });
+        recordEvent(state, {
+          type: "registered",
+          at: now.toISOString(),
+          workspaceId: registration.workspaceId,
+          surfaceId: discoveredSurfaceId,
+          message: `Discovered Claude surface ${discoveredSurfaceId} for auto-resume`,
+        });
+      }
+    } catch (error) {
+      recordEvent(state, {
+        type: "scan_failed",
+        at: now.toISOString(),
+        workspaceId: registration.workspaceId,
+        surfaceId: registration.surfaceId,
+        message: `Claude auto-resume discovery failed: ${errorMessage(error)}`,
         error: errorMessage(error),
       });
     }
@@ -784,6 +844,15 @@ export async function registerClaudeSurfaceFromConductorContext(
   windowId: string | undefined,
   store?: ClaudeAutoResumeStore,
 ): Promise<ClaudeAutoResumeState> {
+  if (context.claudePanelEnabled === false || !context.claudeSurfaceId) {
+    const resolvedStore = store || new FileClaudeAutoResumeStore();
+    const state = await resolvedStore.load();
+    state.registrations = state.registrations.filter(
+      (registration) => !(registration.workspaceId === context.workspaceId && registration.agentIdentity.toLowerCase() === "claude"),
+    );
+    await resolvedStore.save(state);
+    return state;
+  }
   return registerClaudeAutoResumeSurface(
     {
       workspaceId: context.workspaceId,

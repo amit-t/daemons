@@ -38,6 +38,7 @@ describe("ai-cmux-conductor CLI", () => {
     expect(output).toContain("Claude");
     expect(output).toContain("Devin");
     expect(output).toContain("auto-resume");
+    expect(output).toContain("--reset");
     expect(output).not.toContain(GENERIC_NAME);
   });
 
@@ -53,6 +54,12 @@ describe("ai-cmux-conductor CLI", () => {
     const { code, output } = await runCommand("bun", ["ai-cmux-conductor", "--status"]);
     expect(code).toBe(0);
     expect(output).toContain("Claude auto-resume");
+  });
+
+  test("prints unread AICC event inbox without bootstrapping cMUX", async () => {
+    const { code, output } = await runCommand("bun", ["ai-cmux-conductor", "--events", "--unread"]);
+    expect(code).toBe(0);
+    expect(output).not.toContain("aicc needs cMUX");
   });
 
   test("README documents purpose and verification", () => {

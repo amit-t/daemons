@@ -196,6 +196,65 @@ function treeWithExistingAgentsWorkspaceTitle(title: string): string {
   });
 }
 
+function treeWithDevinOnlyWorkspaceTitle(title: string): string {
+  return JSON.stringify({
+    windows: [
+      {
+        ref: "window:1",
+        id: "window-uuid",
+        workspaces: [
+          {
+            ref: "workspace:1",
+            id: "workspace-uuid",
+            title,
+            panes: [
+              {
+                ref: "pane:base",
+                surfaces: [{ id: "base-surface-uuid", ref: "surface:base", title: "Base", type: "terminal", pane_ref: "pane:base" }],
+              },
+              {
+                ref: "pane:devin",
+                surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function treeWithClaudeAboveExistingDevinWorkspaceTitle(title: string): string {
+  return JSON.stringify({
+    windows: [
+      {
+        ref: "window:1",
+        id: "window-uuid",
+        workspaces: [
+          {
+            ref: "workspace:1",
+            id: "workspace-uuid",
+            title,
+            panes: [
+              {
+                ref: "pane:base",
+                surfaces: [{ id: "base-surface-uuid", ref: "surface:base", title: "codex", type: "terminal", pane_ref: "pane:base" }],
+              },
+              {
+                ref: "pane:devin-stack",
+                surfaces: [
+                  { id: "claude-surface-uuid", ref: "surface:claude", title: "~/project-x", type: "terminal", pane_ref: "pane:devin-stack" },
+                  { id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin-stack" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
 const treeAfterClaudePane = treeAfterClaudePaneWithWorkspaceTitle("old");
 const treeAfterDevinPane = treeAfterDevinPaneWithWorkspaceTitle("old");
 const treeAfterWorkspaceRename = treeAfterDevinPaneWithWorkspaceTitle("Project-X");
@@ -263,6 +322,8 @@ describe("prepareConductor", () => {
     const result = await prepareConductor({
       cwd: "/work/project-x",
       env: {
+        AICC_CREATE_DEVIN_PANEL: "true",
+        AICC_CREATE_CODEX_PANEL: "false",
         CMUX_WORKSPACE_ID: "workspace-uuid",
         CMUX_SURFACE_ID: "base-surface-uuid",
         CMUX_WINDOW_ID: "window-uuid",
@@ -279,12 +340,12 @@ describe("prepareConductor", () => {
     expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
     expect(calls.some((call) => call.includes("new-pane") || call.includes("new-split"))).toBe(false);
     expect(calls.some((call) => call[0] === "cmux" && call[1] === "send" && call.at(-1)?.includes("clscb"))).toBe(false);
-    expect(calls.some((call) => call[0] === "cmux" && call[1] === "send" && call.at(-1)?.includes("dey"))).toBe(false);
+    expect(calls.some((call) => call[0] === "cmux" && call[1] === "send" && call.at(-1)?.includes("dey.boil"))).toBe(false);
   });
 
   test("inside cMUX creates missing Claude right of Codex and missing Devin below Claude using UUID env IDs", async () => {
     const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
-    const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey'\n";
+    const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'\n";
     const { runner, calls } = strictRunnerFor({
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface base-surface-uuid codex": { stdout: "" },
       "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
@@ -308,6 +369,7 @@ describe("prepareConductor", () => {
       cwd: "/work/project-x",
       env: {
         AICC_CREATE_DEVIN_PANEL: "true",
+        AICC_CREATE_CODEX_PANEL: "false",
         CMUX_WORKSPACE_ID: "workspace-uuid",
         CMUX_SURFACE_ID: "base-surface-uuid",
         CMUX_WINDOW_ID: "window-uuid",
@@ -340,6 +402,56 @@ describe("prepareConductor", () => {
     ]);
   });
 
+  test("inside cMUX creates missing Claude above an existing Devin surface instead of left of Devin", async () => {
+    const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
+    const treeWithDevinOnly = treeWithDevinOnlyWorkspaceTitle("old");
+    const treeAfterClaudeAboveDevin = treeWithClaudeAboveExistingDevinWorkspaceTitle("old");
+    const treeAfterWorkspaceRename = treeWithClaudeAboveExistingDevinWorkspaceTitle("Project-X");
+    const { runner, calls } = strictRunnerFor({
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface base-surface-uuid codex": { stdout: "" },
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithDevinOnly },
+        { stdout: treeAfterClaudeAboveDevin },
+        { stdout: treeAfterClaudeAboveDevin },
+        { stdout: treeAfterWorkspaceRename },
+      ],
+      "cmux new-split up --workspace workspace-uuid --surface surface:devin --focus false --window window-uuid": { stdout: "OK surface:claude workspace:1\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
+    });
+
+    const result = await prepareConductor({
+      cwd: "/work/project-x",
+      env: {
+        AICC_CREATE_DEVIN_PANEL: "true",
+        AICC_CREATE_CODEX_PANEL: "false",
+        CMUX_WORKSPACE_ID: "workspace-uuid",
+        CMUX_SURFACE_ID: "base-surface-uuid",
+        CMUX_WINDOW_ID: "window-uuid",
+      },
+      runner,
+    });
+
+    expect(result.mode).toBe("ready");
+    if (result.mode !== "ready") throw new Error("expected ready");
+    expect(result.context.claudeSurfaceId).toBe("surface:claude");
+    expect(result.context.devinSurfaceId).toBe("surface:devin");
+    expect(result.context.reusedClaude).toBe(false);
+    expect(result.context.reusedDevin).toBe(true);
+    expect(calls).toEqual([
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "base-surface-uuid", "codex"],
+      ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "new-split", "up", "--workspace", "workspace-uuid", "--surface", "surface:devin", "--focus", "false", "--window", "window-uuid"],
+      ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Claude"],
+      ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
+      ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
+      ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+    ]);
+  });
+
   test("inside cMUX skips Devin panel creation when the feature flag is false", async () => {
     const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
     const treeAfterClaudeWorkspaceRename = treeAfterClaudePaneWithWorkspaceTitle("Project-X");
@@ -357,6 +469,7 @@ describe("prepareConductor", () => {
       cwd: "/work/project-x",
       env: {
         AICC_CREATE_DEVIN_PANEL: "false",
+        AICC_CREATE_CODEX_PANEL: "false",
         CMUX_WORKSPACE_ID: "workspace-uuid",
         CMUX_SURFACE_ID: "base-surface-uuid",
         CMUX_WINDOW_ID: "window-uuid",
@@ -381,7 +494,7 @@ describe("prepareConductor", () => {
 
   test("workspace rename is verified and falls back when the first rename command does not change the title", async () => {
     const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
-    const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey'\n";
+    const devinLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'\n";
     const { runner, calls } = strictRunnerFor({
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface base-surface-uuid codex": { stdout: "" },
       "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
@@ -407,6 +520,7 @@ describe("prepareConductor", () => {
       cwd: "/work/project-x",
       env: {
         AICC_CREATE_DEVIN_PANEL: "true",
+        AICC_CREATE_CODEX_PANEL: "false",
         CMUX_WORKSPACE_ID: "workspace-uuid",
         CMUX_SURFACE_ID: "base-surface-uuid",
         CMUX_WINDOW_ID: "window-uuid",
@@ -427,10 +541,14 @@ describe("prepareConductor", () => {
 });
 
 describe("Devin panel feature flag", () => {
-  test("is enabled by default and disabled only by an explicit false value", () => {
-    expect(isDevinPanelEnabled({})).toBe(true);
+  test("is disabled by default and enabled only by an explicit true value", () => {
+    expect(isDevinPanelEnabled({})).toBe(false);
     expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "false" })).toBe(false);
+    expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "0" })).toBe(false);
+    expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "no" })).toBe(false);
     expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "true" })).toBe(true);
+    expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "1" })).toBe(true);
+    expect(isDevinPanelEnabled({ AICC_CREATE_DEVIN_PANEL: "yes" })).toBe(true);
   });
 
   test("parses environment.env style assignments", () => {
@@ -446,12 +564,12 @@ describe("Devin panel feature flag", () => {
     });
   });
 
-  test("tracks the repository environment.env file with Devin enabled by default", () => {
+  test("tracks the repository environment.env file with Devin disabled by default", () => {
     const fileEnv = loadAiCmuxConductorEnv({}, DEFAULT_ENVIRONMENT_FILE);
 
-    expect(readFileSync(DEFAULT_ENVIRONMENT_FILE, "utf8")).toContain("AICC_CREATE_DEVIN_PANEL=true");
-    expect(fileEnv.AICC_CREATE_DEVIN_PANEL).toBe("true");
-    expect(isDevinPanelEnabled(fileEnv)).toBe(true);
+    expect(readFileSync(DEFAULT_ENVIRONMENT_FILE, "utf8")).toContain("AICC_CREATE_DEVIN_PANEL=false");
+    expect(fileEnv.AICC_CREATE_DEVIN_PANEL).toBe("false");
+    expect(isDevinPanelEnabled(fileEnv)).toBe(false);
   });
 
   test("process environment overrides the repository environment.env file", () => {
@@ -482,9 +600,14 @@ describe("buildOrchestratorPrompt", () => {
     expect(prompt).toContain("cmux read-screen");
     expect(prompt).toContain("cmux send");
     expect(prompt).toContain("ask before replacing");
+    expect(prompt).toContain("AICC_DAEMON_NOTICE_V1");
+    expect(prompt).toContain("aicc --events --unread");
+    expect(prompt).toContain("do_not_treat_as_user_request");
+    expect(prompt).toContain("If Amit's entire message is exactly `Reset`");
+    expect(prompt).toContain("aicc --reset");
   });
 
-  test("tells the orchestrator to open Devin below Claude with dey before passing Devin prompts", () => {
+  test("tells the orchestrator to open Devin below Claude with dey.boil before passing Devin prompts", () => {
     const prompt = buildOrchestratorPrompt({
       cwd: "/work/project-x",
       workspaceName: "project-x",
@@ -497,11 +620,11 @@ describe("buildOrchestratorPrompt", () => {
       reusedDevin: false,
     });
 
-    expect(prompt).toContain('When the user says "ask Devin"');
-    expect(prompt).toContain("open Devin in interactive yolo mode below Claude");
+    expect(prompt).toContain('"ask Devin"');
+    expect(prompt).toContain("Devin below Claude");
     expect(prompt).toContain("cmux new-split down --workspace workspace:1 --surface surface:2 --focus true");
     expect(prompt).toContain("cmux rename-tab --workspace workspace:1 --surface NEW_DEVIN_SURFACE Devin");
-    expect(prompt).toContain("zsh -lc 'cd '\\''/work/project-x'\\'' && dey'");
+    expect(prompt).toContain("zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'");
     expect(prompt).toContain("send the pending prompt to that Devin surface");
   });
 

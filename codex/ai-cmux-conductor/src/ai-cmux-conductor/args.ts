@@ -3,6 +3,9 @@ export interface AiCmuxConductorArgs {
   quiet: boolean;
   help: boolean;
   status: boolean;
+  events: boolean;
+  unread: boolean;
+  reset: boolean;
   daemon: boolean;
   stopDaemon: boolean;
   noWarm: boolean;
@@ -20,6 +23,9 @@ const FLAG_NAMES = new Set([
   "--help",
   "--status",
   "--auto-resume-status",
+  "--events",
+  "--unread",
+  "--reset",
   "--daemon",
   "--stop-daemon",
   "--no-warm",
@@ -31,6 +37,8 @@ export function parseAiCmuxConductorArgs(argv: string[]): AiCmuxConductorArgs {
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("-h") || args.includes("--help");
   const status = args.includes("--status") || args.includes("--auto-resume-status");
+  const events = args.includes("--events");
+  const unread = args.includes("--unread");
   const daemon = args.includes("--daemon");
   const stopDaemon = args.includes("--stop-daemon");
   const noWarm = args.includes("--no-warm");
@@ -42,12 +50,16 @@ export function parseAiCmuxConductorArgs(argv: string[]): AiCmuxConductorArgs {
   const prompt = args
     .filter((arg, index) => !FLAG_NAMES.has(arg) && arg !== "--effort" && index !== effortValueIndex)
     .join(" ");
+  const reset = args.includes("--reset") || prompt === "Reset";
 
   return {
     interactive,
     quiet,
     help,
     status,
+    events,
+    unread,
+    reset,
     daemon,
     stopDaemon,
     noWarm,

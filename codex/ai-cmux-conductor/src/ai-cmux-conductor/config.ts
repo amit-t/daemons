@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const DEVIN_PANEL_FEATURE_FLAG = "AICC_CREATE_DEVIN_PANEL";
+export const CLAUDE_PANEL_FEATURE_FLAG = "AICC_CREATE_CLAUDE_PANEL";
+export const CODEX_PANEL_FEATURE_FLAG = "AICC_CREATE_CODEX_PANEL";
 export const DEFAULT_ENVIRONMENT_FILE = fileURLToPath(new URL("../../environment.env", import.meta.url));
 
 export function parseEnvironmentFile(contents: string): Record<string, string> {
@@ -39,7 +41,20 @@ export function loadAiCmuxConductorEnv(
 
 export function isDevinPanelEnabled(env: Record<string, string | undefined>): boolean {
   const value = env[DEVIN_PANEL_FEATURE_FLAG]?.trim().toLowerCase();
-  return value !== "false" && value !== "0" && value !== "no";
+  return value === "true" || value === "1" || value === "yes";
+}
+
+export function isClaudePanelEnabled(env: Record<string, string | undefined>): boolean {
+  return isEnabledUnlessExplicitlyDisabled(env[CLAUDE_PANEL_FEATURE_FLAG]);
+}
+
+export function isCodexPanelEnabled(env: Record<string, string | undefined>): boolean {
+  return isEnabledUnlessExplicitlyDisabled(env[CODEX_PANEL_FEATURE_FLAG]);
+}
+
+function isEnabledUnlessExplicitlyDisabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized !== "false" && normalized !== "0" && normalized !== "no";
 }
 
 function stripOptionalQuotes(value: string): string {
