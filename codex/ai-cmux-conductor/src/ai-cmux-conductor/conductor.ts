@@ -8,6 +8,15 @@ import {
   isCodexPanelEnabled,
   isDevinPanelEnabled,
 } from "./config.ts";
+import {
+  CODEX_PANEL_TITLE,
+  DEVIN_PANEL_TITLE,
+  MANAGED_PANEL_TITLES,
+  type ManagedAgentName,
+  isManagedAgentSurfaceTitle,
+  managedPanelTitle,
+  shouldRenameToCanonicalManagedPanelTitle,
+} from "./panel-titles.ts";
 
 export interface CommandResult {
   code: number;
@@ -19,7 +28,7 @@ export type CommandRunner = (command: string, args: string[]) => Promise<Command
 
 export const DEVIN_LAUNCH_COMMAND = "dey.boil";
 export const CODEX_PANEL_LAUNCH_COMMAND = "cxscb --disable apps -c 'mcp_servers={}'";
-export type ManagedPanelTitle = "Claude" | "Codex" | "Devin";
+export type ManagedPanelTitle = ManagedAgentName;
 
 export interface ConductorContext {
   cwd: string;
@@ -124,12 +133,12 @@ function surfaceByTitle(surfaces: CmuxSurface[], title: string): CmuxSurface | u
   return surfaces.find((surface) => surface.title === title && surface.ref);
 }
 
-function surfaceByAgentTitle(surfaces: CmuxSurface[], title: ManagedPanelTitle): CmuxSurface | undefined {
-  if (title === "Codex") {
-    return surfaces.find((surface) => surface.type !== "browser" && surfaceId(surface) && surface.title === "Codex");
-  }
-  const agentPattern = new RegExp(`\\b${title}\\b`, "i");
-  return surfaces.find((surface) => surface.type !== "browser" && surfaceId(surface) && agentPattern.test(surface.title || ""));
+function surfaceByAgentTitle(surfaces: CmuxSurface[], agent: ManagedAgentName): CmuxSurface | undefined {
+  const canonical = surfaces.find(
+    (surface) => surface.type !== "browser" && surfaceId(surface) && surface.title === managedPanelTitle(agent),
+  );
+  if (canonical) return canonical;
+  return surfaces.find((surface) => surface.type !== "browser" && surfaceId(surface) && isManagedAgentSurfaceTitle(agent, surface.title));
 }
 
 function surfaceForPane(surfaces: CmuxSurface[], paneRef: string): CmuxSurface | undefined {
@@ -215,16 +224,18 @@ async function createAgentSurface(options: {
   workspaceId: string;
   windowId?: string;
   cwd: string;
-  title: ManagedPanelTitle;
+  agent: ManagedAgentName;
   command: string;
   direction: "right" | "down" | "up";
   splitFromSurfaceRef?: string;
   focusPaneRef?: string;
   surfaces: CmuxSurface[];
 }): Promise<{ surfaceId: string; reused: boolean; surfaces: CmuxSurface[] }> {
-  const existing = surfaceByAgentTitle(options.surfaces, options.title);
+  const title = managedPanelTitle(options.agent);
+  const existing = surfaceByAgentTitle(options.surfaces, options.agent);
   const existingId = existing && surfaceId(existing);
   if (existingId) {
+    await renameManagedSurfaceIfNeeded(options.runner, options.workspaceId, options.windowId, options.agent, existing, existingId);
     return { surfaceId: existingId, reused: true, surfaces: options.surfaces };
   }
 
@@ -246,12 +257,12 @@ async function createAgentSurface(options: {
     const created =
       (newSurfaceRef && surfaceByIdOrRef(refreshed, newSurfaceRef)) ||
       (paneRef && surfaceForPane(refreshed, paneRef)) ||
-      surfaceByTitle(refreshed, options.title);
+      surfaceByTitle(refreshed, title);
     const createdId = created && surfaceId(created);
     if (!createdId) {
-      throw new Error(`Unable to find cMUX surface for ${options.title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
+      throw new Error(`Unable to find cMUX surface for ${title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
     }
-    await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, options.title]);
+    await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, title]);
     const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
     await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
     return { surfaceId: createdId, reused: false, surfaces: refreshed };
@@ -284,15 +295,35 @@ async function createAgentSurface(options: {
   const created =
     (newSurfaceRef && surfaceByIdOrRef(refreshed, newSurfaceRef)) ||
     (paneRef && surfaceForPane(refreshed, paneRef)) ||
-    surfaceByTitle(refreshed, options.title);
+    surfaceByTitle(refreshed, title);
   const createdId = created && surfaceId(created);
   if (!createdId) {
-    throw new Error(`Unable to find cMUX surface for ${options.title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
+    throw new Error(`Unable to find cMUX surface for ${title} after creating ${newSurfaceRef || paneRef || "a pane"}`);
   }
-  await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, options.title]);
+  await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, title]);
   const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
   await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
   return { surfaceId: createdId, reused: false, surfaces: refreshed };
+}
+
+async function renameManagedSurfaceIfNeeded(
+  runner: CommandRunner,
+  workspaceId: string,
+  windowId: string | undefined,
+  agent: ManagedAgentName,
+  surface: CmuxSurface,
+  surfaceIdValue: string,
+): Promise<void> {
+  if (!shouldRenameToCanonicalManagedPanelTitle(agent, surface.title)) return;
+  await runOrThrow(runner, "cmux", [
+    "rename-tab",
+    "--workspace",
+    workspaceId,
+    ...windowArgs(windowId),
+    "--surface",
+    surfaceIdValue,
+    managedPanelTitle(agent),
+  ]);
 }
 
 export async function prepareConductor(options: PrepareConductorOptions): Promise<PrepareConductorResult> {
@@ -324,9 +355,9 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
   let surfaces = await readTree(runner, workspaceId, windowId);
   const orchestratorSurface = surfaceByIdOrRef(surfaces, orchestratorSurfaceId);
   const panelSpecs = [
-    { key: "claude" as const, title: "Claude" as const, command: "clscb", enabled: claudePanelEnabled },
-    { key: "codex" as const, title: "Codex" as const, command: CODEX_PANEL_LAUNCH_COMMAND, enabled: codexPanelEnabled },
-    { key: "devin" as const, title: "Devin" as const, command: DEVIN_LAUNCH_COMMAND, enabled: devinPanelEnabled },
+    { key: "claude" as const, agent: "Claude" as const, command: "clscb", enabled: claudePanelEnabled },
+    { key: "codex" as const, agent: "Codex" as const, command: CODEX_PANEL_LAUNCH_COMMAND, enabled: codexPanelEnabled },
+    { key: "devin" as const, agent: "Devin" as const, command: DEVIN_LAUNCH_COMMAND, enabled: devinPanelEnabled },
   ];
   const panels: Partial<Record<(typeof panelSpecs)[number]["key"], { surfaceId: string; reused: boolean }>> = {};
   let stackAnchorSurfaceRef: string | undefined;
@@ -335,9 +366,10 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
     const spec = panelSpecs[index]!;
     if (!spec.enabled) continue;
 
-    const existing = surfaceByAgentTitle(surfaces, spec.title);
+    const existing = surfaceByAgentTitle(surfaces, spec.agent);
     const existingSurfaceId = existing && surfaceId(existing);
     if (existingSurfaceId) {
+      await renameManagedSurfaceIfNeeded(runner, workspaceId, windowId, spec.agent, existing, existingSurfaceId);
       panels[spec.key] = { surfaceId: existingSurfaceId, reused: true };
       stackAnchorSurfaceRef = existingSurfaceId;
       continue;
@@ -346,7 +378,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
     const lowerExistingSurfaceRef = panelSpecs
       .slice(index + 1)
       .filter((candidate) => candidate.enabled)
-      .map((candidate) => surfaceByAgentTitle(surfaces, candidate.title))
+      .map((candidate) => surfaceByAgentTitle(surfaces, candidate.agent))
       .map((surface) => surface && surfaceId(surface))
       .find((surfaceRef): surfaceRef is string => Boolean(surfaceRef));
     const splitFromSurfaceRef = stackAnchorSurfaceRef || lowerExistingSurfaceRef;
@@ -355,7 +387,7 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
       workspaceId,
       windowId,
       cwd,
-      title: spec.title,
+      agent: spec.agent,
       command: spec.command,
       direction: stackAnchorSurfaceRef ? "down" : lowerExistingSurfaceRef ? "up" : "right",
       splitFromSurfaceRef,
@@ -408,13 +440,13 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
     `- Working directory: ${context.cwd}`,
     `- Orchestrator surface: ${context.orchestratorSurfaceId}`,
     claudeEnabled
-      ? `- Claude surface: ${context.claudeSurfaceId} (${context.reusedClaude ? "reused existing pane" : "created new pane"})`
+      ? `- Claude surface: ${context.claudeSurfaceId} (panel title: ${MANAGED_PANEL_TITLES.Claude}; ${context.reusedClaude ? "reused existing pane" : "created new pane"})`
       : `- Claude panel: disabled (${CLAUDE_PANEL_FEATURE_FLAG}=false)`,
     codexPanelEnabled
-      ? `- Codex panel surface: ${context.codexPanelSurfaceId} (${context.reusedCodexPanel ? "reused existing pane" : "created new pane"})`
+      ? `- Codex panel surface: ${context.codexPanelSurfaceId} (panel title: ${CODEX_PANEL_TITLE}; ${context.reusedCodexPanel ? "reused existing pane" : "created new pane"})`
       : `- Codex panel: disabled (${CODEX_PANEL_FEATURE_FLAG}=false)`,
     devinEnabled
-      ? `- Devin surface: ${context.devinSurfaceId} (${context.reusedDevin ? "reused existing pane" : "created new pane"})`
+      ? `- Devin surface: ${context.devinSurfaceId} (panel title: ${DEVIN_PANEL_TITLE}; ${context.reusedDevin ? "reused existing pane" : "created new pane"})`
       : `- Devin panel: disabled (${DEVIN_PANEL_FEATURE_FLAG}=false)`,
   ];
 
@@ -433,27 +465,27 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
   if (codexPanelEnabled) {
     const codexLaunchCommand = `zsh -lc ${shellQuote(`cd ${shellQuote(context.cwd)} && ${CODEX_PANEL_LAUNCH_COMMAND}`)}`;
     const codexAnchorSurface = claudeEnabled ? context.claudeSurfaceId! : context.orchestratorSurfaceId;
-    const codexAnchorText = claudeEnabled ? "below Claude" : "right of the orchestrator";
+    const codexAnchorText = claudeEnabled ? `below ${MANAGED_PANEL_TITLES.Claude}` : "right of the orchestrator";
     const codexOpenCommand = claudeEnabled
       ? `cmux new-split down --workspace ${context.workspaceId} --surface ${codexAnchorSurface} --focus true`
       : `cmux new-pane --direction right --workspace ${context.workspaceId} --focus true`;
     commandLines.push(
       `- Read Codex: cmux read-screen --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} --scrollback --lines 160`,
       `- Send Codex: cmux send --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Codex ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE Codex\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. Wait for the Codex CLI UI, then send the pending prompt to that Codex surface.`,
+      `- Open/repair Codex (${CODEX_PANEL_TITLE}) ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE ${CODEX_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. Wait for the Codex CLI UI, then send the pending prompt to that Codex surface.`,
     );
   }
   if (devinEnabled) {
     const devinLaunchCommand = `zsh -lc ${shellQuote(`cd ${shellQuote(context.cwd)} && ${DEVIN_LAUNCH_COMMAND}`)}`;
     const devinAnchorSurface = context.codexPanelSurfaceId || context.claudeSurfaceId || context.orchestratorSurfaceId;
-    const devinAnchorText = context.codexPanelSurfaceId ? "below Codex" : context.claudeSurfaceId ? "below Claude" : "right of the orchestrator";
+    const devinAnchorText = context.codexPanelSurfaceId ? `below ${CODEX_PANEL_TITLE}` : context.claudeSurfaceId ? `below ${MANAGED_PANEL_TITLES.Claude}` : "right of the orchestrator";
     const devinOpenCommand = context.codexPanelSurfaceId || context.claudeSurfaceId
       ? `cmux new-split down --workspace ${context.workspaceId} --surface ${devinAnchorSurface} --focus true`
       : `cmux new-pane --direction right --workspace ${context.workspaceId} --focus true`;
     commandLines.push(
       `- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160`,
       `- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Devin ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE Devin\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. Wait for the Devin CLI UI, then send the pending prompt to that Devin surface.`,
+      `- Open/repair Devin (${DEVIN_PANEL_TITLE}) ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE ${DEVIN_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. Wait for the Devin CLI UI, then send the pending prompt to that Devin surface.`,
     );
   }
 
@@ -516,7 +548,7 @@ Usage:
 
 Behavior:
   - Outside cMUX: tries once to create a focused cMUX workspace for $PWD with command 'aicc', then exits.
-  - Inside cMUX: renames the current tab to codex, reuses enabled Claude/Codex/Devin panels, creates missing enabled panels in a right-side stack, verifies the workspace title, then opens Codex as the base orchestrator.
+  - Inside cMUX: renames the current tab to codex, reuses enabled kid-claude/kid-codex/kid-devin panels, creates missing enabled panels in a right-side stack, verifies the workspace title, then opens Codex as the base orchestrator.
   - Panel feature flags: ${CLAUDE_PANEL_FEATURE_FLAG}=true, ${CODEX_PANEL_FEATURE_FLAG}=true, ${DEVIN_PANEL_FEATURE_FLAG}=false by default in environment.env. Set any flag false to leave that panel untouched and unmanaged.
   - Codex orchestrator command: cxscb --disable apps -c 'mcp_servers={}' (suppresses Codex Apps/external MCP startup)
   - Claude pane command: zsh -lc 'cd <cwd> && clscb'

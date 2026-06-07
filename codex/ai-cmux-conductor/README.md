@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Run from any project directory, `aicc` makes Codex the base orchestrator tab with Amit's `cxscb` launcher and coordinates optional side panes in the same cMUX workspace. Claude and the extra Codex panel are enabled by default; Devin is disabled by default and only becomes AICC-managed when `AICC_CREATE_DEVIN_PANEL=true`. AICC suppresses Codex Apps/external MCP startup for the base orchestrator and the optional Codex panel, reuses existing enabled managed panes when present, creates only missing enabled panes, and starts a durable AICC poller. The poller checks enabled Claude/Codex/Devin panes every 60 seconds, records meaningful events, nudges the base Codex orchestrator with a safe control envelope, and handles Claude usage-limit auto-resume.
+Run from any project directory, `aicc` makes Codex the base orchestrator tab with Amit's `cxscb` launcher and coordinates optional kid-named side panes in the same cMUX workspace. Claude and the extra Codex panel are enabled by default as `kid-claude` and `kid-codex`; Devin is disabled by default and only becomes AICC-managed as `kid-devin` when `AICC_CREATE_DEVIN_PANEL=true`. AICC suppresses Codex Apps/external MCP startup for the base orchestrator and the optional Codex panel, reuses existing enabled managed panes when present, retitles legacy `Claude`/`Codex`/`Devin` panes to their kid-prefixed names, creates only missing enabled panes, and starts a durable AICC poller. The poller checks enabled Claude/Codex/Devin panes every 60 seconds, records meaningful events, nudges the base Codex orchestrator with a safe control envelope, and handles Claude usage-limit auto-resume.
 
 ## Behavior
 
@@ -18,11 +18,12 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
 3. Read the cMUX tree and preserve existing side-agent surfaces. AICC manages only panes whose feature flag is enabled; disabled panes are left untouched and unregistered.
 4. Fill missing layout pieces only:
    - Base Codex/current pane stays on the left and is renamed `codex`.
-   - Enabled side panes stack to the right in this order: `Claude` → `Codex` → `Devin`.
-   - Claude is created to the right of base Codex when enabled and missing.
-   - The extra Codex panel is created below Claude when enabled and missing; if Claude is disabled, Codex is created right of the base orchestrator.
-   - Devin is created below the Codex panel when both are enabled, below Claude when Codex is disabled, or right of the base orchestrator when it is the only enabled side pane.
+   - Enabled side panes stack to the right in this order: `kid-claude` → `kid-codex` → `kid-devin`.
+   - Claude is created as `kid-claude` to the right of base Codex when enabled and missing.
+   - The extra Codex panel is created as `kid-codex` below `kid-claude` when enabled and missing; if Claude is disabled, Codex is created right of the base orchestrator.
+   - Devin is created as `kid-devin` below the Codex panel when both are enabled, below Claude when Codex is disabled, or right of the base orchestrator when it is the only enabled side pane.
    - When a lower enabled pane already exists and an upper enabled pane is missing, AICC splits `up` from the lower pane to restore stack order without closing anything.
+   - Legacy managed pane titles `Claude`, `Codex`, and `Devin` are reused and retitled to `kid-claude`, `kid-codex`, and `kid-devin` instead of duplicated.
 5. Launch only newly-created panes with:
    - Base Codex orchestrator: `cxscb --disable apps -c 'mcp_servers={}' <orchestrator prompt>`
    - Claude panel: `zsh -lc 'cd <cwd> && clscb'`
@@ -44,7 +45,7 @@ AICC_CREATE_DEVIN_PANEL=false
 ```
 
 - `AICC_CREATE_CLAUDE_PANEL=true` (current default): create/reuse/poll/reset/route Claude. Set `false` to leave existing Claude panes untouched and omit Claude routing/auto-resume registration for this workspace.
-- `AICC_CREATE_CODEX_PANEL=true` (current default): create/reuse/poll/reset/route the extra side Codex panel titled `Codex`. Set `false` to leave existing `Codex` side panes untouched. The base orchestrator still runs.
+- `AICC_CREATE_CODEX_PANEL=true` (current default): create/reuse/poll/reset/route the extra side Codex panel titled `kid-codex`. Set `false` to leave existing Codex side panes untouched. The base orchestrator still runs.
 - `AICC_CREATE_DEVIN_PANEL=false` (current default): do not create, reuse, poll, reset, or route Devin. Existing Devin panes are left untouched. Set `true` to opt into Devin.
 
 Exported shell environment variables with the same names override `environment.env`.
@@ -71,17 +72,17 @@ AICC_STATE_DIR=~/.local/state/ai-cmux-conductor
 
 ## Codex side panel routing
 
-When `AICC_CREATE_CODEX_PANEL=true`, AICC creates an extra side pane titled `Codex` underneath Claude with:
+When `AICC_CREATE_CODEX_PANEL=true`, AICC creates an extra side pane titled `kid-codex` underneath `kid-claude` with:
 
 ```zsh
 zsh -lc "cd <cwd> && cxscb --disable apps -c 'mcp_servers={}'"
 ```
 
-The lowercase `codex` tab remains the base orchestrator. The title-cased `Codex` pane is the side agent. The base orchestrator prompt tells future AICC sessions that "ask Codex" / "send to Codex" means use this side pane, repair only that pane when explicitly requested, and never treat the daemon inbox as a user request.
+The lowercase `codex` tab remains the base orchestrator. The `kid-codex` pane is the side Codex agent. The base orchestrator prompt tells future AICC sessions that "ask Codex" / "send to Codex" means use this side pane, repair only that pane when explicitly requested, and never treat the daemon inbox as a user request.
 
 ## Devin boil panel routing
 
-Only when `AICC_CREATE_DEVIN_PANEL=true`, AICC creates the Devin pane below the Codex panel when it is enabled, below Claude when the Codex panel is disabled, or right of the base orchestrator when Devin is the only enabled side pane:
+Only when `AICC_CREATE_DEVIN_PANEL=true`, AICC creates the `kid-devin` pane below `kid-codex` when the Codex panel is enabled, below `kid-claude` when the Codex panel is disabled, or right of the base orchestrator when Devin is the only enabled side pane:
 
 ```zsh
 zsh -lc 'cd <cwd> && dey.boil'
@@ -90,7 +91,7 @@ zsh -lc 'cd <cwd> && dey.boil'
 `dey.boil` is Amit's Devin launcher for boil-the-ocean mode. The Codex orchestrator prompt also tells future AICC sessions that "ask Devin" / "send to Devin" means:
 
 1. Use the existing Devin pane when it is healthy.
-2. If Devin is missing, closed, dead, or not running Devin, split below the nearest enabled upper side pane (`Codex` first, then `Claude`) or create a right pane when Devin is the only enabled side agent, rename the new surface to `Devin`, launch `zsh -lc 'cd <cwd> && dey.boil'`, wait for the Devin CLI UI, and then send the pending prompt.
+2. If Devin is missing, closed, dead, or not running Devin, split below the nearest enabled upper side pane (`kid-codex` first, then `kid-claude`) or create a right pane when Devin is the only enabled side agent, rename the new surface to `kid-devin`, launch `zsh -lc 'cd <cwd> && dey.boil'`, wait for the Devin CLI UI, and then send the pending prompt.
 3. Treat the user's explicit Devin-routing request as approval to open/repair only the Devin pane; never close Codex, Claude, or unrelated terminal panes.
 
 ## AICC daemon poller and event inbox
@@ -103,7 +104,7 @@ The same detached AICC watcher polls enabled managed panes every 60 seconds. On 
 - Codex panel surface ID only when the Codex panel is enabled.
 - Devin surface ID only when Devin is enabled.
 
-Each tick re-reads `cmux tree`, discovers enabled managed `Claude`, `Codex`, and `Devin` terminal surfaces, and ignores disabled panes. For discovered agent panes it reads:
+Each tick re-reads `cmux tree`, discovers enabled managed `kid-claude`, `kid-codex`, and `kid-devin` terminal surfaces, and ignores disabled panes. Legacy `Claude`/`Codex`/`Devin` titles are still recognized for state recovery. For discovered agent panes it reads:
 
 ```zsh
 cmux read-screen --workspace <workspace-id> --surface <agent-surface-id> --scrollback --lines 200
@@ -160,7 +161,7 @@ The reset command is deliberately conservative:
 
 1. Requires `CMUX_WORKSPACE_ID`; outside cMUX it fails without bootstrapping a new workspace.
 2. Reads the current cMUX tree with stable IDs.
-3. Discovers enabled AICC-managed terminal surfaces titled `Claude`, `Codex`, and/or `Devin`. Disabled panes are not read or closed.
+3. Discovers enabled AICC-managed terminal surfaces titled `kid-claude`, `kid-codex`, and/or `kid-devin`. Disabled panes are not read or closed.
 4. Reads each agent screen with:
 
    ```zsh
@@ -206,7 +207,7 @@ Durable state lives at `claude-auto-resume.json` in `AICC_STATE_DIR` and records
 - `resetAt`, `sendAt`, `message: "continue\n"`, `sourceExcerpt`, and `status`.
 - attempts, final errors, exact cMUX send result, and recent events.
 
-Deduplication key: `workspaceId + agentIdentity + resetAt`. If the original surface ID is stale, the watcher re-reads `cmux tree` and finds a terminal surface whose title contains `Claude`. Failed sends retry three total attempts at one-minute spacing; overdue pending jobs send after restart when within the 30-minute grace window and become stale after that. No `nohup`, `sleep`, or shell scheduler is used.
+Deduplication key: `workspaceId + agentIdentity + resetAt`. If the original surface ID is stale, the watcher re-reads `cmux tree` and finds a terminal surface whose title contains `Claude` (normally `kid-claude`). Failed sends retry three total attempts at one-minute spacing; overdue pending jobs send after restart when within the 30-minute grace window and become stale after that. No `nohup`, `sleep`, or shell scheduler is used.
 
 User-visible status:
 
@@ -234,10 +235,10 @@ Bootstrap preservation is strict: enabled existing managed panes are reused and 
 3. Detects unhealthy conditions:
    - Normal shell prompt with no Claude Code UI markers
    - Prompt text previously echoed into zsh as commands (e.g., "zsh: command not found")
-4. On unhealthy surface with exact title `Claude`:
+4. On unhealthy surface with exact managed title `kid-claude` (legacy exact `Claude` is also accepted for migration):
    - Closes only that stale surface
    - Creates a fresh terminal surface in the same pane
-   - Renames the new surface to `Claude`
+   - Renames the new surface to `kid-claude`
    - Launches `zsh -lc 'cd <cwd> && clscb'`
    - Waits for Claude UI markers to appear
    - Re-registers the new surface in auto-resume state
@@ -245,10 +246,10 @@ Bootstrap preservation is strict: enabled existing managed panes are reused and 
 5. Logs recovery events in `aicc --status` output
 
 Safety boundaries:
-- Only closes exact-title `Claude` surfaces that fail the health check
+- Only closes exact-title `kid-claude` surfaces that fail the health check (or legacy exact-title `Claude` during migration)
 - Never closes Codex surfaces
 - Never closes unrelated user terminal tabs
-- Only auto-closes when the surface title is exactly `Claude` and the screen shows no Claude Code UI
+- Only auto-closes when the surface title is exactly `kid-claude` or legacy exact `Claude` and the screen shows no Claude Code UI
 
 The health guard is available via the `sendClaudePromptWithHealthGuard` function in `claude-auto-resume.ts` for use by any component that sends prompts to Claude surfaces.
 

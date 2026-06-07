@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { defaultRunner, shellQuote, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
+import { CLAUDE_PANEL_TITLE, isExactManagedPanelTitle, isManagedAgentSurfaceTitle } from "./panel-titles.ts";
 
 export const CLAUDE_AUTO_RESUME_MESSAGE = "continue\n";
 export const CLAUDE_AUTO_RESUME_SEND_DELAY_MS = 60_000;
@@ -403,7 +404,7 @@ async function discoverClaudeSurfaceRegistrations(
           cwd: registration.cwd,
           surfaceId: discoveredSurfaceId,
           agentIdentity: "Claude",
-          title: surface.title || "Claude",
+          title: surface.title || CLAUDE_PANEL_TITLE,
           updatedAt: now.toISOString(),
         });
         recordEvent(state, {
@@ -639,7 +640,7 @@ function hasPromptEchoedIntoShellMarkers(screenText: string): boolean {
 }
 
 function isClaudeTitledSurface(surface: CmuxSurface): boolean {
-  return surface.type !== "browser" && /claude/i.test(surface.title || "");
+  return surface.type !== "browser" && isManagedAgentSurfaceTitle("Claude", surface.title);
 }
 
 function surfaceId(surface: CmuxSurface): string | undefined {
@@ -710,7 +711,7 @@ async function recoverClaudeSurface(
   options: ClaudePromptWithHealthGuardOptions,
   now: Date,
 ): Promise<{ surface: CmuxSurface; surfaceId: string }> {
-  if (stale.surface.title !== "Claude") {
+  if (!isExactManagedPanelTitle("Claude", stale.surface.title)) {
     throw new Error(`Refusing to auto-close non-exact Claude surface ${stale.surfaceId} titled ${stale.surface.title || "untitled"}`);
   }
   const paneRef = stale.surface.pane_ref || stale.surface.pane_id;
@@ -748,7 +749,7 @@ async function recoverClaudeSurface(
   const createdSurfaceId = createdSurface && surfaceId(createdSurface);
   if (!createdSurface || !createdSurfaceId) throw new Error(`Unable to find recovered Claude surface in pane ${paneRef}`);
 
-  const renameResult = await runner("cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdSurfaceId, "Claude"]);
+  const renameResult = await runner("cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdSurfaceId, CLAUDE_PANEL_TITLE]);
   if (renameResult.code !== 0) throw new Error(exactFailure("cmux rename-tab", renameResult));
 
   const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && clscb`)}\n`;
@@ -860,7 +861,7 @@ export async function registerClaudeSurfaceFromConductorContext(
       workspaceName: context.workspaceName,
       surfaceId: context.claudeSurfaceId,
       agentIdentity: "Claude",
-      title: "Claude",
+      title: CLAUDE_PANEL_TITLE,
       updatedAt: new Date().toISOString(),
     },
     store,

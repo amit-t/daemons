@@ -56,7 +56,7 @@ function treeWithCodexAndDevin(): string {
               },
               {
                 ref: "pane:devin",
-                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin" }],
               },
             ],
           },
@@ -84,11 +84,11 @@ function treeWithCodexClaudeAndDevin(): string {
               },
               {
                 ref: "pane:claude",
-                surfaces: [{ id: "surface:claude-uuid", ref: "surface:claude", title: "Claude", type: "terminal", pane_ref: "pane:claude" }],
+                surfaces: [{ id: "surface:claude-uuid", ref: "surface:claude", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" }],
               },
               {
                 ref: "pane:devin",
-                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin" }],
               },
             ],
           },
@@ -116,15 +116,15 @@ function treeWithCodexClaudeCodexPanelAndDevin(): string {
               },
               {
                 ref: "pane:claude",
-                surfaces: [{ id: "surface:claude-uuid", ref: "surface:claude", title: "Claude", type: "terminal", pane_ref: "pane:claude" }],
+                surfaces: [{ id: "surface:claude-uuid", ref: "surface:claude", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" }],
               },
               {
                 ref: "pane:codex-panel",
-                surfaces: [{ id: "surface:codex-panel-uuid", ref: "surface:codex-panel", title: "Codex", type: "terminal", pane_ref: "pane:codex-panel" }],
+                surfaces: [{ id: "surface:codex-panel-uuid", ref: "surface:codex-panel", title: "kid-codex", type: "terminal", pane_ref: "pane:codex-panel" }],
               },
               {
                 ref: "pane:devin",
-                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+                surfaces: [{ id: "surface:devin-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin" }],
               },
             ],
           },

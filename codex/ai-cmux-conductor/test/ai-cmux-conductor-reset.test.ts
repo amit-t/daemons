@@ -56,30 +56,30 @@ function workspaceTree(surfaces: Array<Record<string, unknown>>): string {
 
 const treeWithAgents = workspaceTree([
   { id: "codex-uuid", ref: "surface:codex", title: "codex", pane_ref: "pane:codex" },
-  { id: "claude-uuid", ref: "surface:claude", title: "Claude", pane_ref: "pane:claude" },
-  { id: "devin-uuid", ref: "surface:devin", title: "Devin", pane_ref: "pane:devin" },
+  { id: "claude-uuid", ref: "surface:claude", title: "kid-claude", pane_ref: "pane:claude" },
+  { id: "devin-uuid", ref: "surface:devin", title: "kid-devin", pane_ref: "pane:devin" },
 ]);
 
 const treeWithAllOptionalPanels = workspaceTree([
   { id: "codex-uuid", ref: "surface:codex", title: "codex", pane_ref: "pane:codex" },
-  { id: "claude-uuid", ref: "surface:claude", title: "Claude", pane_ref: "pane:claude" },
-  { id: "codex-panel-uuid", ref: "surface:codex-panel", title: "Codex", pane_ref: "pane:codex-panel" },
-  { id: "devin-uuid", ref: "surface:devin", title: "Devin", pane_ref: "pane:devin" },
+  { id: "claude-uuid", ref: "surface:claude", title: "kid-claude", pane_ref: "pane:claude" },
+  { id: "codex-panel-uuid", ref: "surface:codex-panel", title: "kid-codex", pane_ref: "pane:codex-panel" },
+  { id: "devin-uuid", ref: "surface:devin", title: "kid-devin", pane_ref: "pane:devin" },
 ]);
 
 const treeAfterNewTerminal = workspaceTree([
   { id: "codex-uuid", ref: "surface:codex", title: "codex", pane_ref: "pane:codex" },
   { id: "terminal-uuid", ref: "surface:terminal", title: "~/project-x", pane_ref: "pane:codex" },
-  { id: "claude-uuid", ref: "surface:claude", title: "Claude", pane_ref: "pane:claude" },
-  { id: "devin-uuid", ref: "surface:devin", title: "Devin", pane_ref: "pane:devin" },
+  { id: "claude-uuid", ref: "surface:claude", title: "kid-claude", pane_ref: "pane:claude" },
+  { id: "devin-uuid", ref: "surface:devin", title: "kid-devin", pane_ref: "pane:devin" },
 ]);
 
 const treeAfterNewTerminalWithAllOptionalPanels = workspaceTree([
   { id: "codex-uuid", ref: "surface:codex", title: "codex", pane_ref: "pane:codex" },
   { id: "terminal-uuid", ref: "surface:terminal", title: "~/project-x", pane_ref: "pane:codex" },
-  { id: "claude-uuid", ref: "surface:claude", title: "Claude", pane_ref: "pane:claude" },
-  { id: "codex-panel-uuid", ref: "surface:codex-panel", title: "Codex", pane_ref: "pane:codex-panel" },
-  { id: "devin-uuid", ref: "surface:devin", title: "Devin", pane_ref: "pane:devin" },
+  { id: "claude-uuid", ref: "surface:claude", title: "kid-claude", pane_ref: "pane:claude" },
+  { id: "codex-panel-uuid", ref: "surface:codex-panel", title: "kid-codex", pane_ref: "pane:codex-panel" },
+  { id: "devin-uuid", ref: "surface:devin", title: "kid-devin", pane_ref: "pane:devin" },
 ]);
 
 describe("AICC reset request detection", () => {

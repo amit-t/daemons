@@ -67,11 +67,11 @@ const treeWithStaleAgentsAndUuidBase = JSON.stringify({
             },
             {
               ref: "pane:stale-claude",
-              surfaces: [{ id: "stale-claude-uuid", ref: "surface:old-claude", title: "Claude", type: "terminal", pane_ref: "pane:stale-claude" }],
+              surfaces: [{ id: "stale-claude-uuid", ref: "surface:old-claude", title: "kid-claude", type: "terminal", pane_ref: "pane:stale-claude" }],
             },
             {
               ref: "pane:stale-devin",
-              surfaces: [{ id: "stale-devin-uuid", ref: "surface:old-devin", title: "Devin", type: "terminal", pane_ref: "pane:stale-devin" }],
+              surfaces: [{ id: "stale-devin-uuid", ref: "surface:old-devin", title: "kid-devin", type: "terminal", pane_ref: "pane:stale-devin" }],
             },
           ],
         },
@@ -149,7 +149,7 @@ function treeAfterDevinPaneWithWorkspaceTitle(title: string): string {
               },
               {
                 ref: "pane:claude",
-                surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "Claude", type: "terminal", pane_ref: "pane:claude" }],
+                surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" }],
               },
               {
                 ref: "pane:devin",
@@ -182,11 +182,11 @@ function treeWithExistingAgentsWorkspaceTitle(title: string): string {
               },
               {
                 ref: "pane:claude",
-                surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "Claude", type: "terminal", pane_ref: "pane:claude" }],
+                surfaces: [{ id: "claude-surface-uuid", ref: "surface:claude", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" }],
               },
               {
                 ref: "pane:devin",
-                surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+                surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin" }],
               },
             ],
           },
@@ -214,7 +214,7 @@ function treeWithDevinOnlyWorkspaceTitle(title: string): string {
               },
               {
                 ref: "pane:devin",
-                surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin" }],
+                surfaces: [{ id: "devin-surface-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin" }],
               },
             ],
           },
@@ -244,7 +244,7 @@ function treeWithClaudeAboveExistingDevinWorkspaceTitle(title: string): string {
                 ref: "pane:devin-stack",
                 surfaces: [
                   { id: "claude-surface-uuid", ref: "surface:claude", title: "~/project-x", type: "terminal", pane_ref: "pane:devin-stack" },
-                  { id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", type: "terminal", pane_ref: "pane:devin-stack" },
+                  { id: "devin-surface-uuid", ref: "surface:devin", title: "kid-devin", type: "terminal", pane_ref: "pane:devin-stack" },
                 ],
               },
             ],
@@ -357,10 +357,10 @@ describe("prepareConductor", () => {
       ],
       "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
       "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin kid-devin": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
@@ -390,11 +390,11 @@ describe("prepareConductor", () => {
       ["cmux", "focus-pane", "--pane", "pane:base", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "new-pane", "--direction", "right", "--workspace", "workspace-uuid", "--focus", "false", "--window", "window-uuid"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Claude"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
       ["cmux", "new-split", "down", "--workspace", "workspace-uuid", "--surface", "surface:claude", "--focus", "false", "--window", "window-uuid"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "Devin"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "kid-devin"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
@@ -416,7 +416,7 @@ describe("prepareConductor", () => {
         { stdout: treeAfterWorkspaceRename },
       ],
       "cmux new-split up --workspace workspace-uuid --surface surface:devin --focus false --window window-uuid": { stdout: "OK surface:claude workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
@@ -444,7 +444,7 @@ describe("prepareConductor", () => {
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "new-split", "up", "--workspace", "workspace-uuid", "--surface", "surface:devin", "--focus", "false", "--window", "window-uuid"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
-      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Claude"],
+      ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
@@ -507,10 +507,10 @@ describe("prepareConductor", () => {
       ],
       "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
       "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin kid-devin": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch].join(" ")]: { stdout: "" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "OK workspace:1\n" },
       "cmux workspace-action --action rename --workspace workspace-uuid --window window-uuid --title Project-X": { stdout: "OK action=rename workspace=workspace:1 window=window:1\n" },
@@ -621,9 +621,9 @@ describe("buildOrchestratorPrompt", () => {
     });
 
     expect(prompt).toContain('"ask Devin"');
-    expect(prompt).toContain("Devin below Claude");
+    expect(prompt).toContain("Devin (kid-devin) below kid-claude");
     expect(prompt).toContain("cmux new-split down --workspace workspace:1 --surface surface:2 --focus true");
-    expect(prompt).toContain("cmux rename-tab --workspace workspace:1 --surface NEW_DEVIN_SURFACE Devin");
+    expect(prompt).toContain("cmux rename-tab --workspace workspace:1 --surface NEW_DEVIN_SURFACE kid-devin");
     expect(prompt).toContain("zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'");
     expect(prompt).toContain("send the pending prompt to that Devin surface");
   });

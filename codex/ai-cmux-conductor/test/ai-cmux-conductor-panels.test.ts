@@ -61,9 +61,12 @@ function workspaceTree(title: string, surfaces: Array<Record<string, unknown>>):
 }
 
 const baseSurface = { id: "base-surface-uuid", ref: "surface:base", title: "codex", pane_ref: "pane:base" };
-const claudeSurface = { id: "claude-surface-uuid", ref: "surface:claude", title: "Claude", pane_ref: "pane:claude" };
-const codexPanelSurface = { id: "codex-panel-surface-uuid", ref: "surface:codex-panel", title: "Codex", pane_ref: "pane:codex-panel" };
-const devinSurface = { id: "devin-surface-uuid", ref: "surface:devin", title: "Devin", pane_ref: "pane:devin" };
+const claudeSurface = { id: "claude-surface-uuid", ref: "surface:claude", title: "kid-claude", pane_ref: "pane:claude" };
+const codexPanelSurface = { id: "codex-panel-surface-uuid", ref: "surface:codex-panel", title: "kid-codex", pane_ref: "pane:codex-panel" };
+const devinSurface = { id: "devin-surface-uuid", ref: "surface:devin", title: "kid-devin", pane_ref: "pane:devin" };
+const legacyClaudeSurface = { ...claudeSurface, title: "Claude" };
+const legacyCodexPanelSurface = { ...codexPanelSurface, title: "Codex" };
+const legacyDevinSurface = { ...devinSurface, title: "Devin" };
 
 describe("AICC managed panel feature flags", () => {
   test("enables Claude and Codex panels by default while Devin remains opt-in", () => {
@@ -86,6 +89,82 @@ describe("AICC managed panel feature flags", () => {
 });
 
 describe("prepareConductor optional managed panel stack", () => {
+  test("names newly-created managed side panels with kid-prefixed titles", async () => {
+    const { runner, calls } = strictRunnerFor({
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:base codex": { stdout: "" },
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: workspaceTree("old", [baseSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface, devinSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface, devinSurface]) },
+        { stdout: workspaceTree("Project-X", [baseSurface, claudeSurface, codexPanelSurface, devinSurface]) },
+      ],
+      "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
+      "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
+      "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:codex-panel workspace:1\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel kid-codex": { stdout: "" },
+      "cmux new-split down --workspace workspace-uuid --surface surface:codex-panel --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin kid-devin": { stdout: "" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
+    });
+
+    const result = await prepareConductor({
+      cwd: "/work/project-x",
+      env: {
+        [DEVIN_PANEL_FEATURE_FLAG]: "true",
+        CMUX_WORKSPACE_ID: "workspace-uuid",
+        CMUX_WINDOW_ID: "window-uuid",
+        CMUX_SURFACE_ID: "surface:base",
+      },
+      runner,
+    });
+
+    expect(result.mode).toBe("ready");
+    if (result.mode !== "ready") throw new Error("expected ready");
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"]);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "kid-codex"]);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "kid-devin"]);
+    expect(calls).not.toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "Codex"]);
+  });
+
+  test("reuses legacy managed side panels and retitles them to kid-prefixed names", async () => {
+    const { runner, calls } = strictRunnerFor({
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:base codex": { stdout: "" },
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: workspaceTree("old", [baseSurface, legacyClaudeSurface, legacyCodexPanelSurface, legacyDevinSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface, devinSurface]) },
+        { stdout: workspaceTree("Project-X", [baseSurface, claudeSurface, codexPanelSurface, devinSurface]) },
+      ],
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel kid-codex": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin kid-devin": { stdout: "" },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
+    });
+
+    const result = await prepareConductor({
+      cwd: "/work/project-x",
+      env: {
+        [DEVIN_PANEL_FEATURE_FLAG]: "true",
+        CMUX_WORKSPACE_ID: "workspace-uuid",
+        CMUX_WINDOW_ID: "window-uuid",
+        CMUX_SURFACE_ID: "surface:base",
+      },
+      runner,
+    });
+
+    expect(result.mode).toBe("ready");
+    if (result.mode !== "ready") throw new Error("expected ready");
+    expect(result.context.reusedClaude).toBe(true);
+    expect(result.context.reusedCodexPanel).toBe(true);
+    expect(result.context.reusedDevin).toBe(true);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"]);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "kid-codex"]);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "kid-devin"]);
+    expect(calls.some((call) => call.includes("new-pane") || call.includes("new-split"))).toBe(false);
+  });
+
   test("by default creates Claude right of the orchestrator and a Codex panel below Claude, while leaving Devin unmanaged", async () => {
     const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
     const { runner, calls } = strictRunnerFor({
@@ -99,10 +178,10 @@ describe("prepareConductor optional managed panel stack", () => {
       ],
       "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
       "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:codex-panel workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel Codex": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel kid-codex": { stdout: "" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
 
@@ -125,7 +204,7 @@ describe("prepareConductor optional managed panel stack", () => {
     expect(result.context.codexPanelSurfaceId).toBe("surface:codex-panel");
     expect(result.context.devinSurfaceId).toBeUndefined();
     expect(calls).toContainEqual(["cmux", "new-split", "down", "--workspace", "workspace-uuid", "--surface", "surface:claude", "--focus", "false", "--window", "window-uuid"]);
-    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "Codex"]);
+    expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "kid-codex"]);
     expect(calls.find((call) => call[1] === "send" && call.includes("surface:codex-panel"))?.at(-1)).toContain("cxscb --disable apps -c");
     expect(calls.some((call) => call.includes("surface:devin"))).toBe(false);
   });
@@ -143,11 +222,11 @@ describe("prepareConductor optional managed panel stack", () => {
       ],
       "cmux focus-pane --pane pane:base --workspace workspace-uuid --window window-uuid": { stdout: "" },
       "cmux new-pane --direction right --workspace workspace-uuid --focus false --window window-uuid": { stdout: "pane:claude\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       "cmux new-split down --workspace workspace-uuid --surface surface:claude --focus false --window window-uuid": { stdout: "OK surface:codex-panel workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel Codex": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:codex-panel kid-codex": { stdout: "" },
       "cmux new-split down --workspace workspace-uuid --surface surface:codex-panel --focus false --window window-uuid": { stdout: "OK surface:devin workspace:1\n" },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin Devin": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:devin kid-devin": { stdout: "" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
 
@@ -231,7 +310,7 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain('"ask Codex"');
     expect(prompt).toContain("Read Codex:");
     expect(prompt).toContain("Send Codex:");
-    expect(prompt).toContain("Codex below Claude");
+    expect(prompt).toContain("Codex (kid-codex) below kid-claude");
     expect(prompt).toContain("cxscb --disable apps -c");
     expect(prompt).not.toContain("Read Devin:");
   });

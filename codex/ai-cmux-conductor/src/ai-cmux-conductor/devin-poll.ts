@@ -5,13 +5,14 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectClaudeUsageLimit } from "./claude-auto-resume.ts";
 import { defaultRunner, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
+import { isManagedAgentSurfaceTitle, type ManagedAgentName } from "./panel-titles.ts";
 
 export const DEVIN_POLL_DISABLE_FLAG = "AICC_DEVIN_POLL_DAEMON";
 export const DEVIN_POLL_STATE_DIR = "AICC_STATE_DIR";
 export const DEVIN_POLL_DEFAULT_LINES = 200;
 export const AICC_DAEMON_NOTICE_VERSION = "AICC_DAEMON_NOTICE_V1";
 
-export type AiccAgentIdentity = "Claude" | "Codex" | "Devin";
+export type AiccAgentIdentity = ManagedAgentName;
 export type AiccAgentState = "working" | "needs_input" | "blocked" | "completed" | "usage_limited" | "error";
 export type AiccEventSeverity = "info" | "action_required";
 
@@ -548,11 +549,11 @@ function resolveSurfaceId(surfaces: CmuxSurface[], preferredId: string, fallback
 }
 
 function isDevinSurface(surface: CmuxSurface): boolean {
-  return surface.type !== "browser" && /\bDevin\b/i.test(surface.title || "");
+  return surface.type !== "browser" && isManagedAgentSurfaceTitle("Devin", surface.title);
 }
 
 function isClaudeSurface(surface: CmuxSurface): boolean {
-  return surface.type !== "browser" && /\bClaude\b/i.test(surface.title || "");
+  return surface.type !== "browser" && isManagedAgentSurfaceTitle("Claude", surface.title);
 }
 
 function isCodexSurface(surface: CmuxSurface): boolean {
@@ -560,7 +561,7 @@ function isCodexSurface(surface: CmuxSurface): boolean {
 }
 
 function isCodexPanelSurface(surface: CmuxSurface): boolean {
-  return surface.type !== "browser" && surface.title === "Codex";
+  return surface.type !== "browser" && isManagedAgentSurfaceTitle("Codex", surface.title);
 }
 
 function surfaceId(surface: CmuxSurface): string | undefined {

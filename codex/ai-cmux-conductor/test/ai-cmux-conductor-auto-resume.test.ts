@@ -24,7 +24,7 @@ function iso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-function treeWithClaude(surfaceRef: string, title = "Claude", paneRef = "pane:claude", extraSurface: Record<string, unknown> = {}): string {
+function treeWithClaude(surfaceRef: string, title = "kid-claude", paneRef = "pane:claude", extraSurface: Record<string, unknown> = {}): string {
   return JSON.stringify({
     windows: [
       {
@@ -48,7 +48,7 @@ function treeWithClaude(surfaceRef: string, title = "Claude", paneRef = "pane:cl
   });
 }
 
-function treeWithClaudeAndCodex(surfaceRef: string, title = "Claude", extraSurface: Record<string, unknown> = {}): string {
+function treeWithClaudeAndCodex(surfaceRef: string, title = "kid-claude", extraSurface: Record<string, unknown> = {}): string {
   return JSON.stringify({
     windows: [
       {
@@ -90,7 +90,7 @@ function treeWithTwoClaudeSurfaces(): string {
             panes: [
               {
                 ref: "pane:claude-1",
-                surfaces: [{ id: "surface:claude-1-uuid", ref: "surface:claude-1", title: "Claude", type: "terminal", pane_ref: "pane:claude-1" }],
+                surfaces: [{ id: "surface:claude-1-uuid", ref: "surface:claude-1", title: "kid-claude", type: "terminal", pane_ref: "pane:claude-1" }],
               },
               {
                 ref: "pane:claude-2",
@@ -185,14 +185,14 @@ describe("Claude auto-resume scheduler", () => {
             workspaceName: "Project-X",
             surfaceId: "surface:claude",
             agentIdentity: "Claude",
-            title: "Claude",
+            title: "kid-claude",
             updatedAt: "2026-06-02T15:00:00.000Z",
           },
           {
             workspaceId: "other-workspace",
             surfaceId: "surface:other-claude",
             agentIdentity: "Claude",
-            title: "Claude",
+            title: "kid-claude",
             updatedAt: "2026-06-02T15:00:00.000Z",
           },
         ],
@@ -444,7 +444,7 @@ describe("Claude surface health guard", () => {
   test("exact-title Claude surface with shell prompt is detected unhealthy", () => {
     expect(
       isPlausibleClaudeSurface(
-        { ref: "surface:stale", title: "Claude", type: "terminal", pane_ref: "pane:claude" },
+        { ref: "surface:stale", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" },
         "Last login: Tue Jun 2\n/Users/amittiwari/Projects/Tools-Utilities/wb-gitlore %\n",
       ),
     ).toBe(false);
@@ -453,7 +453,7 @@ describe("Claude surface health guard", () => {
   test("prompt text echoed into zsh is detected unhealthy", () => {
     expect(
       isPlausibleClaudeSurface(
-        { ref: "surface:stale", title: "Claude", type: "terminal", pane_ref: "pane:claude" },
+        { ref: "surface:stale", title: "kid-claude", type: "terminal", pane_ref: "pane:claude" },
         "Execute the task spec at /tmp/spec.md\nzsh: command not found: Execute\nRules:\nzsh: command not found: Rules:\nwb-gitlore %\n",
       ),
     ).toBe(false);
@@ -467,7 +467,7 @@ describe("Claude surface health guard", () => {
       workspaceName: "Project-X",
       surfaceId: "surface:claude",
       agentIdentity: "Claude",
-      title: "Claude",
+      title: "kid-claude",
       cwd: "/work/project-x",
       updatedAt: "2026-06-02T15:00:00.000Z",
     });
@@ -537,7 +537,7 @@ describe("Claude surface health guard", () => {
       workspaceName: "Project-X",
       surfaceId: "surface:stale",
       agentIdentity: "Claude",
-      title: "Claude",
+      title: "kid-claude",
       cwd: "/work/project-x",
       updatedAt: "2026-06-02T15:00:00.000Z",
     });
@@ -554,7 +554,7 @@ describe("Claude surface health guard", () => {
       "cmux new-surface --workspace workspace-uuid --window window-uuid --pane pane:claude --type terminal --focus true": {
         stdout: "surface:fresh\n",
       },
-      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:fresh Claude": { stdout: "" },
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:fresh kid-claude": { stdout: "" },
       [commandKey(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", claudeLaunch])]: {
         stdout: "",
       },

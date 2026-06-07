@@ -1,7 +1,8 @@
 import { defaultRunner, type CommandResult, type CommandRunner } from "./conductor.ts";
 import { isClaudePanelEnabled, isCodexPanelEnabled, isDevinPanelEnabled } from "./config.ts";
+import { isManagedAgentSurfaceTitle, type ManagedAgentName } from "./panel-titles.ts";
 
-export type AiCmuxResetAgent = "Claude" | "Codex" | "Devin";
+export type AiCmuxResetAgent = ManagedAgentName;
 
 export interface AiCmuxResetBlocker {
   agent: AiCmuxResetAgent;
@@ -268,9 +269,9 @@ function discoverAgentSurfaces(
     .map((surface): AgentSurface | undefined => {
       const id = surfaceId(surface);
       if (!id || surface.type === "browser") return undefined;
-      if (options.includeClaude && /\bClaude\b/i.test(surface.title || "")) return { agent: "Claude", surface, surfaceId: id };
-      if (options.includeCodexPanel && surface.title === "Codex") return { agent: "Codex", surface, surfaceId: id };
-      if (options.includeDevin && /\bDevin\b/i.test(surface.title || "")) return { agent: "Devin", surface, surfaceId: id };
+      if (options.includeClaude && isManagedAgentSurfaceTitle("Claude", surface.title)) return { agent: "Claude", surface, surfaceId: id };
+      if (options.includeCodexPanel && isManagedAgentSurfaceTitle("Codex", surface.title)) return { agent: "Codex", surface, surfaceId: id };
+      if (options.includeDevin && isManagedAgentSurfaceTitle("Devin", surface.title)) return { agent: "Devin", surface, surfaceId: id };
       return undefined;
     })
     .filter((surface): surface is AgentSurface => Boolean(surface));
