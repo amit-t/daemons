@@ -314,4 +314,58 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain("cxscb --disable apps -c");
     expect(prompt).not.toContain("Read Devin:");
   });
+
+  test("mandates routing kid-pane requests to panes and forbids background subagents", () => {
+    const prompt = buildOrchestratorPrompt({
+      cwd: "/work/project-x",
+      workspaceName: "Project-X",
+      workspaceId: "workspace:1",
+      orchestratorSurfaceId: "surface:base",
+      claudePanelEnabled: true,
+      claudeSurfaceId: "surface:claude",
+      codexPanelEnabled: true,
+      codexPanelSurfaceId: "surface:codex-panel",
+      devinPanelEnabled: false,
+      reusedClaude: true,
+      reusedCodexPanel: false,
+      reusedDevin: false,
+    });
+
+    // Recognizes the user's "tell kid claude / kid codex" phrasing as routing triggers.
+    expect(prompt).toContain('"tell Claude"');
+    expect(prompt).toContain('"tell kid-claude"');
+    expect(prompt).toContain('"tell Codex"');
+    expect(prompt).toContain('"tell kid-codex"');
+
+    // Non-negotiable: route into the spawned kid pane, write the prompt verbatim, no background work.
+    expect(prompt).toContain("## Kid-pane routing (non-negotiable)");
+    expect(prompt).toContain("Claude → kid-claude, Codex → kid-codex");
+    expect(prompt).toContain("Send the user's instruction verbatim into that exact kid surface");
+    expect(prompt).toContain("watch the agent work through it");
+    expect(prompt).toContain("Do NOT spawn a background subagent");
+    expect(prompt).toContain("never spawn a background subagent for it");
+
+    // Background work allowed only when no kid pane is addressed.
+    expect(prompt).toContain("## Background work");
+    expect(prompt).toContain("ONLY when the user has NOT addressed a kid pane");
+  });
+
+  test("omits kid-pane routing and background sections when no side agents are enabled", () => {
+    const prompt = buildOrchestratorPrompt({
+      cwd: "/work/project-x",
+      workspaceName: "Project-X",
+      workspaceId: "workspace:1",
+      orchestratorSurfaceId: "surface:base",
+      claudePanelEnabled: false,
+      codexPanelEnabled: false,
+      devinPanelEnabled: false,
+      reusedClaude: false,
+      reusedCodexPanel: false,
+      reusedDevin: false,
+    });
+
+    expect(prompt).not.toContain("## Kid-pane routing (non-negotiable)");
+    expect(prompt).not.toContain("## Background work");
+    expect(prompt).toContain("No managed side-agent routing panes are enabled.");
+  });
 });

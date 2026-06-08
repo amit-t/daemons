@@ -450,9 +450,13 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
       : `- Devin panel: disabled (${DEVIN_PANEL_FEATURE_FLAG}=false)`,
   ];
 
-  const routeNames = enabledAgents.map((agent) => `"ask ${agent}", "send to ${agent}"`).join(", ");
+  const kidTitleFor = (agent: ManagedPanelTitle) => MANAGED_PANEL_TITLES[agent];
+  const routeNames = enabledAgents
+    .map((agent) => `"ask ${agent}", "tell ${agent}", "send to ${agent}", "tell ${kidTitleFor(agent)}"`)
+    .join(", ");
+  const kidList = enabledAgents.map((agent) => `${agent} → ${kidTitleFor(agent)}`).join(", ");
   const roleRouting = enabledAgents.length
-    ? ` When the user says ${routeNames}, route the instruction to the matching pane.`
+    ? ` When the user says ${routeNames} (or otherwise names a kid pane), you MUST deliver the user's literal instruction into that kid pane with cmux send. Never answer it yourself and never spawn a background subagent for it.`
     : " No managed side-agent routing panes are enabled.";
 
   const commandLines: string[] = [];
@@ -490,7 +494,7 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
   }
 
   const routingRules = enabledAgents.length
-    ? `3. Route explicit side-agent requests only to enabled panes: ${joinHumanList(enabledAgents)}.
+    ? `3. Route every explicit kid-pane request only to enabled panes: ${joinHumanList(enabledAgents)}. Send the user's words verbatim with cmux send and never background it.
 4. If an enabled pane is missing, closed, dead, or not running the expected CLI, open or repair only that requested pane with the commands above, then send the pending prompt.
 5. If an existing enabled pane looks dead, wrong, or unrelated outside an explicit routing request, report that and ask before replacing it.
 6. Do not kill, close, or respawn Claude, Codex, Devin, or unrelated user terminal panes without explicit user approval.
@@ -502,6 +506,22 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
 5. AICC daemon sitrep is available with: aicc --status.
 6. Use concise status updates: blockers and recommended next action.`;
 
+  const kidRoutingSection = enabledAgents.length
+    ? `
+## Kid-pane routing (non-negotiable)
+These kid panes are live AI CLIs that AICC already spawned in this workspace: ${kidList}.
+When the user explicitly addresses a kid pane — e.g. ${routeNames}, or any "tell"/"ask"/"send to" plus an agent name or its kid-<agent> title — you act ONLY as a router:
+1. Send the user's instruction verbatim into that exact kid surface with the matching "Send <Agent>" command below, so the prompt is written into the pane and the user can watch the agent work through it.
+2. Do NOT spawn a background subagent, Task, detached worker, or do the work yourself in this tab to satisfy a kid-pane request.
+3. After sending, you may read the kid pane with the matching "Read <Agent>" command to report progress; never suppress or replace what the pane is doing.
+4. When the user names more than one kid pane (e.g. "ask Claude and Codex"), send the instruction to each named pane.
+5. Only open/repair a kid pane (commands below) when it is missing, closed, dead, or not running the expected CLI, then send the pending prompt.
+
+## Background work
+Spawn background subagents or detached workers ONLY when the user has NOT addressed a kid pane. Any request naming a kid pane (${kidList}) must be routed into that pane, not backgrounded. When unsure whether a message targets a kid pane, route to the pane rather than backgrounding.
+`
+    : "";
+
   return `You are ai-cmux-conductor, the base Codex orchestrator for this cMUX workspace.
 
 ## Workspace context
@@ -509,7 +529,7 @@ ${workspaceLines.join("\n")}
 
 ## Role
 Stay in this base tab and coordinate the ${agents} ${agentPaneNoun} in the same workspace. The user will mostly talk to you.${roleRouting}
-
+${enabledAgents.length ? kidRoutingSection : ""}
 ## cMUX commands
 ${commandLines.length ? commandLines.join("\n") : "No managed side-agent panes are enabled."}
 
