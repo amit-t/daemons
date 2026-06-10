@@ -1,0 +1,133 @@
+#!/usr/bin/env zsh
+# dve — Devin Enterprise ACU governor.
+# Thin launcher: resolves the Devin service key, assembles a playbook prompt,
+# and hands the job to a Claude agent session (DVE_LAUNCHER, default clscb).
+set -u
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+source "${daemon_dir}/lib/key-resolve.zsh"
+
+dve_load_env() {
+  local env_file="${daemon_dir}/environment.env" line key value
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == \#* || "$line" != *=* ]] && continue
+    key=${line%%=*}
+    value=${line#*=}
+    if [[ -z "${(P)key:-}" ]]; then
+      typeset -gx "$key"="$value"
+    fi
+  done < "$env_file"
+}
+
+dve_usage() {
+  cat <<'EOF'
+dve — Devin Enterprise ACU governor
+
+Usage:
+  dve set-limits              Distribute the monthly ACU pool as per-user caps (prorated)
+  dve boost <email> <acus>    Raise one user's cap by <acus> with a pool headroom check
+  dve status                  Consumption, remaining ACUs, month-end projection
+  dve models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
+  dve help                    Show this help
+
+Config (environment.env; shell env vars override):
+  DVE_MONTHLY_ACU_POOL   monthly ACU pool (default 24000)
+  DVE_LAUNCHER           agent launcher command (default clscb)
+  DVE_KEYCHAIN_SERVICE   keychain item holding the service key (default devin-service-key)
+  DVE_STATE_DIR          ledger directory (default ~/.local/state/devin-acu-governor)
+
+Service key (Billing Read+Write, Analytics Read, Teams Read-only), one-time setup:
+  security add-generic-password -s devin-service-key -a "$USER" -w '<key>'
+Fallback: export DEVIN_SERVICE_KEY=<key>
+EOF
+}
+
+dve_build_prompt() {  # $1 = command, rest = extra run-context lines
+  local cmd="$1"; shift
+  cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${cmd}.md"
+  print -r -- ""
+  print -r -- "## Run context"
+  print -r -- "- command: ${cmd}"
+  print -r -- "- today: $(date +%F)"
+  print -r -- "- DVE_MONTHLY_ACU_POOL: ${DVE_MONTHLY_ACU_POOL}"
+  print -r -- "- compute_caps_jq: ${daemon_dir}/lib/compute-caps.jq"
+  print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
+  print -r -- "- ledger: ${DVE_STATE_DIR}/allocations.json"
+  print -r -- "- service key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
+  local line
+  for line in "$@"; do print -r -- "- ${line}"; done
+}
+
+main() {
+  dve_load_env
+  : ${DVE_MONTHLY_ACU_POOL:=24000}
+  : ${DVE_LAUNCHER:=clscb}
+  : ${DVE_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
+
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    dve_usage >&2
+    exit 2
+  fi
+  shift
+
+  local -a context_lines
+  context_lines=()
+  case "$cmd" in
+    help|-h|--help)
+      dve_usage
+      exit 0
+      ;;
+    set-limits|status) ;;
+    boost)
+      local email="${1:-}" amount="${2:-}"
+      if [[ "$email" != *@*.* ]]; then
+        print -ru2 -- "dve boost: first argument must be a user email (got: ${email:-<missing>})"
+        exit 2
+      fi
+      if [[ "$amount" != <1-> ]]; then
+        print -ru2 -- "dve boost: second argument must be a positive integer ACU amount (got: ${amount:-<missing>})"
+        exit 2
+      fi
+      context_lines=("boost target: ${email}" "increment: ${amount}")
+      ;;
+    models)
+      if [[ -n "${1:-}" && -f "${1:-}" ]]; then
+        context_lines=("desired model allowlist (from file $1):" "$(cat "$1")")
+      elif (( $# > 0 )); then
+        context_lines=("desired model allowlist: $*")
+      else
+        context_lines=("desired model allowlist: not provided — report current usage only")
+      fi
+      ;;
+    *)
+      print -ru2 -- "dve: unknown command '${cmd}'"
+      dve_usage >&2
+      exit 2
+      ;;
+  esac
+
+  local key
+  if ! key=$(dve_resolve_service_key); then
+    print -ru2 -- "dve: no Devin service key found."
+    print -ru2 -- "  Keychain: security add-generic-password -s ${DVE_KEYCHAIN_SERVICE:-devin-service-key} -a \"\$USER\" -w '<key>'"
+    print -ru2 -- "  Or: export DEVIN_SERVICE_KEY=<key>"
+    exit 1
+  fi
+
+  mkdir -p "${DVE_STATE_DIR}"
+  local prompt
+  prompt=$(dve_build_prompt "$cmd" "${context_lines[@]}")
+
+  if [[ -n "${DVE_PRINT_PROMPT:-}" ]]; then
+    print -r -- "$prompt"
+    exit 0
+  fi
+
+  export DEVIN_SERVICE_KEY="$key"
+  exec zsh -ic "${DVE_LAUNCHER} $(printf '%q' "$prompt")"
+}
+
+main "$@"
