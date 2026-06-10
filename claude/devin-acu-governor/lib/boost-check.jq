@@ -1,4 +1,4 @@
-# Boost headroom check for dve boost.
+# Boost headroom check for dag boost.
 # Input:  {"pool": <int>, "current_cap": <int>, "increment": <int>, "sum_caps": <int>}
 # Output: {new_cap, new_sum, headroom_after, over_pool}
 (.current_cap + .increment) as $new_cap

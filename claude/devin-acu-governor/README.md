@@ -1,4 +1,4 @@
-# devin-acu-governor (`dve`)
+# devin-acu-governor (`dag`)
 
 Devin Enterprise ACU governor. A thin zsh launcher hands each job to a Claude agent session (`clscb` by default), armed with a playbook: the API contract, deterministic jq math, and confirmation gates before any write. You drive the run interactively inside the agent session.
 
@@ -9,12 +9,12 @@ Devin Enterprise ACU governor. A thin zsh launcher hands each job to a Claude ag
 
 The org bills on **consumption-based ACUs** — no seat-credit ledger. Consequences, confirmed against live APIs:
 
-- The Windsurf credit endpoints (`GetTeamCreditBalance`, `UsageConfig`, `GetUsageConfig`) fail **structurally** on this SKU (`permission_denied` / `invalid_argument`, permanently). dve no longer calls them.
-- **No per-user ACU cap API exists** — not in Devin v3, not in Windsurf. Per-user caps are **soft allocations** recorded in dve's local ledger; the platform does not enforce them.
+- The Windsurf credit endpoints (`GetTeamCreditBalance`, `UsageConfig`, `GetUsageConfig`) fail **structurally** on this SKU (`permission_denied` / `invalid_argument`, permanently). dag no longer calls them.
+- **No per-user ACU cap API exists** — not in Devin v3, not in Windsurf. Per-user caps are **soft allocations** recorded in dag's local ledger; the platform does not enforce them.
 - Hard caps exist only **per organization**: `max_cycle_acu_limit` and `max_session_acu_limit`, settable via `PATCH /v3/enterprise/organizations/{org_id}`.
-- No remaining-balance endpoint. Remaining = `DVE_MONTHLY_ACU_POOL` − consumed (from consumption endpoints).
+- No remaining-balance endpoint. Remaining = `DAG_MONTHLY_ACU_POOL` − consumed (from consumption endpoints).
 
-dve therefore uses **two API families with two keys**:
+dag therefore uses **two API families with two keys**:
 
 | Family | Base | Key | Role |
 |---|---|---|---|
@@ -27,13 +27,13 @@ dve therefore uses **two API families with two keys**:
 
 | Command | Writes? | One-line capability |
 |---|---|---|
-| `dve set-limits` | ✅ ledger (+ optional org caps) | Distribute the monthly ACU pool across enterprise members as prorated per-user **soft caps**; report violators; optionally set org-level hard caps |
-| `dve boost <email> [acus]` | ✅ ledger | Zero-sum reallocation: raise a heavy user's soft cap by taking ACUs from the lowest consumers (Σ caps unchanged → no overage). Recommends amount + donors |
-| `dve user <email>` | ❌ read-only | Deep-dive one user: cycle ACUs, run-rate, projection, product split, models/IDEs (Windsurf key), daily trend |
-| `dve status` | ❌ read-only | Enterprise consumption, remaining ACUs, run-rate, cycle-end projection + UNDER/OVER verdict, org split vs hard caps, top consumers, per-model burn |
-| `dve models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough (needs Windsurf key) |
-| `dve doctor` | ❌ probe | Probe both keys and report which capabilities they hold |
-| `dve help` | ❌ | Usage text |
+| `dag set-limits` | ✅ ledger (+ optional org caps) | Distribute the monthly ACU pool across enterprise members as prorated per-user **soft caps**; report violators; optionally set org-level hard caps |
+| `dag boost <email> [acus]` | ✅ ledger | Zero-sum reallocation: raise a heavy user's soft cap by taking ACUs from the lowest consumers (Σ caps unchanged → no overage). Recommends amount + donors |
+| `dag user <email>` | ❌ read-only | Deep-dive one user: cycle ACUs, run-rate, projection, product split, models/IDEs (Windsurf key), daily trend |
+| `dag status` | ❌ read-only | Enterprise consumption, remaining ACUs, run-rate, cycle-end projection + UNDER/OVER verdict, org split vs hard caps, top consumers, per-model burn |
+| `dag models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough (needs Windsurf key) |
+| `dag doctor` | ❌ probe | Probe both keys and report which capabilities they hold |
+| `dag help` | ❌ | Usage text |
 
 Every API write is gated: the agent shows a full plan and waits for your explicit confirmation. Ledger writes get a plan preview + confirmation too, but are local and reversible. No silent mutations.
 
@@ -41,8 +41,8 @@ Every API write is gated: the agent shows a full plan and waits for your explici
 
 ## Commands in full
 
-### `dve set-limits`
-Distribute `DVE_MONTHLY_ACU_POOL` (default 24,000) across enterprise members as per-user **soft caps** in the ledger.
+### `dag set-limits`
+Distribute `DAG_MONTHLY_ACU_POOL` (default 24,000) across enterprise members as per-user **soft caps** in the ledger.
 
 What it does, in order:
 1. Current cycle from `GET /v3/enterprise/consumption/cycles` (epoch boundaries).
@@ -54,19 +54,19 @@ What it does, in order:
    - **Mid-cycle (remaining-pool split):** `cap_i = floor(consumed_i) + floor((pool − total_consumed) / N)`. Splits *what's left* evenly; heavy users keep what they've spent plus an even share of the remainder.
    - **Pool exhausted / near-exhausted:** freezes caps at current consumption and warns.
 6. Shows a preview table (email, consumed, new soft cap, Σ caps vs pool) → waits for confirmation. States plainly that the platform does not enforce these per user.
-7. Writes the allocation ledger (`$DVE_STATE_DIR/allocations.json`) — the source of truth for caps.
+7. Writes the allocation ledger (`$DAG_STATE_DIR/allocations.json`) — the source of truth for caps.
 8. Lists violators (consumed > cap) — the follow-up/boost candidates.
 9. Optional: shows current org hard caps and offers `PATCH /v3/enterprise/organizations/{org_id}` to set `max_cycle_acu_limit` so Σ org caps = pool. Separate confirmation; the only hard enforcement on this SKU.
 
 ```zsh
-dve set-limits
+dag set-limits
 ```
 
-### `dve boost <email> [acus]`
+### `dag boost <email> [acus]`
 Raise a heavy, legitimate consumer's soft cap **without spending more money** — the ACUs come from the lowest consumers, so total allocation (Σ caps) is unchanged.
 
 What it does:
-1. Requires a fresh ledger (matching the live cycle) — else stops and points to `dve set-limits`.
+1. Requires a fresh ledger (matching the live cycle) — else stops and points to `dag set-limits`.
 2. Reads cycle + per-user consumption; derives the recipient's `consumed`, daily run-rate, days left.
 3. Current caps from the ledger; ranks the **lowest consumers** as donor candidates.
 4. Runs `lib/boost-plan.jq`:
@@ -77,15 +77,15 @@ What it does:
 6. On confirmation, updates the ledger and shows the changed entries back. Notes the recipient's headroom against their org's hard cap if one is set.
 
 ```zsh
-dve boost alice@corp.com         # recommend amount from alice's run-rate; auto-pick donors
-dve boost alice@corp.com 50      # boost alice by exactly 50 ACUs, funded from low consumers
+dag boost alice@corp.com         # recommend amount from alice's run-rate; auto-pick donors
+dag boost alice@corp.com 50      # boost alice by exactly 50 ACUs, funded from low consumers
 ```
 
 Argument rules (validated before any agent launch):
 - `<email>` must look like an email (`*@*.*`) — else exit 2.
 - `[acus]`, if given, must be a positive integer — else exit 2. Omit it to use the recommendation.
 
-### `dve user <email>`
+### `dag user <email>`
 Read-only deep dive on one person. No gates, nothing written.
 
 Reports:
@@ -95,13 +95,13 @@ Reports:
 - **Model + IDE breakdown** (Windsurf key only): ACUs + message count per `model_uid`, per `ide`.
 - **Daily trend** with spike call-outs; **team context** (share of enterprise total).
 - **Activity** (Windsurf key only): active days, last-usage timestamps.
-- Points to `dve boost <email>` if they're near/over cap.
+- Points to `dag boost <email>` if they're near/over cap.
 
 ```zsh
-dve user alice@corp.com
+dag user alice@corp.com
 ```
 
-### `dve status`
+### `dag status`
 Read-only health check. No gates, nothing written.
 
 Reports:
@@ -114,10 +114,10 @@ Reports:
 - Flags anomalies (e.g. one user > 3× median, a product or model dominating).
 
 ```zsh
-dve status
+dag status
 ```
 
-### `dve models [file | names…]`
+### `dag models [file | names…]`
 Model governance and reporting. **Requires the Windsurf key** — model-level ACU data exists only in that family (Devin v3 is product-level).
 
 > **Limitation (verified 2026-06-10):** no API endpoint enables/disables models. Availability is controlled only in the Admin Portal UI. This command *reports and instructs*; the playbook re-checks the docs for a new API on every run and will use it automatically if one ships.
@@ -129,12 +129,12 @@ What it does:
 4. Prints exact Admin Portal steps (Settings → Models Configuration → enable/disable → optional Default Model Override).
 
 ```zsh
-dve models                                   # report current per-model burn only
-dve models claude-sonnet-4-6 swe-1.6         # diff against an inline allowlist
-dve models ./allowlist.txt                   # diff against a file
+dag models                                   # report current per-model burn only
+dag models claude-sonnet-4-6 swe-1.6         # diff against an inline allowlist
+dag models ./allowlist.txt                   # diff against a file
 ```
 
-### `dve doctor`
+### `dag doctor`
 Deterministic local diagnostic — **no agent launch, no token cost**. Probes both keys:
 
 | Capability | Probe | Present |
@@ -150,14 +150,14 @@ Deterministic local diagnostic — **no agent launch, no token cost**. Probes bo
 Missing/failed **optional** Windsurf capabilities warn (per-model/IDE breakdown degraded) but exit 0. Exit `3` when a required v3 capability is missing, `1` when no cog key is found.
 
 ```zsh
-dve doctor                              # probe everything
-DVE_DOCTOR_SKIP_ANALYTICS=1 dve doctor  # skip the Windsurf analytics probe (saves 1 of 10/hr calls)
+dag doctor                              # probe everything
+DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor  # skip the Windsurf analytics probe (saves 1 of 10/hr calls)
 ```
 
 Run it right after creating a key to confirm capabilities before any real work.
 
-### `dve help`
-Prints usage and config reference. Also `dve -h`, `dve --help`.
+### `dag help`
+Prints usage and config reference. Also `dag -h`, `dag --help`.
 
 ---
 
@@ -185,7 +185,7 @@ Fallback: `export DEVIN_COG_KEY=cog_…`. Keychain wins when both exist.
 security add-generic-password -s devin-service-key -a "$USER" -w '<paste-key>'
 ```
 
-Fallback: `export DEVIN_SERVICE_KEY=<key>`. Without this key dve still runs; model/IDE breakdown and activity context are skipped.
+Fallback: `export DEVIN_SERVICE_KEY=<key>`. Without this key dag still runs; model/IDE breakdown and activity context are skipped.
 
 Keys are exported only into the agent session's environment — never printed, logged, or embedded in a prompt.
 
@@ -197,20 +197,20 @@ Keys are exported only into the agent session's environment — never printed, l
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DVE_MONTHLY_ACU_POOL` | `24000` | Monthly ACU pool to distribute |
-| `DVE_LAUNCHER` | `clscb` | Agent launcher command the prompt is handed to |
-| `DVE_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item, Devin v3 `cog_` key |
-| `DVE_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item, Windsurf service key |
-| `DVE_STATE_DIR` | `~/.local/state/devin-acu-governor` | Allocation ledger directory |
-| `DVE_PRINT_PROMPT` | _(unset)_ | If set, print the assembled prompt and exit — **does not launch the agent** |
-| `DVE_DOCTOR_SKIP_ANALYTICS` | _(unset)_ | If set, `dve doctor` skips the Windsurf analytics probe |
-| `DVE_API_BASE_V3` | `https://api.devin.ai` | Devin v3 base URL `dve doctor` probes (override for testing) |
-| `DVE_API_BASE` | `https://server.codeium.com` | Windsurf base URL `dve doctor` probes (override for testing) |
+| `DAG_MONTHLY_ACU_POOL` | `24000` | Monthly ACU pool to distribute |
+| `DAG_LAUNCHER` | `clscb` | Agent launcher command the prompt is handed to |
+| `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item, Devin v3 `cog_` key |
+| `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item, Windsurf service key |
+| `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Allocation ledger directory |
+| `DAG_PRINT_PROMPT` | _(unset)_ | If set, print the assembled prompt and exit — **does not launch the agent** |
+| `DAG_DOCTOR_SKIP_ANALYTICS` | _(unset)_ | If set, `dag doctor` skips the Windsurf analytics probe |
+| `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3 base URL `dag doctor` probes (override for testing) |
+| `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL `dag doctor` probes (override for testing) |
 
 ```zsh
-DVE_MONTHLY_ACU_POOL=30000 dve set-limits        # try a different pool for one run
-DVE_PRINT_PROMPT=1 dve boost bob@corp.com 100     # see the exact prompt, launch nothing
-DVE_LAUNCHER=clb dve status                        # use a different Claude wrapper
+DAG_MONTHLY_ACU_POOL=30000 dag set-limits        # try a different pool for one run
+DAG_PRINT_PROMPT=1 dag boost bob@corp.com 100     # see the exact prompt, launch nothing
+DAG_LAUNCHER=clb dag status                        # use a different Claude wrapper
 ```
 
 ---
@@ -218,8 +218,8 @@ DVE_LAUNCHER=clb dve status                        # use a different Claude wrap
 ## How a run works
 
 ```
-dve set-limits
- └─ bin/dve: load environment.env (shell env wins)
+dag set-limits
+ └─ bin/dag: load environment.env (shell env wins)
  └─ validate args (boost email/amount; unknown cmd → exit 2)
  └─ resolve keys: cog (Keychain → $DEVIN_COG_KEY → exit 1 with setup hint, required)
                   windsurf (Keychain → $DEVIN_SERVICE_KEY, optional — absence noted in prompt)
@@ -230,7 +230,7 @@ dve set-limits
  └─ agent: API reads → jq math → preview → YOUR confirmation → ledger/API writes → verify
 ```
 
-The **allocation ledger** (`$DVE_STATE_DIR/allocations.json`) is the source of truth for per-user soft caps:
+The **allocation ledger** (`$DAG_STATE_DIR/allocations.json`) is the source of truth for per-user soft caps:
 
 ```json
 { "cycle_start": 1778918400, "cycle_end": 1781596800, "updated": "…",
@@ -274,9 +274,9 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 
 | Path | Responsibility |
 |---|---|
-| `bin/dve` | Dispatch, arg validation, env load, dual-key resolution, prompt assembly, agent launch |
-| `lib/key-resolve.zsh` | `dve_resolve_cog_key()` + `dve_resolve_service_key()`: Keychain → env var |
-| `lib/doctor.zsh` | `dve_doctor()`: deterministic dual-family HTTP probe (no agent) |
+| `bin/dag` | Dispatch, arg validation, env load, dual-key resolution, prompt assembly, agent launch |
+| `lib/key-resolve.zsh` | `dag_resolve_cog_key()` + `dag_resolve_service_key()`: Keychain → env var |
+| `lib/doctor.zsh` | `dag_doctor()`: deterministic dual-family HTTP probe (no agent) |
 | `lib/compute-caps.jq` | Remaining-pool split; day-1 flat split; exhausted-pool warnings |
 | `lib/boost-plan.jq` | Zero-sum boost: recommended cap from projection, donor takes, Σ-invariant |
 | `lib/boost-check.jq` | Pool-headroom check (shortfall→overage path) |
@@ -291,11 +291,11 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 
 | Code | Meaning |
 |---|---|
-| `0` | Success (or `help`, or `DVE_PRINT_PROMPT` print-and-exit, or doctor with only optional warnings) |
+| `0` | Success (or `help`, or `DAG_PRINT_PROMPT` print-and-exit, or doctor with only optional warnings) |
 | `1` | No Devin v3 `cog_` key found (Keychain miss + `DEVIN_COG_KEY` unset) |
 | `2` | Usage error: no command, unknown command, or bad `boost`/`user` arguments |
-| `3` | `dve doctor`: one or more **required** v3 capabilities missing or uncertain |
-| `127` | `dve` alias wrapper couldn't find the daemon entrypoint |
+| `3` | `dag doctor`: one or more **required** v3 capabilities missing or uncertain |
+| `127` | `dag` alias wrapper couldn't find the daemon entrypoint |
 
 ---
 
@@ -303,8 +303,8 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 
 ```zsh
 zsh claude/devin-acu-governor/test/run.zsh                 # all test files (104 assertions)
-zsh -n claude/devin-acu-governor/bin/dve                   # parse check
-DVE_PRINT_PROMPT=1 DEVIN_COG_KEY=x dve status               # inspect assembled prompt, launch nothing
+zsh -n claude/devin-acu-governor/bin/dag                   # parse check
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag status               # inspect assembled prompt, launch nothing
 ```
 
 Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21).
@@ -315,19 +315,19 @@ Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/ex
 
 | Symptom | Cause / fix |
 |---|---|
-| `dve: no Devin API v3 service-user key` | cog key not stored. `security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'` or `export DEVIN_COG_KEY`. |
+| `dag: no Devin API v3 service-user key` | cog key not stored. `security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'` or `export DEVIN_COG_KEY`. |
 | `note — no Windsurf service key` | Optional key absent; model/IDE breakdown skipped. Add it from windsurf.com/team/settings if needed. |
-| `dve: missing daemon entrypoint` (127) | Repo moved or `bin/dve` not executable. `chmod +x claude/devin-acu-governor/bin/dve`. |
-| `dve boost: first argument must be a user email` | Pass email then amount: `dve boost alice@corp.com 50`. |
+| `dag: missing daemon entrypoint` (127) | Repo moved or `bin/dag` not executable. `chmod +x claude/devin-acu-governor/bin/dag`. |
+| `dag boost: first argument must be a user email` | Pass email then amount: `dag boost alice@corp.com 50`. |
 | v3 calls return `403 {"detail":"Unauthorized"}` | Wrong key family (Windsurf key on api.devin.ai) or missing RBAC permission. Recreate the `cog_` key enterprise-scoped with the permissions listed above. |
-| `GetTeamCreditBalance` "feature not available for your plan" | Expected on the Cognition/ACU SKU — that endpoint serves seat-credit plans. dve doesn't call it anymore. |
-| `UsageConfig` `invalid_argument` | Expected on this SKU — per-user credit caps don't exist on ACU billing. dve doesn't call it anymore. |
+| `GetTeamCreditBalance` "feature not available for your plan" | Expected on the Cognition/ACU SKU — that endpoint serves seat-credit plans. dag doesn't call it anymore. |
+| `UsageConfig` `invalid_argument` | Expected on this SKU — per-user credit caps don't exist on ACU billing. dag doesn't call it anymore. |
 | Windsurf consumption 429 | Hit the 10/hr team limit. Wait; the playbook reports when to retry. |
-| Caps look wrong mid-cycle | Expected: remaining-pool split keeps heavy users' spend and splits only the remainder. See `dve status`. |
+| Caps look wrong mid-cycle | Expected: remaining-pool split keeps heavy users' spend and splits only the remainder. See `dag status`. |
 
 ---
 
 ## Scope notes
 
 - **In scope:** manual, on-demand soft-cap distribution + zero-sum boosts (ledger), org-level hard caps (gated PATCH), consumption/product/model reporting.
-- **Out of scope (this round):** automated/scheduled enforcement (cron auto-throttle), per-user hard caps (no API exists on this SKU), org-group limits (`/v3/enterprise/org-group-limits` — 404, feature flag not enabled for this enterprise), and model enable/disable via API (no endpoint exists). The playbook structure makes new `dve <command>` verbs cheap — drop a `playbooks/<cmd>.md` and a `case` arm in `bin/dve`.
+- **Out of scope (this round):** automated/scheduled enforcement (cron auto-throttle), per-user hard caps (no API exists on this SKU), org-group limits (`/v3/enterprise/org-group-limits` — 404, feature flag not enabled for this enterprise), and model enable/disable via API (no endpoint exists). The playbook structure makes new `dag <command>` verbs cheap — drop a `playbooks/<cmd>.md` and a `case` arm in `bin/dag`.

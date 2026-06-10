@@ -1,4 +1,4 @@
-# Zero-sum boost plan for dve boost.
+# Zero-sum boost plan for dag boost.
 # Reallocate ACUs to a heavy user by taking from the lowest consumers, keeping the
 # total allocation (Σ caps) unchanged so the team never tips into overage.
 #

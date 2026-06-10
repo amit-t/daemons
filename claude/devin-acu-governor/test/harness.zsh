@@ -1,10 +1,10 @@
 #!/usr/bin/env zsh
-# Minimal assert helpers for dve tests. Source me, then call report at the end.
+# Minimal assert helpers for dag tests. Source me, then call report at the end.
 
-typeset -g _dve_pass=0 _dve_fail=0
+typeset -g _dag_pass=0 _dag_fail=0
 
-_fail() { print -ru2 -- "FAIL: $1"; (( _dve_fail++ )) || true }
-_ok()   { (( _dve_pass++ )) || true }
+_fail() { print -ru2 -- "FAIL: $1"; (( _dag_fail++ )) || true }
+_ok()   { (( _dag_pass++ )) || true }
 
 assert_eq() {  # assert_eq <label> <expected> <actual>
   if [[ "$2" == "$3" ]]; then _ok; else _fail "$1: expected [$2] got [$3]"; fi
@@ -19,6 +19,6 @@ assert_exit() {  # assert_exit <label> <expected-code> <actual-code>
 }
 
 report() {
-  print -r -- "pass=${_dve_pass} fail=${_dve_fail}"
-  (( _dve_fail == 0 ))
+  print -r -- "pass=${_dag_pass} fail=${_dag_fail}"
+  (( _dag_fail == 0 ))
 }

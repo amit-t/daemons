@@ -4,13 +4,13 @@ Raise a heavy user's soft cap **by taking ACUs from the lowest consumers**, keep
 
 ## Steps
 
-1. **Ledger required.** Read the ledger (path in Run context). If missing or stale (its `cycle_start` ≠ the live current cycle's `after` from `/v3/enterprise/consumption/cycles`), stop and tell the user to run `dve set-limits` first — boost reallocates an existing allocation.
+1. **Ledger required.** Read the ledger (path in Run context). If missing or stale (its `cycle_start` ≠ the live current cycle's `after` from `/v3/enterprise/consumption/cycles`), stop and tell the user to run `dag set-limits` first — boost reallocates an existing allocation.
 2. **Cycle + per-user consumption.** Current cycle from `/v3/enterprise/consumption/cycles`. Per-user `billed_acus` for the cycle: one Windsurf `consumption` call (`group_by=user`, cycle start → today) if the key is available, else loop `/v3/enterprise/consumption/daily/users/{user_id}` over the ledger's emails (resolve `user_id` via `/v3/enterprise/members/users`). Derive the recipient's `consumed`, daily `run_rate` (consumed / days elapsed), and `days_left` in the cycle.
 3. **Recipient current cap.** From the ledger `caps`. If the recipient is absent, treat current cap as 0 (tell the user).
 4. **Donor candidates.** Rank the **lowest consumers** (exclude the recipient) from step 2; caps from the ledger. Take the bottom ~10 (or all if the team is small) as the donor pool — more than enough; the math only draws what it needs.
 5. **Plan.** Build the `boost_plan_jq` input:
    ```json
-   {"pool": <DVE_MONTHLY_ACU_POOL>, "share": <pool / N>,
+   {"pool": <DAG_MONTHLY_ACU_POOL>, "share": <pool / N>,
     "recipient_buffer": 0.15, "donor_buffer": 0.10,
     "recipient": {"email": ..., "cap": ..., "consumed": ..., "run_rate": ..., "days_left": ...},
     "donors": [{"email": ..., "cap": ..., "consumed": ...}, ...]}

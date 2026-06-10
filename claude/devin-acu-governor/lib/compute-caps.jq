@@ -1,4 +1,4 @@
-# Remaining-pool split for dve set-limits.
+# Remaining-pool split for dag set-limits.
 # Input:  {"pool": <int>, "users": [{"email": <str>, "consumed": <number>}, ...]}
 # Output: {mode, total_consumed, remaining, share?, flat_cap?, caps: [{email, consumed, cap}],
 #          sum_caps, warnings: [..]}  or  {"error": ..} on empty roster.

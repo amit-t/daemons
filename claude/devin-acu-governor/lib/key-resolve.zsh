@@ -1,15 +1,15 @@
 #!/usr/bin/env zsh
-# Resolve dve API keys.
+# Resolve dag API keys.
 #
 # Primary — Devin API v3 service-user key (cog_..., api.devin.ai):
-#   Keychain item DVE_COG_KEYCHAIN_SERVICE (default devin-cog-key), then $DEVIN_COG_KEY.
+#   Keychain item DAG_COG_KEYCHAIN_SERVICE (default devin-cog-key), then $DEVIN_COG_KEY.
 # Secondary — Windsurf service key (server.codeium.com analytics):
-#   Keychain item DVE_KEYCHAIN_SERVICE (default devin-service-key), then $DEVIN_SERVICE_KEY.
+#   Keychain item DAG_KEYCHAIN_SERVICE (default devin-service-key), then $DEVIN_SERVICE_KEY.
 #
 # Each function prints the key on stdout; returns 1 if neither source is set.
 
-dve_resolve_cog_key() {
-  local service="${DVE_COG_KEYCHAIN_SERVICE:-devin-cog-key}"
+dag_resolve_cog_key() {
+  local service="${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key}"
   local key
   if key=$(security find-generic-password -s "$service" -w 2>/dev/null) && [[ -n "$key" ]]; then
     print -r -- "$key"
@@ -22,8 +22,8 @@ dve_resolve_cog_key() {
   return 1
 }
 
-dve_resolve_service_key() {
-  local service="${DVE_KEYCHAIN_SERVICE:-devin-service-key}"
+dag_resolve_service_key() {
+  local service="${DAG_KEYCHAIN_SERVICE:-devin-service-key}"
   local key
   if key=$(security find-generic-password -s "$service" -w 2>/dev/null) && [[ -n "$key" ]]; then
     print -r -- "$key"

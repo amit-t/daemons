@@ -2,7 +2,7 @@
 set -u
 script_dir=${0:A:h}
 source "${script_dir}/harness.zsh"
-dve="${script_dir}/../bin/dve"
+dag="${script_dir}/../bin/dag"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -22,7 +22,7 @@ url=""
 for a in "$@"; do url="$a"; done
 case "$url" in
   *consumption/cycles*)        print -rn -- "${FAKE_CYCLES:-200}" ;;
-  *organizations/org-dve-doctor-probe*) print -rn -- "${FAKE_ORG_WRITE:-404}" ;;
+  *organizations/org-dag-doctor-probe*) print -rn -- "${FAKE_ORG_WRITE:-404}" ;;
   *enterprise/organizations*)  print -rn -- "${FAKE_ORGS:-200}" ;;
   *members/users*)             print -rn -- "${FAKE_ROSTER:-200}" ;;
   *metrics/usage*)             print -rn -- "${FAKE_METRICS:-200}" ;;
@@ -39,7 +39,7 @@ run_doctor() {  # env overrides via FAKE_* assignments prefixed to the call
   FAKE_ORGS="${FAKE_ORGS:-200}" FAKE_ROSTER="${FAKE_ROSTER:-200}" \
   FAKE_METRICS="${FAKE_METRICS:-200}" FAKE_TEAMS="${FAKE_TEAMS:-200}" \
   FAKE_ANALYTICS="${FAKE_ANALYTICS:-200}" \
-  zsh "$dve" doctor 2>&1
+  zsh "$dag" doctor 2>&1
 }
 
 # 1. Everything present.
@@ -72,18 +72,18 @@ assert_exit "an 429 rc" 0 $rc
 assert_contains "an 429 word" "$out" "rate-limited"
 
 # 6. Skip analytics probe (avoid burning the 10/hr budget).
-out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=cogk DEVIN_SERVICE_KEY=wsk DVE_DOCTOR_SKIP_ANALYTICS=1 \
-  zsh "$dve" doctor 2>&1); rc=$?
+out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=cogk DEVIN_SERVICE_KEY=wsk DAG_DOCTOR_SKIP_ANALYTICS=1 \
+  zsh "$dag" doctor 2>&1); rc=$?
 assert_exit "skip rc" 0 $rc
 assert_contains "skip word" "$out" "skipped"
 
 # 7. No Windsurf key at all -> exit 0, notes unavailability.
-out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=cogk DEVIN_SERVICE_KEY="" zsh "$dve" doctor 2>&1); rc=$?
+out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=cogk DEVIN_SERVICE_KEY="" zsh "$dag" doctor 2>&1); rc=$?
 assert_exit "no ws key rc" 0 $rc
 assert_contains "no ws key word" "$out" "no Windsurf service key"
 
 # 8. No cog key -> exit 1.
-out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DEVIN_SERVICE_KEY=wsk zsh "$dve" doctor 2>&1); rc=$?
+out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DEVIN_SERVICE_KEY=wsk zsh "$dag" doctor 2>&1); rc=$?
 assert_exit "nokey rc" 1 $rc
 assert_contains "nokey word" "$out" "no Devin API v3 service-user key"
 
