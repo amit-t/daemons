@@ -12,7 +12,8 @@ Devin Enterprise ACU governor. A thin zsh launcher hands each job to a Claude ag
 | Command | Writes? | One-line capability |
 |---|---|---|
 | `dve set-limits` | ✅ caps | Distribute the monthly ACU pool across all approved devs as prorated per-user caps |
-| `dve boost <email> <acus>` | ✅ one cap | Raise one user's cap by N ACUs, with a pool-headroom check |
+| `dve boost <email> [acus]` | ✅ caps | Zero-sum reallocation: raise a heavy user's cap by taking ACUs from the lowest consumers (Σ caps unchanged → no overage). Recommends amount + donors |
+| `dve user <email>` | ❌ read-only | Deep-dive one user: consumption, run-rate, projection, which models/IDEs they use, daily trend, team rank |
 | `dve status` | ❌ read-only | Consumption, remaining ACUs, run-rate, month-end projection + UNDER/OVER verdict, top consumers, per-model burn |
 | `dve models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough |
 | `dve doctor` | ❌ probe | Check the service key against each endpoint and report which of the 4 scopes it actually holds |
@@ -45,23 +46,44 @@ What it does, in order:
 dve set-limits
 ```
 
-### `dve boost <email> <acus>`
-Raise one user's cap when they're a heavy, legitimate consumer — without re-running the whole distribution.
+### `dve boost <email> [acus]`
+Raise a heavy, legitimate consumer's cap **without spending more money** — the ACUs come from the lowest consumers, so total allocation (Σ caps) is unchanged and the team stays out of overage.
 
 What it does:
-1. Reads the user's current cap (`GetUsageConfig`).
-2. Reads the allocation ledger for the current Σ caps; rebuilds it from the API if missing or cycle-stale.
-3. Runs `lib/boost-check.jq`: `new_cap = current + acus`, recomputes Σ and headroom (`pool − Σ`).
-4. If the boost pushes total allocation **past the pool**, warns explicitly (this is knowing overage spend) → waits for confirmation either way.
-5. Writes the new cap (`UsageConfig`), verifies it, updates the ledger.
+1. Reads cycle dates + per-user consumption; derives the recipient's `consumed`, daily run-rate, and days left.
+2. Reads the recipient's current cap (`GetUsageConfig`).
+3. Ranks the **lowest consumers** as donor candidates (excludes the recipient).
+4. Runs `lib/boost-plan.jq`:
+   - **Recommended cap** = `ceil(projected_month_end × 1.15)` — the user's run-rate projection plus a 15% comfort buffer (override by passing `[acus]`, which boosts by exactly that delta).
+   - **Donor takes:** greedily pulls from the lowest consumers first, never cutting a donor below `consumed + 10% of an even share` (so no donor is retroactively blocked).
+   - Returns a Σ-invariant plan: `sum_before == sum_after`.
+5. Shows a **before/after table** (recipient + each donor, proving zero-sum), surfaces warnings. If donors can't fully fund the recommendation (`shortfall`), offers: accept the partial raise, add donors, or knowingly cover the rest from pool headroom (overage).
+6. On your confirmation, writes every cap atomically (`UsageConfig`), verifies, updates the ledger. Partial-failure → reports applied/failed and offers rollback.
 
 ```zsh
-dve boost alice@corp.com 50      # +50 ACUs to alice's cap
+dve boost alice@corp.com         # recommend amount from alice's run-rate; auto-pick donors
+dve boost alice@corp.com 50      # boost alice by exactly 50 ACUs, funded from low consumers
 ```
 
 Argument rules (validated before any agent launch):
 - `<email>` must look like an email (`*@*.*`) — else exit 2.
-- `<acus>` must be a positive integer — else exit 2.
+- `[acus]`, if given, must be a positive integer — else exit 2. Omit it to use the recommendation.
+
+### `dve user <email>`
+Read-only deep dive on one person. No gates, nothing written.
+
+Reports:
+- **Headline:** ACUs consumed this cycle, their cap, headroom, % of cap used.
+- **Trajectory:** daily run-rate, projected month-end, whether/when they'll exhaust their cap.
+- **Model breakdown:** ACUs + message count per `model_uid`, sorted — exactly which models they lean on and how costly each is.
+- **IDE breakdown**, **daily trend** (with spike call-outs).
+- **Team context:** their rank by ACU and consumption vs team median.
+- **Activity:** active days, last autocomplete/chat/command usage; flags spend concentrated in few days.
+- Points to `dve boost <email>` if they're near/over cap.
+
+```zsh
+dve user alice@corp.com
+```
 
 ### `dve status`
 Read-only health check. No gates, nothing written.
@@ -209,11 +231,11 @@ Base: `https://server.codeium.com`.
 
 | Endpoint | Method | Scope | Used by |
 |---|---|---|---|
-| `/api/v1/GetTeamCreditBalance` | POST | Billing Read | set-limits, boost, status, models, doctor |
-| `/api/v1/GetUsageConfig` | POST | Billing Read | set-limits (verify), boost |
+| `/api/v1/GetTeamCreditBalance` | POST | Billing Read | set-limits, boost, user, status, models, doctor |
+| `/api/v1/GetUsageConfig` | POST | Billing Read | set-limits (verify), boost (recipient + donors), user |
 | `/api/v1/UsageConfig` | POST | Billing Write | set-limits, boost, doctor (no-op probe) |
-| `/api/v2alpha/analytics/consumption` | GET | Analytics Read | set-limits, status, models, doctor |
-| `/api/v1/UserPageAnalytics` | POST | Teams Read-only | set-limits, boost (ledger rebuild), doctor |
+| `/api/v2alpha/analytics/consumption` | GET | Analytics Read | set-limits, boost, user, status, models, doctor |
+| `/api/v1/UserPageAnalytics` | POST | Teams Read-only | set-limits, boost (donors), user, doctor |
 
 Full field-level contract lives in `playbooks/_common.md`.
 
@@ -227,10 +249,12 @@ Full field-level contract lives in `playbooks/_common.md`.
 | `lib/key-resolve.zsh` | `dve_resolve_service_key()`: Keychain → `$DEVIN_SERVICE_KEY` |
 | `lib/doctor.zsh` | `dve_doctor()`: deterministic per-scope HTTP probe (no agent) |
 | `lib/compute-caps.jq` | Remaining-pool split; day-1 flat split; exhausted-pool warnings |
-| `lib/boost-check.jq` | New cap, new allocation sum, headroom, over-pool flag |
+| `lib/boost-plan.jq` | Zero-sum boost: recommended cap from projection, donor takes (consumed+buffer floor), Σ-invariant |
+| `lib/boost-check.jq` | Pool-headroom check (used for the shortfall→overage path) |
 | `playbooks/_common.md` | API contract (5 endpoints) + hard rules (gates, rate limits, no key leakage) |
 | `playbooks/set-limits.md` | set-limits step flow |
-| `playbooks/boost.md` | boost step flow |
+| `playbooks/boost.md` | zero-sum boost step flow (donors → recipient) |
+| `playbooks/user.md` | per-user deep-dive step flow |
 | `playbooks/status.md` | status step flow |
 | `playbooks/models.md` | models step flow + portal walkthrough |
 | `environment.env` | Default config (env vars override) |
@@ -253,12 +277,12 @@ Full field-level contract lives in `playbooks/_common.md`.
 ## Verification
 
 ```zsh
-zsh claude/devin-acu-governor/test/run.zsh           # all test files (63 assertions)
+zsh claude/devin-acu-governor/test/run.zsh           # all test files (92 assertions)
 zsh -n claude/devin-acu-governor/bin/dve             # parse check
 DVE_PRINT_PROMPT=1 DEVIN_SERVICE_KEY=x dve status     # inspect assembled prompt, launch nothing
 ```
 
-Test coverage: key resolution order (4), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost headroom (6), CLI dispatch + validation + prompt assembly + key-leak guard (19), doctor scope classification + exit codes + key-leak guard (19).
+Test coverage: key resolution order (4), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + key-leak guard (27), doctor scope classification + exit codes + key-leak guard (19).
 
 ---
 

@@ -27,7 +27,9 @@ dve — Devin Enterprise ACU governor
 
 Usage:
   dve set-limits              Distribute the monthly ACU pool as per-user caps (prorated)
-  dve boost <email> <acus>    Raise one user's cap by <acus> with a pool headroom check
+  dve boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
+                              (recommends amount + donors; omit [acus] to use the recommendation)
+  dve user <email>            Deep-dive one user's consumption and model usage (read-only)
   dve status                  Consumption, remaining ACUs, month-end projection
   dve models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
   dve doctor                  Probe the service key and report which scopes it holds
@@ -55,6 +57,7 @@ dve_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- DVE_MONTHLY_ACU_POOL: ${DVE_MONTHLY_ACU_POOL}"
   print -r -- "- compute_caps_jq: ${daemon_dir}/lib/compute-caps.jq"
   print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
+  print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- ledger: ${DVE_STATE_DIR}/allocations.json"
   print -r -- "- service key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
   local line
@@ -93,11 +96,24 @@ main() {
         print -ru2 -- "dve boost: first argument must be a user email (got: ${email:-<missing>})"
         exit 2
       fi
-      if [[ "$amount" != <1-> ]]; then
-        print -ru2 -- "dve boost: second argument must be a positive integer ACU amount (got: ${amount:-<missing>})"
+      if [[ -n "$amount" && "$amount" != <1-> ]]; then
+        print -ru2 -- "dve boost: optional second argument must be a positive integer ACU amount (got: ${amount})"
         exit 2
       fi
-      context_lines=("boost target: ${email}" "increment: ${amount}")
+      context_lines=("boost target: ${email}")
+      if [[ -n "$amount" ]]; then
+        context_lines+=("explicit increment: ${amount}")
+      else
+        context_lines+=("explicit increment: none — recommend from the user's run-rate projection")
+      fi
+      ;;
+    user)
+      local user_email="${1:-}"
+      if [[ "$user_email" != *@*.* ]]; then
+        print -ru2 -- "dve user: argument must be a user email (got: ${user_email:-<missing>})"
+        exit 2
+      fi
+      context_lines=("user: ${user_email}")
       ;;
     models)
       if [[ -n "${1:-}" && -f "${1:-}" ]]; then
