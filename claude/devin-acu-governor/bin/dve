@@ -1,7 +1,10 @@
 #!/usr/bin/env zsh
 # dve — Devin Enterprise ACU governor.
-# Thin launcher: resolves the Devin service key, assembles a playbook prompt,
+# Thin launcher: resolves the Devin API keys, assembles a playbook prompt,
 # and hands the job to a Claude agent session (DVE_LAUNCHER, default clscb).
+# Primary key: Devin API v3 service-user key (cog_..., api.devin.ai) — required.
+# Secondary: Windsurf service key (server.codeium.com) — optional, enables
+# per-model/IDE breakdown and roster activity analytics.
 set -u
 script_path=${0:A}
 daemon_dir=${script_path:h:h}
@@ -26,24 +29,31 @@ dve_usage() {
 dve — Devin Enterprise ACU governor
 
 Usage:
-  dve set-limits              Distribute the monthly ACU pool as per-user caps (prorated)
+  dve set-limits              Distribute the monthly ACU pool as per-user soft caps (ledger)
   dve boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dve user <email>            Deep-dive one user's consumption and model usage (read-only)
   dve status                  Consumption, remaining ACUs, month-end projection
   dve models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
-  dve doctor                  Probe the service key and report which scopes it holds
+  dve doctor                  Probe both API keys and report which capabilities they hold
   dve help                    Show this help
 
 Config (environment.env; shell env vars override):
-  DVE_MONTHLY_ACU_POOL   monthly ACU pool (default 24000)
-  DVE_LAUNCHER           agent launcher command (default clscb)
-  DVE_KEYCHAIN_SERVICE   keychain item holding the service key (default devin-service-key)
-  DVE_STATE_DIR          ledger directory (default ~/.local/state/devin-acu-governor)
+  DVE_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)
+  DVE_LAUNCHER               agent launcher command (default clscb)
+  DVE_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
+  DVE_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
+  DVE_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
 
-Service key (Billing Read+Write, Analytics Read, Teams Read-only), one-time setup:
-  security add-generic-password -s devin-service-key -a "$USER" -w '<key>'
-Fallback: export DEVIN_SERVICE_KEY=<key>
+Keys, one-time setup:
+  Required — Devin API v3 service-user key (app.devin.ai > Settings > Service users,
+  enterprise-scoped, permissions ManageBilling + ViewOrgSessions + ViewAccountMetrics):
+    security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_...'
+    Fallback: export DEVIN_COG_KEY=cog_...
+  Optional — Windsurf service key (windsurf.com/team/settings; Analytics Read +
+  Teams Read-only) for per-model/IDE breakdown and roster activity:
+    security add-generic-password -s devin-service-key -a "$USER" -w '<key>'
+    Fallback: export DEVIN_SERVICE_KEY=<key>
 EOF
 }
 
@@ -59,7 +69,12 @@ dve_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
   print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- ledger: ${DVE_STATE_DIR}/allocations.json"
-  print -r -- "- service key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
+  print -r -- "- Devin v3 key: exported as DEVIN_COG_KEY in this shell. Never print it."
+  if [[ -n "${_dve_have_windsurf_key}" ]]; then
+    print -r -- "- Windsurf key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
+  else
+    print -r -- "- Windsurf key: ABSENT — skip server.codeium.com calls; per-model/IDE breakdown and roster activity unavailable."
+  fi
   local line
   for line in "$@"; do print -r -- "- ${line}"; done
 }
@@ -131,12 +146,20 @@ main() {
       ;;
   esac
 
-  local key
-  if ! key=$(dve_resolve_service_key); then
-    print -ru2 -- "dve: no Devin service key found."
-    print -ru2 -- "  Keychain: security add-generic-password -s ${DVE_KEYCHAIN_SERVICE:-devin-service-key} -a \"\$USER\" -w '<key>'"
-    print -ru2 -- "  Or: export DEVIN_SERVICE_KEY=<key>"
+  local cog_key windsurf_key
+  if ! cog_key=$(dve_resolve_cog_key); then
+    print -ru2 -- "dve: no Devin API v3 service-user key (cog_...) found."
+    print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
+    print -ru2 -- "  permissions: ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+    print -ru2 -- "  Keychain: security add-generic-password -s ${DVE_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
+    print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
     exit 1
+  fi
+  typeset -g _dve_have_windsurf_key=""
+  if windsurf_key=$(dve_resolve_service_key); then
+    _dve_have_windsurf_key=1
+  else
+    print -ru2 -- "dve: note — no Windsurf service key; per-model/IDE breakdown and roster activity degraded."
   fi
 
   mkdir -p "${DVE_STATE_DIR}"
@@ -148,7 +171,8 @@ main() {
     exit 0
   fi
 
-  export DEVIN_SERVICE_KEY="$key"
+  export DEVIN_COG_KEY="$cog_key"
+  [[ -n "$_dve_have_windsurf_key" ]] && export DEVIN_SERVICE_KEY="$windsurf_key"
   exec zsh -ic "${DVE_LAUNCHER} $(printf '%q' "$prompt")"
 }
 

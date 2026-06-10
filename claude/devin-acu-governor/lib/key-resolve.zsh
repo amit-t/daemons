@@ -1,7 +1,26 @@
 #!/usr/bin/env zsh
-# Resolve the Devin service key.
-# Order: macOS Keychain item (DVE_KEYCHAIN_SERVICE, default devin-service-key),
-# then $DEVIN_SERVICE_KEY. Prints the key on stdout; returns 1 if neither is set.
+# Resolve dve API keys.
+#
+# Primary — Devin API v3 service-user key (cog_..., api.devin.ai):
+#   Keychain item DVE_COG_KEYCHAIN_SERVICE (default devin-cog-key), then $DEVIN_COG_KEY.
+# Secondary — Windsurf service key (server.codeium.com analytics):
+#   Keychain item DVE_KEYCHAIN_SERVICE (default devin-service-key), then $DEVIN_SERVICE_KEY.
+#
+# Each function prints the key on stdout; returns 1 if neither source is set.
+
+dve_resolve_cog_key() {
+  local service="${DVE_COG_KEYCHAIN_SERVICE:-devin-cog-key}"
+  local key
+  if key=$(security find-generic-password -s "$service" -w 2>/dev/null) && [[ -n "$key" ]]; then
+    print -r -- "$key"
+    return 0
+  fi
+  if [[ -n "${DEVIN_COG_KEY:-}" ]]; then
+    print -r -- "$DEVIN_COG_KEY"
+    return 0
+  fi
+  return 1
+}
 
 dve_resolve_service_key() {
   local service="${DVE_KEYCHAIN_SERVICE:-devin-service-key}"
