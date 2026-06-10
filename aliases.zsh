@@ -22,3 +22,14 @@ aicc() {
 
   "$daemon_entry" "$@"
 }
+
+dve() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/devin-acu-governor/bin/dve"
+
+  if [[ ! -x "$daemon_entry" ]]; then
+    print -ru2 -- "dve: missing daemon entrypoint at $daemon_entry"
+    return 127
+  fi
+
+  "$daemon_entry" "$@"
+}
