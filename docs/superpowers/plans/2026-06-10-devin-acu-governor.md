@@ -45,7 +45,7 @@ Modified: `aliases.zsh` (add `dve`), `README.md:9,22-25` (claude/ convention + d
 - Create: `claude/devin-acu-governor/test/harness.zsh`
 - Test: `claude/devin-acu-governor/test/key-resolve.test.zsh`
 
-- [ ] **Step 1: Write test harness**
+- [x] **Step 1: Write test harness**
 
 `test/harness.zsh`:
 
@@ -76,7 +76,7 @@ report() {
 }
 ```
 
-- [ ] **Step 2: Write failing key-resolve test**
+- [x] **Step 2: Write failing key-resolve test**
 
 `test/key-resolve.test.zsh`:
 
@@ -139,12 +139,12 @@ EOF
 chmod +x "${tmpdir}/security-hit/security"
 ```
 
-- [ ] **Step 3: Run test, verify it fails**
+- [x] **Step 3: Run test, verify it fails**
 
 Run: `zsh claude/devin-acu-governor/test/key-resolve.test.zsh`
 Expected: FAIL — `lib/key-resolve.zsh` does not exist (source error).
 
-- [ ] **Step 4: Implement key-resolve + environment.env**
+- [x] **Step 4: Implement key-resolve + environment.env**
 
 `lib/key-resolve.zsh`:
 
@@ -178,13 +178,13 @@ DVE_LAUNCHER=clscb
 DVE_KEYCHAIN_SERVICE=devin-service-key
 ```
 
-- [ ] **Step 5: Run test, verify pass; parse-check**
+- [x] **Step 5: Run test, verify pass; parse-check**
 
 Run: `zsh claude/devin-acu-governor/test/key-resolve.test.zsh`
 Expected: `pass=4 fail=0`, exit 0.
 Run: `zsh -n claude/devin-acu-governor/lib/key-resolve.zsh`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add claude/devin-acu-governor
@@ -197,7 +197,7 @@ git commit -m "feat(devin-acu-governor): scaffold with keychain-first key resolu
 - Create: `claude/devin-acu-governor/lib/compute-caps.jq`
 - Test: `claude/devin-acu-governor/test/compute-caps.test.zsh`
 
-- [ ] **Step 1: Write failing golden tests**
+- [x] **Step 1: Write failing golden tests**
 
 `test/compute-caps.test.zsh`:
 
@@ -252,11 +252,11 @@ assert_contains "empty" "$out" '"error"'
 report
 ```
 
-- [ ] **Step 2: Run, verify fails** (jq file missing)
+- [x] **Step 2: Run, verify fails** (jq file missing)
 
 Run: `zsh claude/devin-acu-governor/test/compute-caps.test.zsh`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `lib/compute-caps.jq`:
 
@@ -300,12 +300,12 @@ Run: `zsh claude/devin-acu-governor/test/compute-caps.test.zsh`
   end
 ```
 
-- [ ] **Step 4: Run, verify pass**
+- [x] **Step 4: Run, verify pass**
 
 Run: `zsh claude/devin-acu-governor/test/compute-caps.test.zsh`
 Expected: `pass=15 fail=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add claude/devin-acu-governor/lib/compute-caps.jq claude/devin-acu-governor/test/compute-caps.test.zsh
@@ -318,7 +318,7 @@ git commit -m "feat(devin-acu-governor): remaining-pool cap math in jq with gold
 - Create: `claude/devin-acu-governor/lib/boost-check.jq`
 - Test: `claude/devin-acu-governor/test/boost-check.test.zsh`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/boost-check.test.zsh`:
 
@@ -346,8 +346,8 @@ assert_contains "over headroom" "$out" '"headroom_after":-30'
 report
 ```
 
-- [ ] **Step 2: Run, verify fails**
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run, verify fails**
+- [x] **Step 3: Implement**
 
 `lib/boost-check.jq`:
 
@@ -361,8 +361,8 @@ report
    headroom_after: (.pool - $new_sum), over_pool: ($new_sum > .pool)}
 ```
 
-- [ ] **Step 4: Run, verify pass** (`pass=6 fail=0`)
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run, verify pass** (`pass=6 fail=0`)
+- [x] **Step 5: Commit**
 
 ```bash
 git add claude/devin-acu-governor/lib/boost-check.jq claude/devin-acu-governor/test/boost-check.test.zsh
@@ -376,12 +376,12 @@ git commit -m "feat(devin-acu-governor): boost headroom math in jq"
 
 No unit tests of their own (prose); content asserted by CLI tests in Task 5. Full text for each file is specified in the spec §Commands and §API surface — implement as complete markdown playbooks containing:
 
-- [ ] **Step 1: Write `_common.md`** — role statement; full API contract table (5 endpoints, exact URLs/methods/auth/fields from spec); hard rules: (1) all cap math via the jq programs given in run context — never mental arithmetic, (2) no write call without presenting the plan and getting explicit user confirmation, (3) quote exact API error bodies and stop before writes on read failure, (4) consumption API ≤10 req/hr — reuse ETags, back off on 429, (5) never print `$DEVIN_SERVICE_KEY`, (6) ledger lives at the path in run context; read/write it with jq.
-- [ ] **Step 2: Write `set-limits.md`** — the 6-step flow from spec §`dve set-limits` (balance → consumption group_by=user → roster → confirm N → compute-caps.jq → preview table → confirm → write caps (team_level on day-1 path) → spot-verify 5 → write ledger).
-- [ ] **Step 3: Write `boost.md`** — flow from spec §`dve boost` (GetUsageConfig → boost-check.jq with ledger sum_caps, rebuild ledger from roster if missing/stale → overage warning gate → write → verify → update ledger).
-- [ ] **Step 4: Write `status.md`** — read-only report from spec §`dve status` (consumed, remaining, days elapsed/left, run-rate, projection, verdict, top-10, per-model burn).
-- [ ] **Step 5: Write `models.md`** — per-model report, allowlist diff, Admin Portal walkthrough, re-check docs for a model API each run (spec §`dve models`).
-- [ ] **Step 6: Commit**
+- [x] **Step 1: Write `_common.md`** — role statement; full API contract table (5 endpoints, exact URLs/methods/auth/fields from spec); hard rules: (1) all cap math via the jq programs given in run context — never mental arithmetic, (2) no write call without presenting the plan and getting explicit user confirmation, (3) quote exact API error bodies and stop before writes on read failure, (4) consumption API ≤10 req/hr — reuse ETags, back off on 429, (5) never print `$DEVIN_SERVICE_KEY`, (6) ledger lives at the path in run context; read/write it with jq.
+- [x] **Step 2: Write `set-limits.md`** — the 6-step flow from spec §`dve set-limits` (balance → consumption group_by=user → roster → confirm N → compute-caps.jq → preview table → confirm → write caps (team_level on day-1 path) → spot-verify 5 → write ledger).
+- [x] **Step 3: Write `boost.md`** — flow from spec §`dve boost` (GetUsageConfig → boost-check.jq with ledger sum_caps, rebuild ledger from roster if missing/stale → overage warning gate → write → verify → update ledger).
+- [x] **Step 4: Write `status.md`** — read-only report from spec §`dve status` (consumed, remaining, days elapsed/left, run-rate, projection, verdict, top-10, per-model burn).
+- [x] **Step 5: Write `models.md`** — per-model report, allowlist diff, Admin Portal walkthrough, re-check docs for a model API each run (spec §`dve models`).
+- [x] **Step 6: Commit**
 
 ```bash
 git add claude/devin-acu-governor/playbooks
@@ -394,7 +394,7 @@ git commit -m "feat(devin-acu-governor): agent playbooks for set-limits, boost, 
 - Create: `claude/devin-acu-governor/bin/dve`
 - Test: `claude/devin-acu-governor/test/dve-cli.test.zsh`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 `test/dve-cli.test.zsh`:
 
@@ -465,8 +465,8 @@ if [[ "$out" == *test-key* ]]; then _fail "key leaked into prompt"; else _ok; fi
 report
 ```
 
-- [ ] **Step 2: Run, verify fails** (bin/dve missing)
-- [ ] **Step 3: Implement `bin/dve`**
+- [x] **Step 2: Run, verify fails** (bin/dve missing)
+- [x] **Step 3: Implement `bin/dve`**
 
 ```zsh
 #!/usr/bin/env zsh
@@ -599,12 +599,12 @@ main "$@"
 
 Note: `"${context_lines[@]}"` with an empty array needs `set -u` care in zsh — zsh handles empty `"$@"`-style expansion of empty arrays fine (expands to nothing). Verify in tests.
 
-- [ ] **Step 4: Run CLI tests + full suite + parse checks**
+- [x] **Step 4: Run CLI tests + full suite + parse checks**
 
 Run: `zsh claude/devin-acu-governor/test/dve-cli.test.zsh` → expected `pass=19 fail=0`.
 Run: `zsh -n claude/devin-acu-governor/bin/dve`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add claude/devin-acu-governor/bin/dve claude/devin-acu-governor/test/dve-cli.test.zsh
@@ -620,7 +620,7 @@ git commit -m "feat(devin-acu-governor): dve CLI dispatch, prompt assembly, agen
 - Modify: `README.md:9` (claude/ convention), `README.md:22-25` (daemon entry)
 - Modify: `AGENTS.md:9` (claude/ convention)
 
-- [ ] **Step 1: Write `test/run.zsh`**
+- [x] **Step 1: Write `test/run.zsh`**
 
 ```zsh
 #!/usr/bin/env zsh
@@ -637,7 +637,7 @@ done
 print -r -- "all test files passed"
 ```
 
-- [ ] **Step 2: Append to `aliases.zsh`**
+- [x] **Step 2: Append to `aliases.zsh`**
 
 ```zsh
 dve() {
@@ -652,18 +652,18 @@ dve() {
 }
 ```
 
-- [ ] **Step 3: Update root `README.md`** — add to Repository contract: `- Claude-powered daemons (runtime is a Claude agent session) live under `claude/<daemon-name>/`.`; add to Current daemons: `- [`claude/devin-acu-governor`](./claude/devin-acu-governor) — `dve`, a Devin Enterprise ACU governor that launches Claude-agent playbook sessions (via `clscb`) to distribute the monthly ACU pool as prorated per-user caps (`set-limits`), raise individual caps with pool-headroom checks (`boost`), report consumption trajectory and month-end projection (`status`), and audit per-model burn with an Admin Portal allowlist walkthrough (`models`).`
+- [x] **Step 3: Update root `README.md`** — add to Repository contract: `- Claude-powered daemons (runtime is a Claude agent session) live under `claude/<daemon-name>/`.`; add to Current daemons: `- [`claude/devin-acu-governor`](./claude/devin-acu-governor) — `dve`, a Devin Enterprise ACU governor that launches Claude-agent playbook sessions (via `clscb`) to distribute the monthly ACU pool as prorated per-user caps (`set-limits`), raise individual caps with pool-headroom checks (`boost`), report consumption trajectory and month-end projection (`status`), and audit per-model burn with an Admin Portal allowlist walkthrough (`models`).`
 
-- [ ] **Step 4: Update `AGENTS.md`** — after the codex line: `- Claude-powered daemons live under `claude/<daemon-name>/`; their runtime is a Claude agent session launched from a thin zsh wrapper.`
+- [x] **Step 4: Update `AGENTS.md`** — after the codex line: `- Claude-powered daemons live under `claude/<daemon-name>/`; their runtime is a Claude agent session launched from a thin zsh wrapper.`
 
-- [ ] **Step 5: Write daemon `README.md`** — purpose, commands table, one-time key setup, config table, how a run works, file map, verification (`zsh test/run.zsh`, `zsh -n`), API gap note for models.
+- [x] **Step 5: Write daemon `README.md`** — purpose, commands table, one-time key setup, config table, how a run works, file map, verification (`zsh test/run.zsh`, `zsh -n`), API gap note for models.
 
-- [ ] **Step 6: Full verification**
+- [x] **Step 6: Full verification**
 
 Run: `zsh claude/devin-acu-governor/test/run.zsh` → all pass.
 Run: `for f in claude/devin-acu-governor/bin/dve claude/devin-acu-governor/lib/key-resolve.zsh claude/devin-acu-governor/test/*.zsh aliases.zsh; do zsh -n "$f" || echo "PARSE FAIL: $f"; done` → no failures.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add claude/devin-acu-governor aliases.zsh README.md AGENTS.md
