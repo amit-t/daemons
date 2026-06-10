@@ -36,13 +36,19 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
 
 ## Kid-pane routing (non-negotiable)
 
-The base orchestrator is a router, not a doer, for any request that names a kid pane. The orchestrator prompt enforces:
+The base orchestrator is a router and prompt engineer, not a doer, for any request that names a kid pane. The orchestrator prompt enforces:
 
-- When the user says `ask Claude`, `tell Claude`, `send to Claude`, `tell kid-claude` (and the same for Codex/Devin), or otherwise names a kid pane, the orchestrator delivers the user's instruction **verbatim** into that exact `kid-*` surface with `cmux send`. The prompt is written into the pane so the user can watch the agent work through it.
+- When the user says `ask Claude`, `tell Claude`, `send to Claude`, `tell kid-claude` (and the same for Codex/Devin), or otherwise names a kid pane, the orchestrator first rewrites the raw request into a structured, self-contained prompt for the targeted `kid-*` surface, then sends that refined prompt with `cmux send`. The prompt is written into the pane so the user can watch the agent work through it.
+- The refined kid prompt preserves Amit's intent, constraints, target agents, and quoted text, but adds prompt structure: target agent/runtime profile, original ask, objective, context, constraints/non-goals, acceptance criteria, suggested first steps or commands, verification, and reporting instructions.
+- AICC tailors the prompt to the kid agent's command style:
+  - `kid-claude` runs `clscb`; prompts should fit Claude Code and tell it to read `AGENTS.md`, inspect before editing, use zsh for shell work, and provide tests/docs/verification.
+  - `kid-codex` runs `cxscb --disable apps -c 'mcp_servers={}'`; prompts should assume local files/shell/git/tests and no Apps/external MCP tools.
+  - `kid-devin` runs `dey.boil`; prompts should be durable mission briefs with objective, constraints, acceptance criteria, risky-action gates, verification evidence, and reporting cadence.
+- If Amit explicitly asks to send exact text as-is, the orchestrator sends the exact text; otherwise it refines the prompt before delivery.
 - The orchestrator must **not** spawn a background subagent, Task, or detached worker — and must not do the work itself in the base tab — to satisfy a kid-pane request.
 - After sending, the orchestrator may `read-screen` the kid pane to report progress, but never suppresses or replaces what the pane is doing.
-- Naming multiple kid panes (e.g. `ask Claude and Codex`) sends the instruction to each named pane.
-- A kid pane is only opened/repaired when it is missing, closed, dead, or not running the expected CLI; then the pending prompt is sent.
+- Naming multiple kid panes (e.g. `ask Claude and Codex`) creates one tailored prompt per named pane.
+- A kid pane is only opened/repaired when it is missing, closed, dead, or not running the expected CLI; then the refined pending prompt is sent.
 
 Background subagents/detached workers are allowed **only** when the user has not addressed a kid pane. When a message is ambiguous about whether it targets a kid pane, the orchestrator routes to the pane rather than backgrounding.
 

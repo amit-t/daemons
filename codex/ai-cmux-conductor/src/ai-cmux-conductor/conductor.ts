@@ -455,8 +455,9 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
     .map((agent) => `"ask ${agent}", "tell ${agent}", "send to ${agent}", "tell ${kidTitleFor(agent)}"`)
     .join(", ");
   const kidList = enabledAgents.map((agent) => `${agent} → ${kidTitleFor(agent)}`).join(", ");
+  const agentCommandProfiles = enabledAgents.map((agent) => kidPromptCommandProfile(agent)).join("\n");
   const roleRouting = enabledAgents.length
-    ? ` When the user says ${routeNames} (or otherwise names a kid pane), you MUST deliver the user's literal instruction into that kid pane with cmux send. Never answer it yourself and never spawn a background subagent for it.`
+    ? ` When the user says ${routeNames} (or otherwise names a kid pane), you MUST build a refined structured prompt for that kid pane and deliver it with cmux send. Never answer it yourself and never spawn a background subagent for it.`
     : " No managed side-agent routing panes are enabled.";
 
   const commandLines: string[] = [];
@@ -476,7 +477,7 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
     commandLines.push(
       `- Read Codex: cmux read-screen --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} --scrollback --lines 160`,
       `- Send Codex: cmux send --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Codex (${CODEX_PANEL_TITLE}) ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE ${CODEX_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. Wait for the Codex CLI UI, then send the pending prompt to that Codex surface.`,
+      `- Open/repair Codex (${CODEX_PANEL_TITLE}) ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE ${CODEX_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. Wait for the Codex CLI UI, then send the refined pending prompt to that Codex surface.`,
     );
   }
   if (devinEnabled) {
@@ -489,13 +490,13 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
     commandLines.push(
       `- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160`,
       `- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Devin (${DEVIN_PANEL_TITLE}) ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE ${DEVIN_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. Wait for the Devin CLI UI, then send the pending prompt to that Devin surface.`,
+      `- Open/repair Devin (${DEVIN_PANEL_TITLE}) ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE ${DEVIN_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. Wait for the Devin CLI UI, then send the refined pending prompt to that Devin surface.`,
     );
   }
 
   const routingRules = enabledAgents.length
-    ? `3. Route every explicit kid-pane request only to enabled panes: ${joinHumanList(enabledAgents)}. Send the user's words verbatim with cmux send and never background it.
-4. If an enabled pane is missing, closed, dead, or not running the expected CLI, open or repair only that requested pane with the commands above, then send the pending prompt.
+    ? `3. Route every explicit kid-pane request only to enabled panes: ${joinHumanList(enabledAgents)}. Build a refined structured prompt first, send it with cmux send, and never background it.
+4. If an enabled pane is missing, closed, dead, or not running the expected CLI, open or repair only that requested pane with the commands above, then send the refined pending prompt.
 5. If an existing enabled pane looks dead, wrong, or unrelated outside an explicit routing request, report that and ask before replacing it.
 6. Do not kill, close, or respawn Claude, Codex, Devin, or unrelated user terminal panes without explicit user approval.
 7. Treat explicit routing requests as approval to open/repair only the requested enabled pane.
@@ -510,12 +511,37 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
     ? `
 ## Kid-pane routing (non-negotiable)
 These kid panes are live AI CLIs that AICC already spawned in this workspace: ${kidList}.
-When the user explicitly addresses a kid pane — e.g. ${routeNames}, or any "tell"/"ask"/"send to" plus an agent name or its kid-<agent> title — you act ONLY as a router:
-1. Send the user's instruction verbatim into that exact kid surface with the matching "Send <Agent>" command below, so the prompt is written into the pane and the user can watch the agent work through it.
-2. Do NOT spawn a background subagent, Task, detached worker, or do the work yourself in this tab to satisfy a kid-pane request.
-3. After sending, you may read the kid pane with the matching "Read <Agent>" command to report progress; never suppress or replace what the pane is doing.
-4. When the user names more than one kid pane (e.g. "ask Claude and Codex"), send the instruction to each named pane.
-5. Only open/repair a kid pane (commands below) when it is missing, closed, dead, or not running the expected CLI, then send the pending prompt.
+When the user explicitly addresses a kid pane — e.g. ${routeNames}, or any "tell"/"ask"/"send to" plus an agent name or its kid-<agent> title — you act ONLY as a router and prompt engineer:
+1. Build a refined, self-contained prompt for each targeted kid pane before sending anything.
+2. Send the refined prompt into that exact kid surface with the matching "Send <Agent>" command below, so the prompt is written into the pane and the user can watch the agent work through it.
+3. Do NOT spawn a background subagent, Task, detached worker, or do the work yourself in this tab to satisfy a kid-pane request.
+4. After sending, you may read the kid pane with the matching "Read <Agent>" command to report progress; never suppress or replace what the pane is doing.
+5. When the user names more than one kid pane (e.g. "ask Claude and Codex"), tailor and send one prompt per named pane.
+6. Only open/repair a kid pane (commands below) when it is missing, closed, dead, or not running the expected CLI, then send the refined pending prompt.
+
+## Kid-pane prompt refinement (non-negotiable)
+Do NOT copy Amit's raw wording straight through unless Amit explicitly asks you to send exact text as-is.
+Build a structured prompt before cmux send. Preserve Amit's intent, constraints, target agents, and quoted text exactly; improve organization, remove ambiguity when safe, and label assumptions instead of inventing scope.
+Each kid prompt must include:
+- Target agent and runtime profile
+- Original ask: Amit's request, summarized or quoted only as needed for fidelity
+- Objective
+- Relevant context
+- Constraints and non-goals
+- Acceptance criteria
+- Suggested first steps or commands
+- Verification
+- Reporting instructions
+
+Agent-specific command profile:
+${agentCommandProfiles}
+
+Prompt construction rules:
+1. Use prompt-writing skill: make the prompt specific, contextual, bounded, testable, and easy for the kid agent to execute.
+2. Adapt wording to the target agent's runtime and command style instead of sending one generic blob when agents differ.
+3. If Amit asks multiple kid panes to collaborate, give each pane its role, expected handoff, and shared success criteria.
+4. If Amit explicitly asks to send exact text, send that exact text; otherwise send the refined structured prompt.
+5. Keep the prompt focused on Amit's ask. Do not add unrelated tasks.
 
 ## Background work
 Spawn background subagents or detached workers ONLY when the user has NOT addressed a kid pane. Any request naming a kid pane (${kidList}) must be routed into that pane, not backgrounded. When unsure whether a message targets a kid pane, route to the pane rather than backgrounding.
@@ -551,6 +577,17 @@ function joinHumanList(values: string[]): string {
   if (values.length <= 1) return values[0] || "";
   if (values.length === 2) return `${values[0]} and ${values[1]}`;
   return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+}
+
+function kidPromptCommandProfile(agent: ManagedPanelTitle): string {
+  switch (agent) {
+    case "Claude":
+      return `- Claude/kid-claude runs clscb. Write for Claude Code: ask it to read AGENTS.md, inspect the repo before edits, use zsh for shell work, implement with tests/docs/verification, and ask Amit only when blocked.`;
+    case "Codex":
+      return `- Codex/kid-codex runs ${CODEX_PANEL_LAUNCH_COMMAND}. Write for Codex CLI with Apps/external MCP disabled: rely on local files, shell, git, and tests; include exact commands and expected evidence.`;
+    case "Devin":
+      return `- Devin/kid-devin runs ${DEVIN_LAUNCH_COMMAND}. Write a durable mission brief for Devin boil mode: clear objective, constraints, acceptance criteria, risky-action approval gates, verification evidence, and reporting cadence.`;
+  }
 }
 
 export function conductorHelpText(): string {

@@ -625,7 +625,9 @@ describe("buildOrchestratorPrompt", () => {
     expect(prompt).toContain("cmux new-split down --workspace workspace:1 --surface surface:2 --focus true");
     expect(prompt).toContain("cmux rename-tab --workspace workspace:1 --surface NEW_DEVIN_SURFACE kid-devin");
     expect(prompt).toContain("zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'");
-    expect(prompt).toContain("send the pending prompt to that Devin surface");
+    expect(prompt).toContain("send the refined pending prompt to that Devin surface");
+    expect(prompt).toContain("Devin/kid-devin runs dey.boil");
+    expect(prompt).toContain("durable mission brief");
   });
 
   test("omits Devin routing instructions when the Devin panel is disabled", () => {

@@ -311,11 +311,12 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain("Read Codex:");
     expect(prompt).toContain("Send Codex:");
     expect(prompt).toContain("Codex (kid-codex) below kid-claude");
+    expect(prompt).toContain("send the refined pending prompt to that Codex surface");
     expect(prompt).toContain("cxscb --disable apps -c");
     expect(prompt).not.toContain("Read Devin:");
   });
 
-  test("mandates routing kid-pane requests to panes and forbids background subagents", () => {
+  test("mandates refined structured prompts for kid-pane requests and forbids background subagents", () => {
     const prompt = buildOrchestratorPrompt({
       cwd: "/work/project-x",
       workspaceName: "Project-X",
@@ -337,10 +338,21 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain('"tell Codex"');
     expect(prompt).toContain('"tell kid-codex"');
 
-    // Non-negotiable: route into the spawned kid pane, write the prompt verbatim, no background work.
+    // Non-negotiable: route into the spawned kid pane with a refined self-contained prompt, no background work.
     expect(prompt).toContain("## Kid-pane routing (non-negotiable)");
     expect(prompt).toContain("Claude → kid-claude, Codex → kid-codex");
-    expect(prompt).toContain("Send the user's instruction verbatim into that exact kid surface");
+    expect(prompt).toContain("## Kid-pane prompt refinement (non-negotiable)");
+    expect(prompt).toContain("Do NOT copy Amit's raw wording straight through");
+    expect(prompt).toContain("Build a structured prompt before cmux send");
+    expect(prompt).toContain("Original ask");
+    expect(prompt).toContain("Objective");
+    expect(prompt).toContain("Acceptance criteria");
+    expect(prompt).toContain("Verification");
+    expect(prompt).toContain("Agent-specific command profile");
+    expect(prompt).toContain("Claude/kid-claude runs clscb");
+    expect(prompt).toContain("Codex/kid-codex runs cxscb --disable apps -c 'mcp_servers={}'");
+    expect(prompt).not.toContain("verbatim");
+    expect(prompt).not.toContain("literal instruction");
     expect(prompt).toContain("watch the agent work through it");
     expect(prompt).toContain("Do NOT spawn a background subagent");
     expect(prompt).toContain("never spawn a background subagent for it");
