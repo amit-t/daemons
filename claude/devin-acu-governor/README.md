@@ -15,6 +15,7 @@ Devin Enterprise ACU governor. A thin zsh launcher hands each job to a Claude ag
 | `dve boost <email> <acus>` | ✅ one cap | Raise one user's cap by N ACUs, with a pool-headroom check |
 | `dve status` | ❌ read-only | Consumption, remaining ACUs, run-rate, month-end projection + UNDER/OVER verdict, top consumers, per-model burn |
 | `dve models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough |
+| `dve doctor` | ❌ probe | Check the service key against each endpoint and report which of the 4 scopes it actually holds |
 | `dve help` | ❌ | Usage text |
 
 Every write is gated: the agent shows a full plan (every email, every cap, sum vs pool) and waits for your explicit confirmation before calling the API. No silent mutations.
@@ -97,6 +98,25 @@ dve models claude-sonnet-4-6 swe-1.6         # diff against an inline allowlist
 dve models ./allowlist.txt                   # diff against a file (one model per line / any text)
 ```
 
+### `dve doctor`
+Deterministic local diagnostic — **no agent launch, no token cost**. Probes the resolved service key against each endpoint and reports which of the four scopes it actually holds, by mapping HTTP status codes:
+
+| Scope | Probe | Present | Missing |
+|---|---|---|---|
+| Billing Read | POST `GetTeamCreditBalance` | 200 | 401/403 |
+| Billing Write | POST `UsageConfig` with no scope/cap fields — **mutates nothing** (authz passes → 400 validation; scope absent → 401/403) | 200/400 | 401/403 |
+| Analytics Read | GET `consumption` (1-day, `page_size=1`) | 200 | 401/403 |
+| Teams Read-only | POST `UserPageAnalytics` | 200 | 401/403 |
+
+`429` (analytics rate limit) and `000` (unreachable) report as inconclusive. Exit `0` when all probed scopes pass, `3` when any is missing/uncertain, `1` when no key is found.
+
+```zsh
+dve doctor                              # probe all four scopes
+DVE_DOCTOR_SKIP_ANALYTICS=1 dve doctor  # skip the analytics probe (saves 1 of 10/hr consumption calls)
+```
+
+Run it right after creating the key to confirm scopes before any real work.
+
 ### `dve help`
 Prints usage and config reference. Also `dve -h`, `dve --help`.
 
@@ -135,6 +155,8 @@ Fallback if you can't use Keychain: `export DEVIN_SERVICE_KEY=<key>`. Keychain w
 | `DVE_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item name holding the key |
 | `DVE_STATE_DIR` | `~/.local/state/devin-acu-governor` | Allocation ledger directory |
 | `DVE_PRINT_PROMPT` | _(unset)_ | If set, print the assembled prompt and exit — **does not launch the agent**. Inspection/debugging. |
+| `DVE_DOCTOR_SKIP_ANALYTICS` | _(unset)_ | If set, `dve doctor` skips the analytics probe (saves 1 of 10/hr consumption calls). |
+| `DVE_API_BASE` | `https://server.codeium.com` | API base URL `dve doctor` probes (override for testing). |
 
 Example overrides:
 
@@ -187,11 +209,11 @@ Base: `https://server.codeium.com`.
 
 | Endpoint | Method | Scope | Used by |
 |---|---|---|---|
-| `/api/v1/GetTeamCreditBalance` | POST | Billing Read | set-limits, boost, status, models |
+| `/api/v1/GetTeamCreditBalance` | POST | Billing Read | set-limits, boost, status, models, doctor |
 | `/api/v1/GetUsageConfig` | POST | Billing Read | set-limits (verify), boost |
-| `/api/v1/UsageConfig` | POST | Billing Write | set-limits, boost |
-| `/api/v2alpha/analytics/consumption` | GET | Analytics Read | set-limits, status, models |
-| `/api/v1/UserPageAnalytics` | POST | Teams Read-only | set-limits, boost (ledger rebuild) |
+| `/api/v1/UsageConfig` | POST | Billing Write | set-limits, boost, doctor (no-op probe) |
+| `/api/v2alpha/analytics/consumption` | GET | Analytics Read | set-limits, status, models, doctor |
+| `/api/v1/UserPageAnalytics` | POST | Teams Read-only | set-limits, boost (ledger rebuild), doctor |
 
 Full field-level contract lives in `playbooks/_common.md`.
 
@@ -203,6 +225,7 @@ Full field-level contract lives in `playbooks/_common.md`.
 |---|---|
 | `bin/dve` | Dispatch, arg validation, env load, key resolution, prompt assembly, agent launch |
 | `lib/key-resolve.zsh` | `dve_resolve_service_key()`: Keychain → `$DEVIN_SERVICE_KEY` |
+| `lib/doctor.zsh` | `dve_doctor()`: deterministic per-scope HTTP probe (no agent) |
 | `lib/compute-caps.jq` | Remaining-pool split; day-1 flat split; exhausted-pool warnings |
 | `lib/boost-check.jq` | New cap, new allocation sum, headroom, over-pool flag |
 | `playbooks/_common.md` | API contract (5 endpoints) + hard rules (gates, rate limits, no key leakage) |
@@ -222,6 +245,7 @@ Full field-level contract lives in `playbooks/_common.md`.
 | `0` | Success (or `help`, or `DVE_PRINT_PROMPT` print-and-exit) |
 | `1` | No service key found (Keychain miss + `DEVIN_SERVICE_KEY` unset) |
 | `2` | Usage error: no command, unknown command, or bad `boost` arguments |
+| `3` | `dve doctor`: one or more scopes missing or uncertain |
 | `127` | `dve` alias wrapper couldn't find the daemon entrypoint |
 
 ---
@@ -229,12 +253,12 @@ Full field-level contract lives in `playbooks/_common.md`.
 ## Verification
 
 ```zsh
-zsh claude/devin-acu-governor/test/run.zsh           # all test files (44 assertions)
+zsh claude/devin-acu-governor/test/run.zsh           # all test files (63 assertions)
 zsh -n claude/devin-acu-governor/bin/dve             # parse check
 DVE_PRINT_PROMPT=1 DEVIN_SERVICE_KEY=x dve status     # inspect assembled prompt, launch nothing
 ```
 
-Test coverage: key resolution order (4), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost headroom (6), CLI dispatch + validation + prompt assembly + key-leak guard (19).
+Test coverage: key resolution order (4), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost headroom (6), CLI dispatch + validation + prompt assembly + key-leak guard (19), doctor scope classification + exit codes + key-leak guard (19).
 
 ---
 

@@ -30,6 +30,7 @@ Usage:
   dve boost <email> <acus>    Raise one user's cap by <acus> with a pool headroom check
   dve status                  Consumption, remaining ACUs, month-end projection
   dve models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
+  dve doctor                  Probe the service key and report which scopes it holds
   dve help                    Show this help
 
 Config (environment.env; shell env vars override):
@@ -79,6 +80,11 @@ main() {
     help|-h|--help)
       dve_usage
       exit 0
+      ;;
+    doctor)
+      source "${daemon_dir}/lib/doctor.zsh"
+      dve_doctor
+      exit $?
       ;;
     set-limits|status) ;;
     boost)
