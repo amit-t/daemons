@@ -20,6 +20,7 @@ run_dag() { PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog
 out=$(run_dag 2>&1); rc=$?
 assert_exit "noargs rc" 2 $rc
 assert_contains "noargs usage" "$out" "Usage:"
+assert_contains "usage global command" "$out" "dag set limit global <acus>"
 
 # 2. help -> exit 0.
 out=$(run_dag help 2>&1); rc=$?
@@ -45,6 +46,9 @@ assert_contains "pool in context" "$out" "DAG_MONTHLY_ACU_POOL: 24000"
 assert_contains "jq path in context" "$out" "compute-caps.jq"
 assert_contains "cog key note" "$out" "exported as DEVIN_COG_KEY"
 assert_contains "ws key note" "$out" "exported as DEVIN_SERVICE_KEY"
+assert_contains "local agent user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "set-limits live verify" "$out" "GET each changed user limit after PATCH"
+assert_contains "set-limits ui instructions" "$out" "Enterprise Settings > Consumption"
 
 # 6. boost prompt carries args.
 out=$(run_dag boost alice@corp.com 50)
@@ -52,6 +56,9 @@ assert_contains "boost playbook" "$out" "# Playbook: boost"
 assert_contains "boost email" "$out" "alice@corp.com"
 assert_contains "boost amount" "$out" "explicit increment: 50"
 assert_contains "boost plan jq" "$out" "boost-plan.jq"
+assert_contains "boost borrow wording" "$out" "Borrow"
+assert_contains "boost user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "boost live verify" "$out" "GET every changed user limit after PATCH"
 
 # 6b. user command dispatch + validation.
 out=$(run_dag user 2>&1); rc=$?; assert_exit "user noargs" 2 $rc

@@ -7,6 +7,11 @@
 # sum(caps) <= total_consumed + remaining = pool.
 # Degenerate cases freeze caps at ceil(consumed) and warn.
 
+def caprow($cap):
+  {email, consumed}
+  + (if has("user_id") then {user_id} else {} end)
+  + {cap: $cap};
+
 (.users | length) as $n
 | .pool as $pool
 | if $n == 0 then {error: "no users in roster"}
@@ -16,20 +21,20 @@
     | (if $total == 0 then
         (($pool / $n) | floor) as $flat
         | {mode: "team_level", flat_cap: $flat, total_consumed: 0, remaining: $pool,
-           caps: [.users[] | {email, consumed, cap: $flat}], warnings: []}
+           caps: [.users[] | caprow($flat)], warnings: []}
       elif $remaining <= 0 then
         {mode: "per_user", total_consumed: $total, remaining: $remaining,
-         caps: [.users[] | {email, consumed, cap: (.consumed | ceil)}],
+         caps: [.users[] | caprow((.consumed | ceil))],
          warnings: ["pool exhausted: remaining \($remaining); caps frozen at current consumption"]}
       else
         (($remaining / $n) | floor) as $share
         | if $share == 0 then
             {mode: "per_user", total_consumed: $total, remaining: $remaining,
-             caps: [.users[] | {email, consumed, cap: (.consumed | ceil)}],
+             caps: [.users[] | caprow((.consumed | ceil))],
              warnings: ["remaining pool (\($remaining)) smaller than team size (\($n)); caps frozen at current consumption"]}
           else
             {mode: "per_user", total_consumed: $total, remaining: $remaining, share: $share,
-             caps: [.users[] | {email, consumed, cap: ((.consumed | floor) + $share)}],
+             caps: [.users[] | caprow(((.consumed | floor) + $share))],
              warnings: []}
           end
       end)

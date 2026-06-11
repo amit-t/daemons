@@ -17,6 +17,11 @@ out=$(run_jq '{"pool":1000,"users":[{"email":"a@x","consumed":100},{"email":"b@x
 assert_contains "mid mode" "$out" '"mode":"per_user"'
 assert_contains "mid capA" "$out" '{"email":"a@x","consumed":100,"cap":400}'
 assert_contains "mid capB" "$out" '{"email":"b@x","consumed":300,"cap":600}'
+
+# 2b. User IDs pass through for v3beta1 per-user PATCH targets.
+out=$(run_jq '{"pool":1000,"users":[{"user_id":"email|a","email":"a@x","consumed":100},{"user_id":"email|b","email":"b@x","consumed":300}]}')
+assert_contains "user id A passthrough" "$out" '"user_id":"email|a"'
+assert_contains "user id B passthrough" "$out" '"user_id":"email|b"'
 assert_contains "mid sum" "$out" '"sum_caps":1000'
 
 # 3. Fractional consumption rounds: floor(consumed)+share keeps sum<=pool.
