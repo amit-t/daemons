@@ -20,14 +20,22 @@ EOF
 chmod +x "${tmpdir}/bin/security"
 
 # Fake curl: serve a fixture chosen by the URL (last arg), then append
-# "\n<http_code>" exactly like curl -w '\n%{http_code}'.
+# "\n<http_code>" exactly like curl -w '\n%{http_code}'. Records any write
+# verb (-X/--request/--data/-d/--form) to WRITE_LOG — dashboard is read-only.
+# FAKE_CURL_RC simulates a transport failure (e.g. 18 partial body) after a 200.
 cat > "${tmpdir}/bin/curl" <<'EOF'
 #!/usr/bin/env zsh
 url=""
-for a in "$@"; do url="$a"; done
+for a in "$@"; do
+  url="$a"
+  case "$a" in
+    -X*|--request|--data*|-d|-F|--form) print -r -- "$a" >> "${WRITE_LOG}" ;;
+  esac
+done
 emit() {  # $1 body-file  $2 code  $3 body-override
   if [[ -n "${3:-}" ]]; then print -rn -- "$3"; else cat "$1"; fi
   print -rn -- $'\n'"$2"
+  exit "${FAKE_CURL_RC:-0}"
 }
 case "$url" in
   *consumption/cycles*)
@@ -55,9 +63,11 @@ now_epoch=1781510400   # 2026-06-15T08:00:00Z — day 30 of the 31-day fixture c
 
 run_dash() {
   PATH="${tmpdir}/bin:$PATH" FIXTURES="$fixdir" OPEN_LOG="${tmpdir}/open.log" \
+  WRITE_LOG="${tmpdir}/write.log" \
   DEVIN_COG_KEY=test-cog-key-SECRET DAG_NOW_EPOCH=$now_epoch \
   DAG_STATE_DIR="${tmpdir}/state" \
-  DAG_MONTHLY_ACU_POOL="${DAG_MONTHLY_ACU_POOL:-}" DAG_PRINT_PROMPT="${DAG_PRINT_PROMPT:-}" \
+  DAG_MONTHLY_ACU_POOL="${DAG_MONTHLY_ACU_POOL:-24000}" DAG_PRINT_PROMPT="${DAG_PRINT_PROMPT:-}" \
+  FAKE_CURL_RC="${FAKE_CURL_RC:-0}" \
   FAKE_CYCLES_CODE="${FAKE_CYCLES_CODE:-200}" FAKE_CYCLES_BODY="${FAKE_CYCLES_BODY:-}" \
   FAKE_DAILY_CODE="${FAKE_DAILY_CODE:-200}" FAKE_DAILY_BODY="${FAKE_DAILY_BODY:-}" \
   FAKE_ORGS_CODE="${FAKE_ORGS_CODE:-200}" FAKE_ORGS_BODY="${FAKE_ORGS_BODY:-}" \
@@ -127,7 +137,9 @@ assert_eq "org pct_limit" "0.95" "$(org_field growth .pct_limit)"
 assert_eq "org projected" "1007.5" "$(org_field ml .projected)"
 assert_eq "org run rate" "29" "$(org_field research .daily_run_rate)"
 assert_eq "org session cap" "100" "$(org_field platform .max_session_acu_limit)"
-assert_eq "warnings count" "3" "$(jqd '.warnings | length')"
+assert_eq "org warning boundary (== 0.85)" "warning" "$(org_field edge-warn .status)"
+assert_eq "org over boundary (consumed == limit)" "over" "$(org_field edge-over .status)"
+assert_eq "warnings count" "4" "$(jqd '.warnings | length')"
 assert_contains "warning forecast_over org" "$(jqd '.warnings | join("|")')" "ML"
 assert_contains "warning over org" "$(jqd '.warnings | join("|")')" "Sandbox"
 assert_contains "warning uncapped org" "$(jqd '.warnings | join("|")')" "Labs"
@@ -138,6 +150,30 @@ out=$(FAKE_CYCLES_CODE=500 FAKE_CYCLES_BODY='{"detail":"cycles exploded"}' \
 if (( rc != 0 )); then _ok; else _fail "API failure must exit non-zero"; fi
 assert_contains "error body quoted" "$out" '{"detail":"cycles exploded"}'
 if [[ -f "${tmpdir}/dash-err/dashboard.html" ]]; then _fail "wrote dashboard despite API failure"; else _ok; fi
+
+# 7b. Every other required read failure path also quotes the exact body.
+out=$(FAKE_DAILY_CODE=500 FAKE_DAILY_BODY='{"detail":"daily down"}' \
+  run_dash --no-open --out "${tmpdir}/dash-err2" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "daily failure must exit non-zero"; fi
+assert_contains "daily error body" "$out" '{"detail":"daily down"}'
+out=$(FAKE_ORGS_CODE=502 FAKE_ORGS_BODY='{"detail":"orgs down"}' \
+  run_dash --no-open --out "${tmpdir}/dash-err3" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "orgs failure must exit non-zero"; fi
+assert_contains "orgs error body" "$out" '{"detail":"orgs down"}'
+out=$(FAKE_ORG_DAILY_CODE=503 FAKE_ORG_DAILY_BODY='{"detail":"org daily down"}' \
+  run_dash --no-open --out "${tmpdir}/dash-err4" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "org-daily failure must exit non-zero"; fi
+assert_contains "org-daily error body" "$out" '{"detail":"org daily down"}'
+
+# 7c. Invalid JSON in a 200 body fails loudly — must never zero an org silently.
+out=$(FAKE_ORG_DAILY_BODY='not json' run_dash --no-open --out "${tmpdir}/dash-err5" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "invalid 200 body must exit non-zero"; fi
+assert_contains "invalid body quoted" "$out" "not json"
+
+# 7d. curl transport failure (rc != 0) despite an HTTP 200 fails loudly.
+out=$(FAKE_CURL_RC=18 run_dash --no-open --out "${tmpdir}/dash-err6" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "curl transport failure must exit non-zero"; fi
+assert_contains "curl rc reported" "$out" "curl exit 18"
 
 # 8. dag help lists the dashboard command.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=k zsh "$dag" help 2>&1); rc=$?
@@ -151,10 +187,12 @@ if [[ "$out" == *"# Playbook"* ]]; then _fail "dashboard assembled a playbook pr
 if [[ -f "${tmpdir}/dash-pp/dashboard.html" ]]; then _ok; else _fail "print-prompt run wrote no dashboard"; fi
 
 # 10. --json-only writes only the data artifacts; never opens.
+: > "${tmpdir}/open.log"
 out=$(run_dash --json-only --out "${tmpdir}/dash-json" 2>&1); rc=$?
 assert_exit "json-only rc" 0 $rc
 if [[ -f "${tmpdir}/dash-json/data.json" && -f "${tmpdir}/dash-json/dashboard-data.js" ]]; then _ok; else _fail "json-only data artifacts missing"; fi
 if [[ -f "${tmpdir}/dash-json/dashboard.html" ]]; then _fail "json-only wrote app files"; else _ok; fi
+if [[ -s "${tmpdir}/open.log" ]]; then _fail "json-only invoked open"; else _ok; fi
 
 # 11. Default (no --no-open) invokes open on the html.
 : > "${tmpdir}/open.log"
@@ -168,9 +206,11 @@ assert_exit "over rc" 0 $rc
 assert_eq "verdict OVER" "OVER" "$(jq -r .enterprise.verdict "${tmpdir}/dash-over/data.json")"
 assert_eq "over delta" "-550" "$(jq -r .enterprise.projected_over_under "${tmpdir}/dash-over/data.json")"
 
-# 13. Unknown flag -> exit 2.
+# 13. Unknown flag -> exit 2; --out followed by a flag -> exit 2 (not a junk dir).
 out=$(run_dash --bogus 2>&1); rc=$?
 assert_exit "bogus flag rc" 2 $rc
+out=$(run_dash --out --no-open 2>&1); rc=$?
+assert_exit "out-eats-flag rc" 2 $rc
 
 # 14. No cog key -> exit 1 with setup hint.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DAG_STATE_DIR="${tmpdir}/state" \
@@ -182,5 +222,25 @@ assert_contains "nokey hint" "$out" "devin-cog-key"
 out=$(run_dash --no-open 2>&1); rc=$?
 assert_exit "default out rc" 0 $rc
 if [[ -f "${tmpdir}/state/dashboard/latest/dashboard.html" ]]; then _ok; else _fail "default out dir missing dashboard.html"; fi
+
+# 16. The copied dashboard.html actually wires the css/data/app assets (file:// load).
+html=$(cat "${out_dir}/dashboard.html")
+assert_contains "html links css" "$html" 'href="dashboard.css"'
+assert_contains "html loads data" "$html" 'src="dashboard-data.js"'
+assert_contains "html loads app" "$html" 'src="dashboard.js"'
+
+# 17. String "YYYY-MM-DD" dates (docs shape) handled alongside live epoch dates.
+out=$(FAKE_DAILY_BODY='{"total_acus":100,"consumption_by_date":[{"date":"2026-05-20","acus":100,"acus_by_product":{"devin":100,"cascade":0,"terminal":0,"review":0}}]}' \
+  run_dash --no-open --out "${tmpdir}/dash-str" 2>&1); rc=$?
+assert_exit "string date rc" 0 $rc
+assert_eq "string date kept" "2026-05-20" "$(jq -r '.daily[0].date' "${tmpdir}/dash-str/data.json")"
+assert_eq "string date epoch" "1779235200" "$(jq -r '.daily[0].epoch' "${tmpdir}/dash-str/data.json")"
+
+# 18. Read-only contract: no run ever sent a curl write verb (-X/--data/...).
+if [[ -s "${tmpdir}/write.log" ]]; then
+  _fail "curl write verb used: $(cat "${tmpdir}/write.log" | tr '\n' ' ')"
+else
+  _ok
+fi
 
 report

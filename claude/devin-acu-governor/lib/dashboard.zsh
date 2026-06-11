@@ -9,13 +9,25 @@
 # Requires: $daemon_dir set and lib/key-resolve.zsh sourced (bin/dag does both).
 # DAG_NOW_EPOCH overrides "now" for deterministic tests.
 
-_dag_dash_fetch() {  # $1=url $2=key -> body on stdout; non-200 quotes exact body on stderr, rc 1
-  local url=$1 key=$2 response code body
-  response=$(curl -sS -w $'\n%{http_code}' -H "Authorization: Bearer ${key}" "$url" 2>/dev/null)
+# $1=url $2=auth-header-file -> body on stdout; any failure quotes the exact
+# diagnostics on stderr and returns 1. The header file (not argv) carries the
+# key so it never shows in process listings; -q (first arg) ignores ~/.curlrc.
+_dag_dash_fetch() {
+  local url=$1 hdr=$2 response code body crc
+  response=$(curl -q -sS -w $'\n%{http_code}' -H "@${hdr}" "$url" 2>"${hdr:h}/curl-err")
+  crc=$?
+  if (( crc != 0 )); then
+    print -ru2 -- "dag dashboard: GET ${url} failed: curl exit ${crc}: $(<"${hdr:h}/curl-err")"
+    return 1
+  fi
   code=${response##*$'\n'}
   body=${response%$'\n'*}
   if [[ "$code" != 200 ]]; then
     print -ru2 -- "dag dashboard: GET ${url} failed [${code}]: ${body}"
+    return 1
+  fi
+  if ! jq -e . <<<"$body" >/dev/null 2>&1; then
+    print -ru2 -- "dag dashboard: GET ${url} returned invalid JSON: ${body}"
     return 1
   fi
   print -r -- "$body"
@@ -29,7 +41,7 @@ dag_dashboard() {
       --json-only) json_only=1 ;;
       --out)
         shift
-        if [[ -z "${1:-}" ]]; then
+        if [[ -z "${1:-}" || "$1" == -* ]]; then
           print -ru2 -- "dag dashboard: --out requires a directory argument"
           return 2
         fi
@@ -57,11 +69,16 @@ dag_dashboard() {
   local now="${DAG_NOW_EPOCH:-$(date +%s)}"
   local pool="${DAG_MONTHLY_ACU_POOL:-24000}"
 
-  local work
+  local work hdr
   work=$(mktemp -d) || return 1
   {
+    # mktemp dir is 0700; the header file keeps the key out of curl's argv.
+    hdr="${work}/auth-header"
+    print -r -- "Authorization: Bearer ${key}" > "$hdr" || return 1
+    chmod 600 "$hdr"
+
     local cycles after before
-    cycles=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/cycles" "$key") || return 1
+    cycles=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/cycles" "$hdr") || return 1
     after=$(jq -r --argjson now "$now" \
       '[.items[]? | select(.after <= $now and $now < .before)][0].after // empty' <<<"$cycles")
     before=$(jq -r --argjson now "$now" \
@@ -71,17 +88,17 @@ dag_dashboard() {
       return 1
     fi
 
-    _dag_dash_fetch "${base}/v3/enterprise/consumption/daily?time_after=${after}&time_before=${before}" "$key" \
+    _dag_dash_fetch "${base}/v3/enterprise/consumption/daily?time_after=${after}&time_before=${before}" "$hdr" \
       > "${work}/enterprise-daily.json" || return 1
-    _dag_dash_fetch "${base}/v3/enterprise/organizations" "$key" \
+    _dag_dash_fetch "${base}/v3/enterprise/organizations" "$hdr" \
       > "${work}/organizations.json" || return 1
 
     : > "${work}/org-dailies.json"
     local oid od
     for oid in $(jq -r '.items[]?.org_id' "${work}/organizations.json"); do
-      od=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/organizations/${oid}?time_after=${after}&time_before=${before}" "$key") || return 1
+      od=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/organizations/${oid}?time_after=${after}&time_before=${before}" "$hdr") || return 1
       jq -n --arg org_id "$oid" --argjson daily "$od" \
-        '{org_id: $org_id, daily: $daily}' >> "${work}/org-dailies.json"
+        '{org_id: $org_id, daily: $daily}' >> "${work}/org-dailies.json" || return 1
     done
 
     local generated_at

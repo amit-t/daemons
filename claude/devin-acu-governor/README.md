@@ -186,7 +186,7 @@ Forecast math (all in `lib/dashboard.jq`, no mental arithmetic): `elapsed_days =
 
 Endpoints called (Devin v3, Bearer `cog_` key, all GET): `/v3/enterprise/consumption/cycles`, `/v3/enterprise/consumption/daily`, `/v3/enterprise/organizations`, `/v3/enterprise/consumption/daily/organizations/{org_id}`.
 
-Limitations: snapshot, not live — re-run to refresh; per-user breakdown and per-model split are not included (use `dag user` / `dag status` / `dag models`); the pool is config (`DAG_MONTHLY_ACU_POOL`), not an API balance — no remaining-balance endpoint exists on this SKU. Any failed read aborts with the exact response body; nothing is written. `DAG_NOW_EPOCH` pins "now" for deterministic output (used by tests).
+Limitations: snapshot, not live — re-run to refresh; per-user breakdown and per-model split are not included (use `dag user` / `dag status` / `dag models`); the pool is config (`DAG_MONTHLY_ACU_POOL`), not an API balance — no remaining-balance endpoint exists on this SKU. Any failed read (non-200, curl transport error, or invalid JSON body) aborts with the exact diagnostics quoted; nothing is written. The key is passed to curl via a header file inside a `0700` temp dir (`-H @file`), never argv — invisible to `ps`; `curl -q` ignores `~/.curlrc`. `DAG_NOW_EPOCH` pins "now" for deterministic output (used by tests).
 
 ### `dag help`
 Prints usage and config reference. Also `dag -h`, `dag --help`.
@@ -338,13 +338,13 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 ## Verification
 
 ```zsh
-zsh claude/devin-acu-governor/test/run.zsh                 # all test files (173 assertions)
+zsh claude/devin-acu-governor/test/run.zsh                 # all test files (197 assertions)
 zsh -n claude/devin-acu-governor/bin/dag                   # parse check
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag status               # inspect assembled prompt, launch nothing
 dag dashboard --no-open --out /tmp/dag-dashboard            # smoke the local dashboard (read-only)
 ```
 
-Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21), dashboard artifacts + deterministic forecast math + all six org statuses + failure quoting + key-leak guard (69, fixture-driven with mocked `curl`/`open`).
+Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21), dashboard artifacts + deterministic forecast math + all six org statuses (incl. exact 0.85 / consumed==limit boundaries) + every read-failure path (non-200, invalid JSON, curl transport rc) + read-only curl guard + key-leak guard (93, fixture-driven with mocked `curl`/`open`).
 
 ---
 

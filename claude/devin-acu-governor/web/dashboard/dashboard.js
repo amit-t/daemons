@@ -53,7 +53,8 @@
   } else {
     var NS = 'http://www.w3.org/2000/svg';
     var W = 840, H = 240, pad = 30;
-    var max = Math.max.apply(null, daily.map(function (d) { return d.acus; })) || 1;
+    var peak = Math.max.apply(null, daily.map(function (d) { return d.acus; }));
+    var max = peak || 1;
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     svg.setAttribute('role', 'img');
@@ -87,7 +88,7 @@
     maxLab.setAttribute('x', pad);
     maxLab.setAttribute('y', 16);
     maxLab.setAttribute('class', 'axis-label');
-    maxLab.textContent = 'peak ' + fmt(max) + ' ACUs/day';
+    maxLab.textContent = 'peak ' + fmt(peak) + ' ACUs/day';
     svg.appendChild(maxLab);
     chart.appendChild(svg);
   }
