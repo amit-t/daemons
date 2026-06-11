@@ -77,10 +77,13 @@ assert_contains "selector ok" "$out" "org-one"
 
 : > "${tmpdir}/curl.log"
 out=$(FAKE_ORGS_BODY='{"items":[{"org_id":"org-a","name":"A"},{"org_id":"org-b","name":"B"}]}' run_global set limit global 2400 2>&1); rc=$?
-assert_exit "multiple orgs rc" 2 $rc
-assert_contains "multiple orgs lists a" "$out" "org-a"
-assert_contains "multiple orgs asks selector" "$out" "Pass org_id or name"
-if grep -q "PATCH" "${tmpdir}/curl.log"; then _fail "patched despite ambiguous org"; else _ok; fi
+assert_exit "multiple orgs rc" 0 $rc
+assert_contains "multiple orgs all mode" "$out" "No org selector passed; applying to all 2 organizations"
+assert_contains "multiple orgs confirms a" "$out" "confirmed local_agent.cycle_acu_limit=2400 for org-a"
+assert_contains "multiple orgs confirms b" "$out" "confirmed local_agent.cycle_acu_limit=2400 for org-b"
+log=$(cat "${tmpdir}/curl.log")
+assert_contains "patched org a" "$log" "/v3beta1/enterprise/organizations/org-a/consumption/acu-limits"
+assert_contains "patched org b" "$log" "/v3beta1/enterprise/organizations/org-b/consumption/acu-limits"
 
 out=$(run_global set limit global banana 2>&1); rc=$?
 assert_exit "bad amount rc" 2 $rc

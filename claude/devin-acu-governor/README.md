@@ -31,7 +31,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | Command | Mutates | Purpose |
 |---|---:|---|
 | `dag set-limits` | ✅ user limits + ledger | Discover engineers/user IDs, compute remaining-pool prorated caps, PATCH every user's Local Agent override, live-GET verify each write |
-| `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set one org's aggregate Local Agent limit, then live-GET verify it |
+| `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
@@ -71,20 +71,20 @@ dag set-limits
 
 ## `dag set limit global <acus> [org_id|org_name]`
 
-One-time local command for the org-level Local Agent gate. No agent launch.
+One-time local command for the org-level Local Agent gate. No agent launch. If `org_id|org_name` is omitted, it applies the same limit to **all organizations** returned by `/v3/enterprise/organizations`.
 
 Behavior:
 1. Resolves the `cog_` key.
 2. GETs `/v3/enterprise/organizations`.
-3. Uses the only org automatically, or matches the optional selector by `org_id`/name. If multiple orgs exist and no selector is passed, it lists them and exits 2 without writing.
+3. If no selector is passed, iterates over every organization returned by `/v3/enterprise/organizations`. If a selector is passed, matches it by `org_id` or exact case-insensitive name.
 4. PATCHes `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` with `{"local_agent":{"cycle_acu_limit":N}}`.
-5. GETs the same resource and confirms `local_agent.cycle_acu_limit == N`.
+5. GETs each changed resource and confirms `local_agent.cycle_acu_limit == N`.
 6. Prints UI instructions.
 
 Examples:
 
 ```zsh
-dag set limit global 2400                  # set one org's Local Agent cap to 2400 ACUs
+dag set limit global 2400                  # set every org's Local Agent cap to 2400 ACUs
 dag set limit global 2400 org-xyz789       # explicit org id
 dag set-limit global 2400 "Platform Eng"  # alias + org name
 ```
@@ -313,6 +313,6 @@ Test coverage now includes 228 assertions across key resolution, cap math, Boost
 | `dag: no Devin API v3 service-user key` | Store `cog_…` in Keychain or `DEVIN_COG_KEY`. |
 | `ACU Limit Read missing` in doctor | Key lacks `ViewAccountConsumption`. |
 | `ACU Limit Write missing` or real PATCH 403 | Key lacks `ManageBilling`, wrong key family, or wrong org scope. |
-| Multiple orgs for `dag set limit global` | Pass `org_id` or exact org name. |
+| Only one org should change | Pass `org_id` or exact org name; omitting selector intentionally updates all orgs. |
 | Verification mismatch after PATCH | The API did not persist the requested limit; output quotes the GET body. Do not assume success. |
 | Windsurf analytics 429 | Rate limit is 10 req/hr/team. Retry later or skip model/IDE detail. |

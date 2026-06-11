@@ -12,7 +12,7 @@
 - [x] Preserve `user_id` through `compute-caps.jq` so set-limits can PATCH `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
 - [x] Update `set-limits` playbook to discover user IDs, prorate remaining ACUs, PATCH each user override, and GET verify each write.
 - [x] Update `boost` playbook to Boost + Borrow with live user-limit reads, PATCH recipient/donors, and GET verify every changed user.
-- [x] Add local `dag set limit global <acus> [org_id|org_name]` plus aliases; implement org discovery, PATCH org Local Agent limit, GET verification, and UI instructions.
+- [x] Add local `dag set limit global <acus> [org_id|org_name]` plus aliases; implement org discovery, all-org iteration when selector omitted, PATCH org Local Agent limit(s), GET verification, and UI instructions.
 - [x] Update `doctor` to probe `ViewAccountConsumption`/`ManageBilling` via v3beta1 ACU-limit read/write endpoints.
 - [x] Update `user`/`status` playbooks to report explicit/default/effective Local Agent limits.
 - [x] Harden dashboard read-only/error behavior and keep local dashboard deterministic.

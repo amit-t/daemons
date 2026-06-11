@@ -64,7 +64,7 @@ Boost recipient's user limit by borrowing from lowest consumers. PATCH recipient
 
 ### `dag set limit global <acus> [org_id|org_name]`
 
-Local one-time command. GET orgs, resolve org, PATCH `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`, then GET same resource and confirm `local_agent.cycle_acu_limit` equals requested value. Prints UI instruction every time.
+Local one-time command. GET orgs; when no selector is passed, iterate over all orgs; when a selector is passed, resolve one org. PATCH `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`, then GET each changed resource and confirm `local_agent.cycle_acu_limit` equals requested value. Prints UI instruction every time.
 
 ## Safety rules
 

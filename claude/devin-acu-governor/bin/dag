@@ -31,7 +31,7 @@ dag — Devin Enterprise ACU governor
 Usage:
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
   dag set limit global <acus> [org_id|org_name]
-                              Set one org-level Local Agent limit, then live-GET verify it
+                              Set org-level Local Agent limit(s), then live-GET verify each
   dag set-limit global <acus> [org_id|org_name]
                               Alias for: dag set limit global
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
@@ -122,7 +122,7 @@ main() {
         dag_set_limit_global "$@"
         exit $?
       fi
-      print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name])"
+      print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
       dag_usage >&2
       exit 2
       ;;
@@ -133,7 +133,7 @@ main() {
         dag_set_limit_global "$@"
         exit $?
       fi
-      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global <acus> [org_id|org_name])"
+      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
       dag_usage >&2
       exit 2
       ;;
