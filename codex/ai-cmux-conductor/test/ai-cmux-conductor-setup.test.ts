@@ -41,6 +41,7 @@ function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerRespon
       calls.push(call);
       const key = call.join(" ");
       const queue = queues.get(key);
+      if (!queue?.length && cmd === "cmux" && args[0] === "send-key") return { code: 0, stdout: "", stderr: "" };
       if (!queue?.length) {
         return { code: 99, stdout: "", stderr: `unexpected call: ${key}` };
       }
@@ -392,10 +393,12 @@ describe("prepareConductor", () => {
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
+      ["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"],
       ["cmux", "new-split", "down", "--workspace", "workspace-uuid", "--surface", "surface:claude", "--focus", "false", "--window", "window-uuid"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "kid-devin"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", devinLaunch],
+      ["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "Enter"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
@@ -446,6 +449,7 @@ describe("prepareConductor", () => {
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
+      ["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
@@ -625,6 +629,8 @@ describe("buildOrchestratorPrompt", () => {
     expect(prompt).toContain("cmux new-split down --workspace workspace:1 --surface surface:2 --focus true");
     expect(prompt).toContain("cmux rename-tab --workspace workspace:1 --surface NEW_DEVIN_SURFACE kid-devin");
     expect(prompt).toContain("zsh -lc 'cd '\\''/work/project-x'\\'' && dey.boil'");
+    expect(prompt).toContain("cmux send-key --workspace workspace:1 --surface surface:4 Enter");
+    expect(prompt).toContain("cmux send-key --workspace workspace:1 --surface NEW_DEVIN_SURFACE Enter");
     expect(prompt).toContain("send the refined pending prompt to that Devin surface");
     expect(prompt).toContain("Devin/kid-devin runs dey.boil");
     expect(prompt).toContain("durable mission brief");

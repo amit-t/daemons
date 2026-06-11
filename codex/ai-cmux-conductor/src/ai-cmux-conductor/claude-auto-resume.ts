@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { defaultRunner, shellQuote, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
+import { defaultRunner, sendCmuxTextAndEnter, shellQuote, type CommandResult, type CommandRunner, type ConductorContext } from "./conductor.ts";
 import { CLAUDE_PANEL_TITLE, isExactManagedPanelTitle, isManagedAgentSurfaceTitle } from "./panel-titles.ts";
 
 export const CLAUDE_AUTO_RESUME_MESSAGE = "continue\n";
@@ -483,11 +483,18 @@ async function attemptSend(
     job.surfaceId = surface.surfaceId;
     const args = ["send", "--workspace", job.workspaceId, ...windowArgs(job.windowId), "--surface", surface.surfaceId, "--", job.message];
     const result = await runner("cmux", args);
+    const enterResult =
+      result.code === 0
+        ? await runner("cmux", ["send-key", "--workspace", job.workspaceId, ...windowArgs(job.windowId), "--surface", surface.surfaceId, "Enter"])
+        : undefined;
     job.attempts += 1;
     job.updatedAt = now.toISOString();
-    job.lastResult = exactResult("cmux send", result);
+    job.lastResult =
+      result.code === 0 && enterResult
+        ? `${exactResult("cmux send", result)}; ${exactResult("cmux send-key", enterResult)}`
+        : exactResult("cmux send", result);
 
-    if (result.code === 0) {
+    if (result.code === 0 && enterResult?.code === 0) {
       job.status = "sent";
       job.sentAt = now.toISOString();
       job.nextAttemptAt = undefined;
@@ -502,7 +509,7 @@ async function attemptSend(
       return;
     }
 
-    const error = exactFailure("cmux send", result);
+    const error = result.code === 0 && enterResult ? exactFailure("cmux send-key", enterResult) : exactFailure("cmux send", result);
     if (job.attempts >= maxAttempts) {
       markFailed(state, job, now, error);
       return;
@@ -689,17 +696,13 @@ export async function sendClaudePromptWithHealthGuard(
   }
 
   const message = options.prompt.endsWith("\n") ? options.prompt : `${options.prompt}\n`;
-  const sendResult = await runner("cmux", [
-    "send",
-    "--workspace",
-    options.workspaceId,
-    ...windowArgs(options.windowId),
-    "--surface",
-    target.surfaceId,
-    "--",
-    message,
-  ]);
-  if (sendResult.code !== 0) throw new Error(exactFailure("cmux send", sendResult));
+  await sendCmuxTextAndEnter({
+    runner,
+    workspaceId: options.workspaceId,
+    windowId: options.windowId,
+    surfaceId: target.surfaceId,
+    text: message,
+  });
   return { surfaceId: target.surfaceId, recovered };
 }
 
@@ -753,8 +756,14 @@ async function recoverClaudeSurface(
   if (renameResult.code !== 0) throw new Error(exactFailure("cmux rename-tab", renameResult));
 
   const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && clscb`)}\n`;
-  const launchResult = await runner("cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdSurfaceId, launch]);
-  if (launchResult.code !== 0) throw new Error(exactFailure("cmux send", launchResult));
+  await sendCmuxTextAndEnter({
+    runner,
+    workspaceId: options.workspaceId,
+    windowId: options.windowId,
+    surfaceId: createdSurfaceId,
+    text: launch,
+    separator: false,
+  });
 
   await waitForClaudeUi(runner, options.workspaceId, options.windowId, createdSurfaceId, options.readyPollIntervalMs ?? 1_000, options.maxReadyPolls ?? 12);
 

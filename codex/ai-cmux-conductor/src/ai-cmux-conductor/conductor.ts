@@ -179,6 +179,35 @@ function windowArgs(windowId?: string): string[] {
   return windowId ? ["--window", windowId] : [];
 }
 
+export async function sendCmuxTextAndEnter(options: {
+  runner: CommandRunner;
+  workspaceId: string;
+  windowId?: string;
+  surfaceId: string;
+  text: string;
+  separator?: boolean;
+}): Promise<void> {
+  await runOrThrow(options.runner, "cmux", [
+    "send",
+    "--workspace",
+    options.workspaceId,
+    ...windowArgs(options.windowId),
+    "--surface",
+    options.surfaceId,
+    ...(options.separator === false ? [] : ["--"]),
+    options.text,
+  ]);
+  await runOrThrow(options.runner, "cmux", [
+    "send-key",
+    "--workspace",
+    options.workspaceId,
+    ...windowArgs(options.windowId),
+    "--surface",
+    options.surfaceId,
+    "Enter",
+  ]);
+}
+
 function workspaceByIdOrRef(workspaces: CmuxWorkspace[], idOrRef: string): CmuxWorkspace | undefined {
   return workspaces.find((workspace) => workspace.id === idOrRef || workspace.ref === idOrRef) || (workspaces.length === 1 ? workspaces[0] : undefined);
 }
@@ -264,7 +293,14 @@ async function createAgentSurface(options: {
     }
     await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, title]);
     const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
-    await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
+    await sendCmuxTextAndEnter({
+      runner: options.runner,
+      workspaceId: options.workspaceId,
+      windowId: options.windowId,
+      surfaceId: createdId,
+      text: launch,
+      separator: false,
+    });
     return { surfaceId: createdId, reused: false, surfaces: refreshed };
   }
 
@@ -302,7 +338,14 @@ async function createAgentSurface(options: {
   }
   await runOrThrow(options.runner, "cmux", ["rename-tab", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, title]);
   const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
-  await runOrThrow(options.runner, "cmux", ["send", "--workspace", options.workspaceId, ...windowArgs(options.windowId), "--surface", createdId, launch]);
+  await sendCmuxTextAndEnter({
+    runner: options.runner,
+    workspaceId: options.workspaceId,
+    windowId: options.windowId,
+    surfaceId: createdId,
+    text: launch,
+    separator: false,
+  });
   return { surfaceId: createdId, reused: false, surfaces: refreshed };
 }
 
@@ -464,7 +507,7 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
   if (claudeEnabled) {
     commandLines.push(
       `- Read Claude: cmux read-screen --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} --scrollback --lines 160`,
-      `- Send Claude: cmux send --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} -- "PROMPT\\n"`,
+      `- Send Claude: write the refined prompt, then press Enter:\n  1. cmux send --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} -- "PROMPT\\n"\n  2. cmux send-key --workspace ${context.workspaceId} --surface ${context.claudeSurfaceId} Enter`,
     );
   }
   if (codexPanelEnabled) {
@@ -476,8 +519,8 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
       : `cmux new-pane --direction right --workspace ${context.workspaceId} --focus true`;
     commandLines.push(
       `- Read Codex: cmux read-screen --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} --scrollback --lines 160`,
-      `- Send Codex: cmux send --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Codex (${CODEX_PANEL_TITLE}) ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE ${CODEX_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. Wait for the Codex CLI UI, then send the refined pending prompt to that Codex surface.`,
+      `- Send Codex: write the refined prompt, then press Enter:\n  1. cmux send --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} -- "PROMPT\\n"\n  2. cmux send-key --workspace ${context.workspaceId} --surface ${context.codexPanelSurfaceId} Enter`,
+      `- Open/repair Codex (${CODEX_PANEL_TITLE}) ${codexAnchorText} when needed:\n  1. ${codexOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE ${CODEX_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE -- "${codexLaunchCommand}\\n"\n  4. cmux send-key --workspace ${context.workspaceId} --surface NEW_CODEX_SURFACE Enter\n  5. Wait for the Codex CLI UI, then send the refined pending prompt to that Codex surface with the Send Codex two-step command above.`,
     );
   }
   if (devinEnabled) {
@@ -489,8 +532,8 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
       : `cmux new-pane --direction right --workspace ${context.workspaceId} --focus true`;
     commandLines.push(
       `- Read Devin: cmux read-screen --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} --scrollback --lines 160`,
-      `- Send Devin: cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"`,
-      `- Open/repair Devin (${DEVIN_PANEL_TITLE}) ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE ${DEVIN_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. Wait for the Devin CLI UI, then send the refined pending prompt to that Devin surface.`,
+      `- Send Devin: write the refined prompt, then press Enter:\n  1. cmux send --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} -- "PROMPT\\n"\n  2. cmux send-key --workspace ${context.workspaceId} --surface ${context.devinSurfaceId} Enter`,
+      `- Open/repair Devin (${DEVIN_PANEL_TITLE}) ${devinAnchorText} in boil mode when needed:\n  1. ${devinOpenCommand}\n  2. cmux rename-tab --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE ${DEVIN_PANEL_TITLE}\n  3. cmux send --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE -- "${devinLaunchCommand}\\n"\n  4. cmux send-key --workspace ${context.workspaceId} --surface NEW_DEVIN_SURFACE Enter\n  5. Wait for the Devin CLI UI, then send the refined pending prompt to that Devin surface with the Send Devin two-step command above.`,
     );
   }
 
@@ -513,7 +556,7 @@ export function buildOrchestratorPrompt(context: ConductorContext): string {
 These kid panes are live AI CLIs that AICC already spawned in this workspace: ${kidList}.
 When the user explicitly addresses a kid pane — e.g. ${routeNames}, or any "tell"/"ask"/"send to" plus an agent name or its kid-<agent> title — you act ONLY as a router and prompt engineer:
 1. Build a refined, self-contained prompt for each targeted kid pane before sending anything.
-2. Send the refined prompt into that exact kid surface with the matching "Send <Agent>" command below, so the prompt is written into the pane and the user can watch the agent work through it.
+2. Send the refined prompt into that exact kid surface with the matching two-step "Send <Agent>" command below. Always run both steps: write the prompt with \`cmux send\`, then submit it with \`cmux send-key ... Enter\`, so the user can watch the agent work through it.
 3. Do NOT spawn a background subagent, Task, detached worker, or do the work yourself in this tab to satisfy a kid-pane request.
 4. After sending, you may read the kid pane with the matching "Read <Agent>" command to report progress; never suppress or replace what the pane is doing.
 5. When the user names more than one kid pane (e.g. "ask Claude and Codex"), tailor and send one prompt per named pane.

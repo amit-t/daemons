@@ -30,7 +30,7 @@ function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerRespon
       calls.push(call);
       const key = call.join(" ");
       const queue = queues.get(key);
-      if (!queue?.length && cmd === "cmux" && args[0] === "send") return { code: 0, stdout: "", stderr: "" };
+      if (!queue?.length && cmd === "cmux" && (args[0] === "send" || args[0] === "send-key")) return { code: 0, stdout: "", stderr: "" };
       if (!queue?.length) return { code: 99, stdout: "", stderr: `unexpected call: ${key}` };
       const response = queue.shift()!;
       return { code: response.code ?? 0, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
@@ -206,6 +206,8 @@ describe("prepareConductor optional managed panel stack", () => {
     expect(calls).toContainEqual(["cmux", "new-split", "down", "--workspace", "workspace-uuid", "--surface", "surface:claude", "--focus", "false", "--window", "window-uuid"]);
     expect(calls).toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "kid-codex"]);
     expect(calls.find((call) => call[1] === "send" && call.includes("surface:codex-panel"))?.at(-1)).toContain("cxscb --disable apps -c");
+    expect(calls).toContainEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"]);
+    expect(calls).toContainEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "Enter"]);
     expect(calls.some((call) => call.includes("surface:devin"))).toBe(false);
   });
 
@@ -310,7 +312,9 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain('"ask Codex"');
     expect(prompt).toContain("Read Codex:");
     expect(prompt).toContain("Send Codex:");
+    expect(prompt).toContain("cmux send-key --workspace workspace:1 --surface surface:codex-panel Enter");
     expect(prompt).toContain("Codex (kid-codex) below kid-claude");
+    expect(prompt).toContain("cmux send-key --workspace workspace:1 --surface NEW_CODEX_SURFACE Enter");
     expect(prompt).toContain("send the refined pending prompt to that Codex surface");
     expect(prompt).toContain("cxscb --disable apps -c");
     expect(prompt).not.toContain("Read Devin:");

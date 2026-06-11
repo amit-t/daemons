@@ -120,6 +120,7 @@ function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerRespon
       calls.push(call);
       const key = call.join(" ");
       const queue = queues.get(key);
+      if (!queue?.length && cmd === "cmux" && args[0] === "send-key") return { code: 0, stdout: "", stderr: "" };
       if (!queue?.length) {
         return { code: 99, stdout: "", stderr: `unexpected call: ${key}` };
       }
@@ -312,7 +313,8 @@ describe("Claude auto-resume scheduler", () => {
 
     expect(state.jobs[0].status).toBe("sent");
     expect(state.jobs[0].surfaceId).toBe("surface:new-claude");
-    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:new-claude", "--", "continue\n"]);
+    expect(calls.at(-2)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:new-claude", "--", "continue\n"]);
+    expect(calls.at(-1)).toEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:new-claude", "Enter"]);
   });
 
   test("sends overdue pending job after daemon restart when within grace window", async () => {
@@ -493,7 +495,8 @@ describe("Claude surface health guard", () => {
     expect(routed.recovered).toBe(false);
     expect(routed.surfaceId).toBe("surface:claude");
     expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
-    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "hello Claude\n"]);
+    expect(calls.at(-2)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "hello Claude\n"]);
+    expect(calls.at(-1)).toEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"]);
   });
 
 
@@ -580,7 +583,9 @@ describe("Claude surface health guard", () => {
     expect(state.registrations[0].surfaceId).toBe("surface:fresh");
     expect(calls).toContainEqual(["cmux", "close-surface", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:stale"]);
     expect(calls).toContainEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", claudeLaunch]);
-    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "--", "hello Claude\n"]);
+    expect(calls).toContainEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "Enter"]);
+    expect(calls.at(-2)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "--", "hello Claude\n"]);
+    expect(calls.at(-1)).toEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:fresh", "Enter"]);
     expect(formatClaudeAutoResumeSitrep(state)).toContain("Claude surface recovered");
     expect(formatClaudeAutoResumeSitrep(state)).toContain("surface:stale → surface:fresh");
   });
@@ -617,6 +622,7 @@ describe("Claude auto-resume fake cMUX integration", () => {
     await processDueClaudeAutoResumeJobs(state, runner, new Date(state.jobs[0].sendAt));
 
     expect(state.jobs[0].status).toBe("sent");
-    expect(calls.at(-1)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "continue\n"]);
+    expect(calls.at(-2)).toEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--", "continue\n"]);
+    expect(calls.at(-1)).toEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"]);
   });
 });

@@ -38,7 +38,7 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
 
 The base orchestrator is a router and prompt engineer, not a doer, for any request that names a kid pane. The orchestrator prompt enforces:
 
-- When the user says `ask Claude`, `tell Claude`, `send to Claude`, `tell kid-claude` (and the same for Codex/Devin), or otherwise names a kid pane, the orchestrator first rewrites the raw request into a structured, self-contained prompt for the targeted `kid-*` surface, then sends that refined prompt with `cmux send`. The prompt is written into the pane so the user can watch the agent work through it.
+- When the user says `ask Claude`, `tell Claude`, `send to Claude`, `tell kid-claude` (and the same for Codex/Devin), or otherwise names a kid pane, the orchestrator first rewrites the raw request into a structured, self-contained prompt for the targeted `kid-*` surface, writes that refined prompt with `cmux send`, and submits it with `cmux send-key ... Enter`. The prompt is written into the pane and executed so the user can watch the agent work through it.
 - The refined kid prompt preserves Amit's intent, constraints, target agents, and quoted text, but adds prompt structure: target agent/runtime profile, original ask, objective, context, constraints/non-goals, acceptance criteria, suggested first steps or commands, verification, and reporting instructions.
 - AICC tailors the prompt to the kid agent's command style:
   - `kid-claude` runs `clscb`; prompts should fit Claude Code and tell it to read `AGENTS.md`, inspect before editing, use zsh for shell work, and provide tests/docs/verification.
@@ -48,7 +48,7 @@ The base orchestrator is a router and prompt engineer, not a doer, for any reque
 - The orchestrator must **not** spawn a background subagent, Task, or detached worker — and must not do the work itself in the base tab — to satisfy a kid-pane request.
 - After sending, the orchestrator may `read-screen` the kid pane to report progress, but never suppresses or replaces what the pane is doing.
 - Naming multiple kid panes (e.g. `ask Claude and Codex`) creates one tailored prompt per named pane.
-- A kid pane is only opened/repaired when it is missing, closed, dead, or not running the expected CLI; then the refined pending prompt is sent.
+- A kid pane is only opened/repaired when it is missing, closed, dead, or not running the expected CLI; then the refined pending prompt is sent and submitted with an explicit Enter key event.
 
 Background subagents/detached workers are allowed **only** when the user has not addressed a kid pane. When a message is ambiguous about whether it targets a kid pane, the orchestrator routes to the pane rather than backgrounding.
 
@@ -109,7 +109,7 @@ zsh -lc 'cd <cwd> && dey.boil'
 `dey.boil` is Amit's Devin launcher for boil-the-ocean mode. The Codex orchestrator prompt also tells future AICC sessions that "ask Devin" / "send to Devin" means:
 
 1. Use the existing Devin pane when it is healthy.
-2. If Devin is missing, closed, dead, or not running Devin, split below the nearest enabled upper side pane (`kid-codex` first, then `kid-claude`) or create a right pane when Devin is the only enabled side agent, rename the new surface to `kid-devin`, launch `zsh -lc 'cd <cwd> && dey.boil'`, wait for the Devin CLI UI, and then send the pending prompt.
+2. If Devin is missing, closed, dead, or not running Devin, split below the nearest enabled upper side pane (`kid-codex` first, then `kid-claude`) or create a right pane when Devin is the only enabled side agent, rename the new surface to `kid-devin`, launch `zsh -lc 'cd <cwd> && dey.boil'`, submit the launch with `cmux send-key ... Enter`, wait for the Devin CLI UI, and then send and submit the pending prompt.
 3. Treat the user's explicit Devin-routing request as approval to open/repair only the Devin pane; never close Codex, Claude, or unrelated terminal panes.
 
 ## AICC daemon poller and event inbox
@@ -217,6 +217,7 @@ it normalizes `Asia/Calcutta` to `Asia/Kolkata`, resolves the next reset occurre
 
 ```zsh
 cmux send --workspace <workspace-id> --surface <resolved-claude-surface> -- $'continue\n'
+cmux send-key --workspace <workspace-id> --surface <resolved-claude-surface> Enter
 ```
 
 Durable state lives at `claude-auto-resume.json` in `AICC_STATE_DIR` and records:
@@ -260,7 +261,7 @@ Bootstrap preservation is strict: enabled existing managed panes are reused and 
    - Launches `zsh -lc 'cd <cwd> && clscb'`
    - Waits for Claude UI markers to appear
    - Re-registers the new surface in auto-resume state
-   - Sends the pending prompt to the new surface
+   - Sends the pending prompt to the new surface and submits it with `cmux send-key ... Enter`
 5. Logs recovery events in `aicc --status` output
 
 Safety boundaries:
