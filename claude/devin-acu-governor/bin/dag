@@ -39,6 +39,8 @@ Usage:
   dag user <email>            Deep-dive one user's consumption and model usage (read-only)
   dag status                  Consumption, remaining ACUs, month-end projection
   dag models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
+  dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
+  dag all-commands [task...]  Alias for: dag all commands
   dag doctor                  Probe both API keys and report which capabilities they hold
   dag dashboard [--no-open] [--json-only] [--out <dir>]
                               Local ACU burn-rate + forecast dashboard (read-only, no agent)
@@ -66,6 +68,17 @@ EOF
 dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   local cmd="$1"; shift
   cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${cmd}.md"
+  if [[ "$cmd" == "all-commands" ]]; then
+    print -r -- ""
+    print -r -- "## Existing DAG command playbooks"
+    print -r -- ""
+    local playbook
+    for playbook in set-limits boost user status models; do
+      print -r -- ""
+      print -r -- "### ${playbook}"
+      cat "${daemon_dir}/playbooks/${playbook}.md"
+    done
+  fi
   print -r -- ""
   print -r -- "## Run context"
   print -r -- "- command: ${cmd}"
@@ -75,7 +88,11 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
   print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- ledger: ${DAG_STATE_DIR}/allocations.json"
-  print -r -- "- Devin v3 key: exported as DEVIN_COG_KEY in this shell. Never print it."
+  if [[ -n "${_dag_have_cog_key:-}" ]]; then
+    print -r -- "- Devin v3 key: exported as DEVIN_COG_KEY in this shell. Never print it."
+  else
+    print -r -- "- Devin v3 key: ABSENT — docs/design mode only; ask the user to configure DEVIN_COG_KEY before live Devin API calls."
+  fi
   if [[ -n "${_dag_have_windsurf_key}" ]]; then
     print -r -- "- Windsurf key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
   else
@@ -143,6 +160,27 @@ main() {
       exit $?
       ;;
     set-limits|status) ;;
+    all)
+      if [[ "${1:-}" != "commands" ]]; then
+        print -ru2 -- "dag: unknown all command (expected: dag all commands [task...])"
+        dag_usage >&2
+        exit 2
+      fi
+      shift
+      cmd="all-commands"
+      if (( $# > 0 )); then
+        context_lines=("requested shell command: dag all commands" "generic task: $*" "spin-up trigger phrase: spin it up")
+      else
+        context_lines=("requested shell command: dag all commands" "generic task: not provided — start by asking the user what Devin/API task they want to explore or automate" "spin-up trigger phrase: spin it up")
+      fi
+      ;;
+    all-commands)
+      if (( $# > 0 )); then
+        context_lines=("requested shell command: dag all-commands" "generic task: $*" "spin-up trigger phrase: spin it up")
+      else
+        context_lines=("requested shell command: dag all-commands" "generic task: not provided — start by asking the user what Devin/API task they want to explore or automate" "spin-up trigger phrase: spin it up")
+      fi
+      ;;
     boost)
       local email="${1:-}" amount="${2:-}"
       if [[ "$email" != *@*.* ]]; then
@@ -185,13 +223,20 @@ main() {
   esac
 
   local cog_key windsurf_key
+  typeset -g _dag_have_cog_key=""
   if ! cog_key=$(dag_resolve_cog_key); then
-    print -ru2 -- "dag: no Devin API v3 service-user key (cog_...) found."
-    print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
-    print -ru2 -- "  permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
-    print -ru2 -- "  Keychain: security add-generic-password -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
-    print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
-    exit 1
+    if [[ "$cmd" == "all-commands" ]]; then
+      print -ru2 -- "dag: note — no Devin API v3 service-user key; all-commands will run in docs/design mode only."
+    else
+      print -ru2 -- "dag: no Devin API v3 service-user key (cog_...) found."
+      print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
+      print -ru2 -- "  permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+      print -ru2 -- "  Keychain: security add-generic-password -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
+      print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
+      exit 1
+    fi
+  else
+    _dag_have_cog_key=1
   fi
   typeset -g _dag_have_windsurf_key=""
   if windsurf_key=$(dag_resolve_service_key); then
@@ -209,7 +254,7 @@ main() {
     exit 0
   fi
 
-  export DEVIN_COG_KEY="$cog_key"
+  [[ -n "$_dag_have_cog_key" ]] && export DEVIN_COG_KEY="$cog_key"
   [[ -n "$_dag_have_windsurf_key" ]] && export DEVIN_SERVICE_KEY="$windsurf_key"
   exec zsh -ic "${DAG_LAUNCHER} $(printf '%q' "$prompt")"
 }

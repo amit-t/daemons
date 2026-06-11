@@ -5,8 +5,9 @@
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
 - `doctor`, `dashboard`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
+- `all commands` launches a broad Claude-agent lab seeded with the Devin docs index, the pinned ACU/UsageConfig docs, and every current DAG playbook so ad hoc tasks can graduate into exact `dag ...` commands. It can open without a Devin key for docs/design work, but live API calls require `DEVIN_COG_KEY`.
 
-Current ACU-limit contract comes from Devin docs: <https://docs.devin.ai/admin/billing/acu-limits>.
+Current ACU-limit contract comes from Devin docs: <https://docs.devin.ai/admin/billing/acu-limits>. Generic DAG sessions also seed from the full docs index at <https://docs.devin.ai/llms.txt> and the Windsurf/Devin Desktop UsageConfig reference at <https://docs.devin.ai/desktop/accounts/api-reference/usage-config#overview>.
 
 ## What changed for Local Agent limits
 
@@ -37,6 +38,8 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
 | `dag status` | ❌ read-only | Enterprise burn, projection, org Local Agent caps, default user limit, top users/models |
 | `dag models [file\|names…]` | ❌ report | Per-model burn + Admin Portal allowlist walkthrough |
+| `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
+| `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
 | `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
 | `dag dashboard` | ❌ read-only | Static local burn-rate + forecast dashboard; no agent, no writes |
 | `dag help` | ❌ | Usage text |
@@ -159,6 +162,25 @@ dag models ./allowlist.txt
 
 Model enable/disable is still Admin Portal UI work unless Devin ships an API. The playbook re-checks docs before giving final instructions.
 
+## `dag all commands [task…]`
+
+Generic Devin API/DAG command lab. It launches a Claude-agent session with:
+- the common `dag` API contract and write-safety rules;
+- the complete current DAG playbooks (`set-limits`, `boost`, `user`, `status`, `models`);
+- startup instructions to fetch `https://docs.devin.ai/llms.txt` before making API claims;
+- pinned documentation seeds for ACU limits, API overview/auth/pagination, and UsageConfig;
+- a "spin it up" contract for promoting useful ad hoc work into either an exact existing `dag ...` command or a ready-to-implement new command spec.
+
+```zsh
+dag all commands
+dag all commands "design a weekly session spend audit"
+dag all-commands "find the cleanest API path for repository indexing drift"
+```
+
+Use it when you are not sure which specialized DAG command exists yet, or when you want to explore a new Devin admin/API workflow before baking it into a dedicated command. It still follows the common hard rules: reads can proceed, but PATCH/POST/DELETE calls require explicit endpoint/target/body confirmation and live verification.
+
+Unlike the specialized API commands, `dag all commands` can start without `DEVIN_COG_KEY`; the prompt marks that state as docs/design mode and tells the agent to ask for key setup before live API calls.
+
 ## `dag doctor`
 
 Local deterministic diagnostic. No agent launch.
@@ -266,6 +288,9 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `/v3/enterprise/metrics/usage` | GET | doctor |
 | `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models |
 | `/api/v1/UserPageAnalytics` | POST | user, doctor |
+| `https://docs.devin.ai/llms.txt` | GET | all commands, models doc re-check |
+| `https://docs.devin.ai/admin/billing/acu-limits` | GET | all commands seed, common contract source |
+| `https://docs.devin.ai/desktop/accounts/api-reference/usage-config#overview` | GET | all commands seed |
 
 ## Files
 
@@ -281,7 +306,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,boost,user,status,models}.md` | Agent command flows |
+| `playbooks/{set-limits,boost,user,status,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
@@ -304,7 +329,7 @@ DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage now includes 228 assertions across key resolution, cap math, Boost/Borrow math, CLI prompt assembly, global org Local Agent limit write+verify, doctor v3beta1 probes, and dashboard artifact/error/read-only behavior.
+Test coverage now includes 247 assertions across key resolution, cap math, Boost/Borrow math, CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 probes, and dashboard artifact/error/read-only behavior.
 
 ## Troubleshooting
 

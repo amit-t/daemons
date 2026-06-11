@@ -21,6 +21,7 @@ out=$(run_dag 2>&1); rc=$?
 assert_exit "noargs rc" 2 $rc
 assert_contains "noargs usage" "$out" "Usage:"
 assert_contains "usage global command" "$out" "dag set limit global <acus>"
+assert_contains "usage all commands" "$out" "dag all commands [task...]"
 
 # 2. help -> exit 0.
 out=$(run_dag help 2>&1); rc=$?
@@ -72,17 +73,42 @@ assert_contains "user email" "$out" "user: bob@corp.com"
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DAG_MONTHLY_ACU_POOL=9999 zsh "$dag" status 2>/dev/null)
 assert_contains "env override" "$out" "DAG_MONTHLY_ACU_POOL: 9999"
 
-# 8. Missing cog key -> exit 1 with setup hint; agent never launched.
+# 8. all commands prompt seeds all-docs mode, existing DAG command context, and the spin-up contract.
+out=$(run_dag all commands "design a weekly session spend audit"); rc=$?
+assert_exit "all commands rc" 0 $rc
+assert_contains "all commands playbook" "$out" "# Playbook: all-commands"
+assert_contains "all commands docs index" "$out" "https://docs.devin.ai/llms.txt"
+assert_contains "all commands acu docs" "$out" "https://docs.devin.ai/admin/billing/acu-limits"
+assert_contains "all commands usage config docs" "$out" "https://docs.devin.ai/desktop/accounts/api-reference/usage-config#overview"
+assert_contains "all commands task" "$out" "generic task: design a weekly session spend audit"
+assert_contains "all commands spin up" "$out" "spin it up"
+assert_contains "all commands set-limits available" "$out" "# Playbook: set-limits"
+assert_contains "all commands boost available" "$out" "# Playbook: boost"
+
+out=$(run_dag all-commands); rc=$?
+assert_exit "all-commands alias rc" 0 $rc
+assert_contains "all-commands no task" "$out" "generic task: not provided"
+
+out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY="" DEVIN_SERVICE_KEY="" zsh "$dag" all commands 2>&1); rc=$?
+assert_exit "all commands no key rc" 0 $rc
+assert_contains "all commands no key note" "$out" "Devin v3 key: ABSENT"
+assert_contains "all commands no key docs" "$out" "https://docs.devin.ai/llms.txt"
+
+out=$(run_dag all 2>&1); rc=$?
+assert_exit "all missing commands rc" 2 $rc
+assert_contains "all missing commands message" "$out" "expected: dag all commands [task...]"
+
+# 9. Missing cog key -> exit 1 with setup hint; agent never launched.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DEVIN_SERVICE_KEY=ws zsh "$dag" status 2>&1); rc=$?
 assert_exit "nokey rc" 1 $rc
 assert_contains "nokey hint" "$out" "devin-cog-key"
 
-# 9. Missing Windsurf key is non-fatal: prompt notes its absence.
+# 10. Missing Windsurf key is non-fatal: prompt notes its absence.
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY="" zsh "$dag" status 2>/dev/null); rc=$?
 assert_exit "no ws key rc" 0 $rc
 assert_contains "no ws key note" "$out" "Windsurf key: ABSENT"
 
-# 10. Keys never appear in prompt.
+# 11. Keys never appear in prompt.
 out=$(run_dag set-limits)
 if [[ "$out" == *test-cog-key* || "$out" == *test-ws-key* ]]; then _fail "key leaked into prompt"; else _ok; fi
 
