@@ -36,6 +36,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
+| `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
 | `dag status` | ❌ read-only | Enterprise burn, projection, org Local Agent caps, default user limit, top users/models |
 | `dag models [file\|names…]` | ❌ report | Per-model burn + Admin Portal allowlist walkthrough |
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
@@ -134,6 +135,28 @@ Read-only. Reports:
 ```zsh
 dag user alice@corp.com
 ```
+
+## `dag usage`
+
+Local, deterministic, read-only. One table of **every** enterprise user with current-cycle consumed ACUs, effective Local Agent cap, and consumed/cap ratio. No agent launch, no token cost, no writes. All arithmetic lives in `lib/usage.jq`.
+
+Flow:
+1. Resolve the `cog_` key.
+2. GET current cycle from `/v3/enterprise/consumption/cycles`.
+3. GET the default per-user Local Agent cap from `/v3beta1/enterprise/users/consumption/acu-limits` (inherited when a user has no override).
+4. GET the roster from `/v3/enterprise/members/users` (cursor pagination via `after`/`end_cursor`).
+5. Per user: GET `/v3/enterprise/consumption/daily/users/{user_id}` for cycle consumption and GET `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` for the explicit override (`user_id` is URL-encoded; a `404` means no override).
+6. `lib/usage.jq` resolves each user's effective cap (override → default → none), computes `ratio = consumed/cap`, tags state, and sorts most-pressured first.
+
+Effective cap precedence: explicit per-user override, else default user limit, else none (an override replaces, not adds to, the default). State tags: `OVER` (ratio ≥ 1), `NEAR` (≥ 0.8), `OK`, `UNLIMITED` (no cap → `∞`, sorts last), `BLOCKED` (cap 0, unused).
+
+```zsh
+dag usage                 # full table, sorted by consumed/cap ratio desc
+dag usage --top 10        # only the 10 most-pressured users
+dag usage --json          # structured rows + totals (no table), for piping to jq
+```
+
+Columns: `EMAIL  CONSUMED  CAP  USED%  SOURCE  STATE`, then a totals line (`sum_caps`, `OVER/NEAR/UNLIMITED/BLOCKED` counts) and the Enterprise Settings UI instruction. No Windsurf key needed — Devin v3 per-user consumption covers it.
 
 ## `dag status`
 
@@ -276,15 +299,15 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 
 | Endpoint | Method | Used by |
 |---|---|---|
-| `/v3/enterprise/consumption/cycles` | GET | all agent commands, dashboard, doctor |
+| `/v3/enterprise/consumption/cycles` | GET | all agent commands, dashboard, usage, doctor |
 | `/v3/enterprise/consumption/daily` | GET | set-limits, status, user context, dashboard |
 | `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | status, dashboard |
-| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user |
-| `/v3/enterprise/members/users` | GET | set-limits, boost, user, doctor |
+| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user, usage |
+| `/v3/enterprise/members/users` | GET | set-limits, boost, user, usage, doctor |
 | `/v3/enterprise/organizations` | GET | status, global command, dashboard, doctor |
 | `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` | GET/PATCH | global command, status, optional org guardrails |
-| `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user |
-| `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, doctor |
+| `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, usage |
+| `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, usage, doctor |
 | `/v3/enterprise/metrics/usage` | GET | doctor |
 | `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models |
 | `/api/v1/UserPageAnalytics` | POST | user, doctor |
@@ -301,6 +324,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/local-agent-limits.zsh` | Local `dag set limit global` implementation + live GET verification |
 | `lib/doctor.zsh` | Local capability probe |
 | `lib/dashboard.zsh` / `lib/dashboard.jq` | Local static dashboard fetch + forecast math |
+| `lib/usage.zsh` / `lib/usage.jq` | Local `dag usage` per-user consumed-vs-cap fetch + ratio table math |
 | `web/dashboard/` | Static dashboard assets |
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
@@ -329,7 +353,7 @@ DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage now includes 247 assertions across key resolution, cap math, Boost/Borrow math, CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 probes, and dashboard artifact/error/read-only behavior.
+Test coverage spans key resolution, cap math, Boost/Borrow math, CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 

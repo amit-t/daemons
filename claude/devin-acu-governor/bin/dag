@@ -37,6 +37,9 @@ Usage:
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dag user <email>            Deep-dive one user's consumption and model usage (read-only)
+  dag usage [--json] [--top <n>]
+                              List every user's consumed ACUs, effective Local Agent cap,
+                              and consumed/cap ratio (read-only, local, no agent)
   dag status                  Consumption, remaining ACUs, month-end projection
   dag models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
   dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
@@ -130,6 +133,11 @@ main() {
     dashboard)
       source "${daemon_dir}/lib/dashboard.zsh"
       dag_dashboard "$@"
+      exit $?
+      ;;
+    usage)
+      source "${daemon_dir}/lib/usage.zsh"
+      dag_usage_report "$@"
       exit $?
       ;;
     set)
