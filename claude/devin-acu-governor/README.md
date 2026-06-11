@@ -42,7 +42,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
 | `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
 | `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
-| `dag dashboard` | ❌ read-only | Static local burn-rate + forecast dashboard; no agent, no writes |
+| `dag dashboard` | ❌ read-only | Local burn-rate + forecast dashboard with org and user consumed-vs-cap ACUs; no agent, no writes; optional `--refresh` auto-regeneration |
 | `dag help` | ❌ | Usage text |
 
 Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, and waits for explicit confirmation. The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
@@ -227,14 +227,26 @@ DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor
 
 ## `dag dashboard`
 
-Local, read-only dashboard. Fetches cycle, enterprise daily consumption, orgs, and per-org daily consumption. Writes static files under `$DAG_STATE_DIR/dashboard/latest/` by default.
+Local, read-only dashboard. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle ACUs, the default per-user Local Agent cap, and each user's explicit Local Agent override. Writes static files under `$DAG_STATE_DIR/dashboard/latest/` by default.
 
 ```zsh
 dag dashboard
 dag dashboard --no-open
 dag dashboard --out /tmp/dag-dashboard
 dag dashboard --json-only
+dag dashboard --refresh 30
+dag dashboard --refresh 5 --no-open --out /tmp/dag-dashboard
 ```
+
+The dashboard shows:
+
+- enterprise consumed/remaining/run-rate/projection cards;
+- daily burn chart and product split;
+- organization consumed/projected/cap/status table;
+- user consumed/effective-cap/headroom/status table, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap;
+- warnings for org cap risk and users already over effective cap.
+
+`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running, regenerates the dashboard files on that cadence, and writes refresh metadata so the open browser page reloads itself on the same interval. Keep the terminal process alive; stop with `Ctrl-C`.
 
 Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.css`, `dashboard.js`. No API writes; tests assert no curl write verbs.
 
@@ -302,12 +314,12 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `/v3/enterprise/consumption/cycles` | GET | all agent commands, dashboard, usage, doctor |
 | `/v3/enterprise/consumption/daily` | GET | set-limits, status, user context, dashboard |
 | `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | status, dashboard |
-| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user, usage |
-| `/v3/enterprise/members/users` | GET | set-limits, boost, user, usage, doctor |
+| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user, dashboard, usage |
+| `/v3/enterprise/members/users` | GET | set-limits, boost, user, dashboard, usage, doctor |
 | `/v3/enterprise/organizations` | GET | status, global command, dashboard, doctor |
 | `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` | GET/PATCH | global command, status, optional org guardrails |
-| `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, usage |
-| `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, usage, doctor |
+| `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, dashboard, usage |
+| `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, dashboard, usage, doctor |
 | `/v3/enterprise/metrics/usage` | GET | doctor |
 | `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models |
 | `/api/v1/UserPageAnalytics` | POST | user, doctor |

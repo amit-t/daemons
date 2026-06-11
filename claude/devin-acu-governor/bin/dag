@@ -45,7 +45,7 @@ Usage:
   dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
   dag all-commands [task...]  Alias for: dag all commands
   dag doctor                  Probe both API keys and report which capabilities they hold
-  dag dashboard [--no-open] [--json-only] [--out <dir>]
+  dag dashboard [--no-open] [--json-only] [--out <dir>] [--refresh <5|10|15|30>]
                               Local ACU burn-rate + forecast dashboard (read-only, no agent)
   dag help                    Show this help
 

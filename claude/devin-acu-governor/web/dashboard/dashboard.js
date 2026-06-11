@@ -28,6 +28,19 @@
     ' · Day ' + data.cycle.elapsed_days + ' of ' + data.cycle.cycle_days +
     ' (' + data.cycle.left_days + ' left)';
 
+  var refresh = data.refresh || {};
+  var refreshMeta = document.getElementById('refresh-meta');
+  if (refresh.enabled && refresh.interval_ms > 0) {
+    refreshMeta.textContent =
+      'Auto-refresh every ' + refresh.interval_minutes +
+      ' minute(s). Keep the matching dag dashboard --refresh command running.';
+    window.setTimeout(function () {
+      window.location.reload();
+    }, refresh.interval_ms);
+  } else {
+    refreshMeta.textContent = 'Static snapshot. Use dag dashboard --refresh <5|10|15|30> for auto-refresh.';
+  }
+
   // Headline cards.
   var ent = data.enterprise;
   var cards = [
@@ -122,6 +135,24 @@
     td.appendChild(el('span', 'badge badge-' + o.status, o.status));
     tr.appendChild(td);
     tbody.appendChild(tr);
+  });
+
+  // User table.
+  var userTbody = document.querySelector('#user-table tbody');
+  (data.users || []).forEach(function (u) {
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', '', u.name || '—'));
+    tr.appendChild(el('td', '', u.email || '—'));
+    [u.consumed, u.effective_cycle_acu_limit, u.headroom]
+      .forEach(function (v) { tr.appendChild(el('td', 'num', fmt(v))); });
+    tr.appendChild(el('td', 'num',
+      u.pct_limit === null || u.pct_limit === undefined ? '—' : (u.pct_limit * 100).toFixed(1) + '%'));
+    tr.appendChild(el('td', '', u.cap_source || '—'));
+    tr.appendChild(el('td', '', u.billing_org_id || '—'));
+    var td = el('td');
+    td.appendChild(el('span', 'badge badge-' + u.status, u.status));
+    tr.appendChild(td);
+    userTbody.appendChild(tr);
   });
 
   // Warnings panel.

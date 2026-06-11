@@ -1,9 +1,13 @@
 # dag dashboard — build the dashboard data document from Devin v3 responses.
 # Invoked by lib/dashboard.zsh as:
 #   jq -n --argjson now/pool/after/before --arg generated_at \
-#     --slurpfile ent  <enterprise daily response> \
-#     --slurpfile orgs <organizations response> \
-#     --slurpfile orgd <stream of {org_id, daily} docs, one per org> \
+#     --slurpfile ent      <enterprise daily response> \
+#     --slurpfile orgs     <organizations response> \
+#     --slurpfile orgd     <stream of {org_id, daily} docs, one per org> \
+#     --slurpfile users    <enterprise members/users response> \
+#     --slurpfile userd    <stream of {user_id, daily} docs, one per user> \
+#     --slurpfile userl    <stream of {user_id, limits} docs, one per user> \
+#     --slurpfile defaultl <default user ACU-limit response> \
 #     -f lib/dashboard.jq
 
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
@@ -29,7 +33,16 @@ def org_status($consumed; $limit; $projected):
   else "ok"
   end;
 
-ceil_(($before - $after) / 86400) as $cycle_days
+def user_status($consumed; $limit):
+  if $limit == null then "uncapped"
+  elif $consumed >= $limit then "over"
+  elif ($consumed / $limit) >= 0.95 then "critical"
+  elif ($consumed / $limit) >= 0.85 then "warning"
+  else "ok"
+  end;
+
+($refresh_minutes | if . == "" then null else tonumber end) as $refresh_min
+| ceil_(($before - $after) / 86400) as $cycle_days
 | ([$now, $before] | min) as $eff_now
 | ([1, ceil_(($eff_now - $after) / 86400)] | max) as $elapsed_days
 | ([0, $cycle_days - $elapsed_days] | max) as $left_days
@@ -57,8 +70,41 @@ ceil_(($before - $after) / 86400) as $cycle_days
         status: org_status($c; $o.max_cycle_acu_limit; $oproj)
       }
   )) as $org_rows
+| ($users[0].items // []) as $userlist
+| ($userd | map({key: .user_id, value: (.daily.total_acus // 0)}) | from_entries) as $user_consumed
+| ($userl | map({key: .user_id, value: (.limits // {})}) | from_entries) as $user_limits
+| ($defaultl[0].local_agent.cycle_acu_limit // null) as $default_user_limit
+| ($userlist | map(
+    . as $u
+    | ($user_consumed[$u.user_id] // 0) as $uc
+    | ($user_limits[$u.user_id] // {}) as $lim
+    | ($lim.local_agent.cycle_acu_limit // null) as $explicit_limit
+    | (if $explicit_limit == null then $default_user_limit else $explicit_limit end) as $effective_limit
+    | {
+        user_id: $u.user_id,
+        email: ($u.email // ""),
+        name: ($u.name // $u.email // $u.user_id),
+        consumed: ($uc | r2),
+        explicit_cycle_acu_limit: $explicit_limit,
+        default_cycle_acu_limit: $default_user_limit,
+        effective_cycle_acu_limit: $effective_limit,
+        cap_source: (if $explicit_limit != null then "explicit"
+                     elif $default_user_limit != null then "default"
+                     else "uncapped" end),
+        billing_org_id: ($lim.billing_org_id // null),
+        headroom: (if $effective_limit == null then null else (($effective_limit - $uc) | r2) end),
+        pct_limit: (if ($effective_limit // 0) == 0 then null
+                    else (($uc / $effective_limit) | r3) end),
+        status: user_status($uc; $effective_limit)
+      }
+  ) | sort_by(-.consumed, .email)) as $user_rows
 | {
     generated_at: $generated_at,
+    refresh: {
+      enabled: ($refresh_min != null),
+      interval_minutes: $refresh_min,
+      interval_ms: (if $refresh_min == null then null else ($refresh_min * 60000) end)
+    },
     cycle: {
       after: $after,
       before: $before,
@@ -92,6 +138,7 @@ ceil_(($before - $after) / 86400) as $cycle_days
       review: ((.acus_by_product.review // 0) | r2)
     })),
     orgs: $org_rows,
+    users: $user_rows,
     warnings: (
       [$org_rows[] | select(.status == "over")
         | "\(.name) is OVER its cycle cap: \(.consumed) of \(.max_cycle_acu_limit) ACUs consumed"]
@@ -99,5 +146,7 @@ ceil_(($before - $after) / 86400) as $cycle_days
         | "\(.name) is forecast to exceed its cycle cap: projected \(.projected) vs cap \(.max_cycle_acu_limit)"]
       + [$org_rows[] | select(.status == "uncapped")
         | "\(.name) has no max_cycle_acu_limit (uncapped)"]
+      + [$user_rows[] | select(.status == "over")
+        | "\(.email) is OVER effective user cap: \(.consumed) of \(.effective_cycle_acu_limit) ACUs consumed"]
     )
   }

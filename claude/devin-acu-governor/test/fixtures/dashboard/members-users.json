@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "user_id": "email|alice",
+      "email": "alice@example.com",
+      "name": "Alice A",
+      "role_assignments": [{"org_id": "platform", "role": {"role_id": "r1", "role_name": "Engineer"}}]
+    },
+    {
+      "user_id": "email|bob",
+      "email": "bob@example.com",
+      "name": "Bob B",
+      "role_assignments": [{"org_id": "research", "role": {"role_id": "r1", "role_name": "Engineer"}}]
+    },
+    {
+      "user_id": "okta|Team|chandra",
+      "email": "chandra@example.com",
+      "name": "Chandra C",
+      "role_assignments": [{"org_id": "ml", "role": {"role_id": "r1", "role_name": "Engineer"}}]
+    }
+  ],
+  "end_cursor": null,
+  "has_next_page": false,
+  "total": 3
+}
