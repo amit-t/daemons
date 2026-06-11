@@ -33,6 +33,7 @@ dag therefore uses **two API families with two keys**:
 | `dag status` | ❌ read-only | Enterprise consumption, remaining ACUs, run-rate, cycle-end projection + UNDER/OVER verdict, org split vs hard caps, top consumers, per-model burn |
 | `dag models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough (needs Windsurf key) |
 | `dag doctor` | ❌ probe | Probe both keys and report which capabilities they hold |
+| `dag dashboard` | ❌ read-only | Local HTML burn-rate + forecast dashboard: headline cards, daily burn chart, product split, org cap table, warnings. No agent, no writes |
 | `dag help` | ❌ | Usage text |
 
 Every API write is gated: the agent shows a full plan and waits for your explicit confirmation. Ledger writes get a plan preview + confirmation too, but are local and reversible. No silent mutations.
@@ -156,6 +157,37 @@ DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor  # skip the Windsurf analytics probe (sav
 
 Run it right after creating a key to confirm capabilities before any real work.
 
+### `dag dashboard`
+Local, deterministic, **read-only** ACU burn dashboard — **no agent launch, no token cost, no API writes**. Fetches the current cycle, enterprise daily consumption, organizations, and per-org daily consumption (GETs only), computes burn-rate + forecast with `lib/dashboard.jq`, and writes a static HTML/CSS/JS app that opens straight from the file path (no local server, no npm).
+
+```zsh
+dag dashboard                          # write + open $DAG_STATE_DIR/dashboard/latest/dashboard.html
+dag dashboard --no-open                # write, print paths, don't open a browser
+dag dashboard --out /tmp/dag-dashboard # write to a specific directory
+dag dashboard --json-only              # only data.json + dashboard-data.js, no app files, no open
+```
+
+What the dashboard shows:
+- **Headline cards** — consumed, remaining vs `DAG_MONTHLY_ACU_POOL`, daily run rate, projected cycle-end, UNDER/OVER verdict.
+- **Daily burn chart** — dependency-free SVG bars with per-product tooltips.
+- **Product split** — devin / cascade / terminal / review totals.
+- **Org table** — consumed, run rate, projected, cycle/session hard caps, % of cap, status badge (`ok` / `warning` ≥85% / `critical` ≥95% / `forecast_over` / `over` / `uncapped`).
+- **Warnings panel** — orgs over cap, forecast over cap, or uncapped.
+
+Generated files (`--out` dir, default `$DAG_STATE_DIR/dashboard/latest/`):
+
+| File | Content |
+|---|---|
+| `data.json` | The computed data document (cycle, enterprise forecast, product split, daily series, org rows, warnings) |
+| `dashboard-data.js` | `window.DAG_DASHBOARD_DATA = {…};` — data injection without CORS/file-fetch issues |
+| `dashboard.html` / `.css` / `.js` | Static app copied from `web/dashboard/` |
+
+Forecast math (all in `lib/dashboard.jq`, no mental arithmetic): `elapsed_days = max(1, ceil((min(now, before) − after) / 86400))`, `daily_run_rate = consumed / elapsed_days`, `projected_cycle_total = daily_run_rate × cycle_days`, `remaining = pool − consumed`. Org status uses unrounded projections; `forecast_over` outranks `critical`/`warning`.
+
+Endpoints called (Devin v3, Bearer `cog_` key, all GET): `/v3/enterprise/consumption/cycles`, `/v3/enterprise/consumption/daily`, `/v3/enterprise/organizations`, `/v3/enterprise/consumption/daily/organizations/{org_id}`.
+
+Limitations: snapshot, not live — re-run to refresh; per-user breakdown and per-model split are not included (use `dag user` / `dag status` / `dag models`); the pool is config (`DAG_MONTHLY_ACU_POOL`), not an API balance — no remaining-balance endpoint exists on this SKU. Any failed read aborts with the exact response body; nothing is written. `DAG_NOW_EPOCH` pins "now" for deterministic output (used by tests).
+
 ### `dag help`
 Prints usage and config reference. Also `dag -h`, `dag --help`.
 
@@ -204,6 +236,7 @@ Keys are exported only into the agent session's environment — never printed, l
 | `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Allocation ledger directory |
 | `DAG_PRINT_PROMPT` | _(unset)_ | If set, print the assembled prompt and exit — **does not launch the agent** |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | _(unset)_ | If set, `dag doctor` skips the Windsurf analytics probe |
+| `DAG_NOW_EPOCH` | _(unset)_ | If set, `dag dashboard` uses this Unix epoch as "now" (deterministic forecast; used by tests) |
 | `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3 base URL `dag doctor` probes (override for testing) |
 | `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL `dag doctor` probes (override for testing) |
 
@@ -256,11 +289,11 @@ The **allocation ledger** (`$DAG_STATE_DIR/allocations.json`) is the source of t
 | Endpoint | Method | Family / auth | Used by |
 |---|---|---|---|
 | `/v3/enterprise/consumption/cycles` | GET | v3, Bearer `cog_` | all commands (cycle boundaries) |
-| `/v3/enterprise/consumption/daily` | GET | v3 | status, set-limits (cross-check), user (team context) |
-| `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | v3 | status |
+| `/v3/enterprise/consumption/daily` | GET | v3 | status, set-limits (cross-check), user (team context), dashboard |
+| `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | v3 | status, dashboard |
 | `/v3/enterprise/consumption/daily/users/{user_id}` | GET | v3 | user, set-limits/boost (fallback path) — URL-encode the `\|` in user_id |
 | `/v3/enterprise/members/users` | GET | v3 | set-limits, boost, user (roster, email↔user_id) |
-| `/v3/enterprise/organizations` | GET | v3 | status, set-limits, boost (hard-cap context) |
+| `/v3/enterprise/organizations` | GET | v3 | status, set-limits, boost (hard-cap context), dashboard |
 | `/v3/enterprise/organizations/{org_id}` | PATCH | v3 | set-limits optional org hard caps (gated) |
 | `/v3/enterprise/metrics/usage` | GET | v3 | doctor |
 | `/api/v2alpha/analytics/consumption` | GET | Windsurf, Bearer | set-limits, boost, user, status, models (per-user/model/IDE detail) |
@@ -277,6 +310,9 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 | `bin/dag` | Dispatch, arg validation, env load, dual-key resolution, prompt assembly, agent launch |
 | `lib/key-resolve.zsh` | `dag_resolve_cog_key()` + `dag_resolve_service_key()`: Keychain → env var |
 | `lib/doctor.zsh` | `dag_doctor()`: deterministic dual-family HTTP probe (no agent) |
+| `lib/dashboard.zsh` | `dag_dashboard()`: fetch v3 consumption, compute forecast, write + open the local dashboard (no agent) |
+| `lib/dashboard.jq` | Burn-rate/forecast math + org cap status classification → dashboard data document |
+| `web/dashboard/` | Static dashboard app (`dashboard.html` / `.css` / `.js`), copied verbatim into the output dir |
 | `lib/compute-caps.jq` | Remaining-pool split; day-1 flat split; exhausted-pool warnings |
 | `lib/boost-plan.jq` | Zero-sum boost: recommended cap from projection, donor takes, Σ-invariant |
 | `lib/boost-check.jq` | Pool-headroom check (shortfall→overage path) |
@@ -292,8 +328,8 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 | Code | Meaning |
 |---|---|
 | `0` | Success (or `help`, or `DAG_PRINT_PROMPT` print-and-exit, or doctor with only optional warnings) |
-| `1` | No Devin v3 `cog_` key found (Keychain miss + `DEVIN_COG_KEY` unset) |
-| `2` | Usage error: no command, unknown command, or bad `boost`/`user` arguments |
+| `1` | No Devin v3 `cog_` key found (Keychain miss + `DEVIN_COG_KEY` unset), or a `dashboard` API read failed (exact body quoted) |
+| `2` | Usage error: no command, unknown command, or bad `boost`/`user`/`dashboard` arguments |
 | `3` | `dag doctor`: one or more **required** v3 capabilities missing or uncertain |
 | `127` | `dag` alias wrapper couldn't find the daemon entrypoint |
 
@@ -302,12 +338,13 @@ Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConf
 ## Verification
 
 ```zsh
-zsh claude/devin-acu-governor/test/run.zsh                 # all test files (104 assertions)
+zsh claude/devin-acu-governor/test/run.zsh                 # all test files (173 assertions)
 zsh -n claude/devin-acu-governor/bin/dag                   # parse check
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag status               # inspect assembled prompt, launch nothing
+dag dashboard --no-open --out /tmp/dag-dashboard            # smoke the local dashboard (read-only)
 ```
 
-Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21).
+Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21), dashboard artifacts + deterministic forecast math + all six org statuses + failure quoting + key-leak guard (69, fixture-driven with mocked `curl`/`open`).
 
 ---
 

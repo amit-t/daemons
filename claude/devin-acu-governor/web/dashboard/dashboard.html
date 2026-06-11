@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Devin ACU Burn Dashboard</title>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<header>
+  <h1>Devin ACU Burn Dashboard</h1>
+  <p id="meta">Loading…</p>
+</header>
+<main>
+  <section id="cards" class="cards"></section>
+
+  <section>
+    <h2>Daily burn</h2>
+    <div id="daily-chart" class="chart"></div>
+  </section>
+
+  <section>
+    <h2>Product split</h2>
+    <div id="product-split"></div>
+  </section>
+
+  <section>
+    <h2>Organizations</h2>
+    <table id="org-table">
+      <thead>
+        <tr>
+          <th>Org</th>
+          <th class="num">Consumed</th>
+          <th class="num">Run rate/day</th>
+          <th class="num">Projected</th>
+          <th class="num">Cycle cap</th>
+          <th class="num">Session cap</th>
+          <th class="num">% of cap</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Warnings</h2>
+    <ul id="warnings"></ul>
+  </section>
+</main>
+<script src="dashboard-data.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

@@ -36,6 +36,8 @@ Usage:
   dag status                  Consumption, remaining ACUs, month-end projection
   dag models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
   dag doctor                  Probe both API keys and report which capabilities they hold
+  dag dashboard [--no-open] [--json-only] [--out <dir>]
+                              Local ACU burn-rate + forecast dashboard (read-only, no agent)
   dag help                    Show this help
 
 Config (environment.env; shell env vars override):
@@ -102,6 +104,11 @@ main() {
     doctor)
       source "${daemon_dir}/lib/doctor.zsh"
       dag_doctor
+      exit $?
+      ;;
+    dashboard)
+      source "${daemon_dir}/lib/dashboard.zsh"
+      dag_dashboard "$@"
       exit $?
       ;;
     set-limits|status) ;;
