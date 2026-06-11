@@ -1,205 +1,209 @@
 # devin-acu-governor (`dag`)
 
-Devin Enterprise ACU governor. A thin zsh launcher hands each job to a Claude agent session (`clscb` by default), armed with a playbook: the API contract, deterministic jq math, and confirmation gates before any write. You drive the run interactively inside the agent session.
+`dag` governs Devin Enterprise ACU spend from the terminal.
 
-- **Spec:** `docs/superpowers/specs/2026-06-10-devin-acu-governor-design.md`
-- **Plan:** `docs/superpowers/plans/2026-06-10-devin-acu-governor.md`
+Runtime shape:
+- Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
+- `doctor`, `dashboard`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
 
-## Plan reality (Cognition platform SKU, verified 2026-06-10)
+Current ACU-limit contract comes from Devin docs: <https://docs.devin.ai/admin/billing/acu-limits>.
 
-The org bills on **consumption-based ACUs** — no seat-credit ledger. Consequences, confirmed against live APIs:
+## What changed for Local Agent limits
 
-- The Windsurf credit endpoints (`GetTeamCreditBalance`, `UsageConfig`, `GetUsageConfig`) fail **structurally** on this SKU (`permission_denied` / `invalid_argument`, permanently). dag no longer calls them.
-- **No per-user ACU cap API exists** — not in Devin v3, not in Windsurf. Per-user caps are **soft allocations** recorded in dag's local ledger; the platform does not enforce them.
-- Hard caps exist only **per organization**: `max_cycle_acu_limit` and `max_session_acu_limit`, settable via `PATCH /v3/enterprise/organizations/{org_id}`.
-- No remaining-balance endpoint. Remaining = `DAG_MONTHLY_ACU_POOL` − consumed (from consumption endpoints).
+Local Agent ACU limits cover Devin Desktop, Windsurf JetBrains, and Devin CLI.
 
-dag therefore uses **two API families with two keys**:
+Enforcement has two independent gates:
+1. per-user effective limit: individual override, else default user limit, else no per-user limit;
+2. organization-level Local Agent limit for the user's billing org.
 
-| Family | Base | Key | Role |
-|---|---|---|---|
-| Devin API v3 | `api.devin.ai` | `cog_` service-user key (**required**) | cycles, enterprise/org/per-user ACU consumption, roster, org hard caps, metrics |
-| Windsurf analytics | `server.codeium.com` | Windsurf service key (**optional**) | per-**model** and per-**IDE** ACU breakdown (only source), roster activity |
+Both gates must pass. All limits reset monthly. A user override replaces the default; it does not add to it. `cycle_acu_limit: 0` blocks that scope. `local_agent: null` clears that scope.
 
----
+`dag` now uses the V3 beta ACU-limit endpoints:
+- `PATCH /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`
+- `GET /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`
+- `PATCH /v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`
+- `GET /v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`
 
-## What it can do — at a glance
+UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Consumption` to view current-cycle Local Agent usage by product/user. Configured Local Agent limits are API-managed; `dag` proves writes with live GET verification.
 
-| Command | Writes? | One-line capability |
-|---|---|---|
-| `dag set-limits` | ✅ ledger (+ optional org caps) | Distribute the monthly ACU pool across enterprise members as prorated per-user **soft caps**; report violators; optionally set org-level hard caps |
-| `dag boost <email> [acus]` | ✅ ledger | Zero-sum reallocation: raise a heavy user's soft cap by taking ACUs from the lowest consumers (Σ caps unchanged → no overage). Recommends amount + donors |
-| `dag user <email>` | ❌ read-only | Deep-dive one user: cycle ACUs, run-rate, projection, product split, models/IDEs (Windsurf key), daily trend |
-| `dag status` | ❌ read-only | Enterprise consumption, remaining ACUs, run-rate, cycle-end projection + UNDER/OVER verdict, org split vs hard caps, top consumers, per-model burn |
-| `dag models [file\|names…]` | ❌ report | Per-model ACU burn report + desired-allowlist diff + Admin Portal walkthrough (needs Windsurf key) |
-| `dag doctor` | ❌ probe | Probe both keys and report which capabilities they hold |
-| `dag dashboard` | ❌ read-only | Local HTML burn-rate + forecast dashboard: headline cards, daily burn chart, product split, org cap table, warnings. No agent, no writes |
+## Commands
+
+| Command | Mutates | Purpose |
+|---|---:|---|
+| `dag set-limits` | ✅ user limits + ledger | Discover engineers/user IDs, compute remaining-pool prorated caps, PATCH every user's Local Agent override, live-GET verify each write |
+| `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set one org's aggregate Local Agent limit, then live-GET verify it |
+| `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
+| `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
+| `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
+| `dag status` | ❌ read-only | Enterprise burn, projection, org Local Agent caps, default user limit, top users/models |
+| `dag models [file\|names…]` | ❌ report | Per-model burn + Admin Portal allowlist walkthrough |
+| `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
+| `dag dashboard` | ❌ read-only | Static local burn-rate + forecast dashboard; no agent, no writes |
 | `dag help` | ❌ | Usage text |
 
-Every API write is gated: the agent shows a full plan and waits for your explicit confirmation. Ledger writes get a plan preview + confirmation too, but are local and reversible. No silent mutations.
+Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, and waits for explicit confirmation. The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
 
----
+## `dag set-limits`
 
-## Commands in full
+Goal: distribute `DAG_MONTHLY_ACU_POOL` (default 24,000 ACUs) across confirmed engineers, prorated by current cycle burn.
 
-### `dag set-limits`
-Distribute `DAG_MONTHLY_ACU_POOL` (default 24,000) across enterprise members as per-user **soft caps** in the ledger.
+Flow:
+1. GET current cycle from `/v3/enterprise/consumption/cycles`.
+2. GET roster from `/v3/enterprise/members/users`; build email ↔ `user_id` map.
+3. Fetch per-user cycle consumption:
+   - Windsurf key: one `server.codeium.com/api/v2alpha/analytics/consumption?product=agent&group_by=user` request.
+   - No Windsurf key: loop `/v3/enterprise/consumption/daily/users/{user_id}`.
+4. Cross-check summed users against enterprise total.
+5. Confirm engineer set.
+6. Run `lib/compute-caps.jq` on `{pool, users:[{user_id,email,consumed}]}`.
+7. Read current user overrides with `GET /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
+8. Preview email, user_id, consumed, old override, new cap, delta, Σ caps vs pool, UI instruction.
+9. On confirmation, PATCH every user: `{"local_agent":{"cycle_acu_limit":<cap>}}`.
+10. GET each changed user limit after PATCH and confirm exact cap.
+11. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data.
+12. List users near/over cap; point to `dag boost`.
 
-What it does, in order:
-1. Current cycle from `GET /v3/enterprise/consumption/cycles` (epoch boundaries).
-2. Roster + email↔user_id map from `GET /v3/enterprise/members/users`.
-3. Per-user cycle consumption — one Windsurf `consumption` call (`group_by=user`) when that key exists, else a per-user loop over `GET /v3/enterprise/consumption/daily/users/{user_id}`. Cross-checked against the enterprise total.
-4. Shows headcount **N** and asks you to confirm or override it.
-5. Computes caps via `lib/compute-caps.jq`:
-   - **Day-1 (nothing consumed):** one flat cap = `floor(pool / N)` for everyone.
-   - **Mid-cycle (remaining-pool split):** `cap_i = floor(consumed_i) + floor((pool − total_consumed) / N)`. Splits *what's left* evenly; heavy users keep what they've spent plus an even share of the remainder.
-   - **Pool exhausted / near-exhausted:** freezes caps at current consumption and warns.
-6. Shows a preview table (email, consumed, new soft cap, Σ caps vs pool) → waits for confirmation. States plainly that the platform does not enforce these per user.
-7. Writes the allocation ledger (`$DAG_STATE_DIR/allocations.json`) — the source of truth for caps.
-8. Lists violators (consumed > cap) — the follow-up/boost candidates.
-9. Optional: shows current org hard caps and offers `PATCH /v3/enterprise/organizations/{org_id}` to set `max_cycle_acu_limit` so Σ org caps = pool. Separate confirmation; the only hard enforcement on this SKU.
+Proration math: `cap_i = floor(consumed_i) + floor((pool − total_consumed) / N)`. If nothing has been consumed, everyone gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print.
 
 ```zsh
 dag set-limits
 ```
 
-### `dag boost <email> [acus]`
-Raise a heavy, legitimate consumer's soft cap **without spending more money** — the ACUs come from the lowest consumers, so total allocation (Σ caps) is unchanged.
+## `dag set limit global <acus> [org_id|org_name]`
 
-What it does:
-1. Requires a fresh ledger (matching the live cycle) — else stops and points to `dag set-limits`.
-2. Reads cycle + per-user consumption; derives the recipient's `consumed`, daily run-rate, days left.
-3. Current caps from the ledger; ranks the **lowest consumers** as donor candidates.
-4. Runs `lib/boost-plan.jq`:
-   - **Recommended cap** = `ceil(projected_month_end × 1.15)` (override by passing `[acus]`, which boosts by exactly that delta).
-   - **Donor takes:** greedily pulls from the lowest consumers first, never cutting a donor below `consumed + 10% of an even share`.
-   - Returns a Σ-invariant plan: `sum_before == sum_after`.
-5. Shows a **before/after table** proving zero-sum; surfaces warnings. On `shortfall`: accept partial, add donors, or knowingly cover from pool headroom (`lib/boost-check.jq`).
-6. On confirmation, updates the ledger and shows the changed entries back. Notes the recipient's headroom against their org's hard cap if one is set.
+One-time local command for the org-level Local Agent gate. No agent launch.
+
+Behavior:
+1. Resolves the `cog_` key.
+2. GETs `/v3/enterprise/organizations`.
+3. Uses the only org automatically, or matches the optional selector by `org_id`/name. If multiple orgs exist and no selector is passed, it lists them and exits 2 without writing.
+4. PATCHes `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` with `{"local_agent":{"cycle_acu_limit":N}}`.
+5. GETs the same resource and confirms `local_agent.cycle_acu_limit == N`.
+6. Prints UI instructions.
+
+Examples:
 
 ```zsh
-dag boost alice@corp.com         # recommend amount from alice's run-rate; auto-pick donors
+dag set limit global 2400                  # set one org's Local Agent cap to 2400 ACUs
+dag set limit global 2400 org-xyz789       # explicit org id
+dag set-limit global 2400 "Platform Eng"  # alias + org name
+```
+
+`0` is allowed and blocks Local Agent usage for that org until increased or cleared.
+
+## `dag boost <email> [acus]` — Boost + Borrow
+
+Goal: raise one legitimate heavy user's enforceable Local Agent user limit without increasing total allocation, by borrowing ACUs from the lowest consumers.
+
+Flow:
+1. Resolve target email to `user_id` from roster.
+2. Fetch per-user consumption and live current user limits.
+3. Rank lowest consumers as Borrow donors.
+4. Run `lib/boost-plan.jq`:
+   - recommended cap = `ceil(projected_month_end × 1.15)` unless `[acus]` is passed;
+   - donor floor = `consumed + 10% of even share`;
+   - output proves `sum_before == sum_after` when fully funded.
+5. Preview recipient Boost and donor Borrow table.
+6. On confirmation, PATCH recipient and donors via `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
+7. GET every changed user limit after PATCH and confirm planned caps.
+8. Update ledger and print UI instruction.
+
+```zsh
+dag boost alice@corp.com         # recommend amount from alice's run-rate
 dag boost alice@corp.com 50      # boost alice by exactly 50 ACUs, funded from low consumers
 ```
 
-Argument rules (validated before any agent launch):
+Argument rules:
 - `<email>` must look like an email (`*@*.*`) — else exit 2.
 - `[acus]`, if given, must be a positive integer — else exit 2. Omit it to use the recommendation.
 
-### `dag user <email>`
-Read-only deep dive on one person. No gates, nothing written.
+## `dag user <email>`
 
-Reports:
-- **Headline:** ACUs consumed this cycle (`/v3/.../consumption/daily/users/{user_id}`), soft cap from the ledger, headroom, % used.
-- **Trajectory:** daily run-rate, projected cycle-end, whether/when they'll exhaust their cap.
-- **Product split:** ACUs by devin / cascade / terminal / review.
-- **Model + IDE breakdown** (Windsurf key only): ACUs + message count per `model_uid`, per `ide`.
-- **Daily trend** with spike call-outs; **team context** (share of enterprise total).
-- **Activity** (Windsurf key only): active days, last-usage timestamps.
-- Points to `dag boost <email>` if they're near/over cap.
+Read-only. Reports:
+- current-cycle ACUs from `/v3/enterprise/consumption/daily/users/{user_id}`;
+- explicit user override and billing org from `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`;
+- default user limit from `/v3beta1/enterprise/users/consumption/acu-limits`;
+- effective per-user Local Agent limit, headroom, % used, trajectory;
+- product split, daily trend, team context;
+- model/IDE breakdown and activity when the optional Windsurf key exists;
+- UI instruction for Enterprise Settings > Consumption.
 
 ```zsh
 dag user alice@corp.com
 ```
 
-### `dag status`
-Read-only health check. No gates, nothing written.
+## `dag status`
 
-Reports:
-- Total enterprise ACUs this cycle (`/v3/enterprise/consumption/daily`), remaining vs pool.
-- Days elapsed / left; daily run-rate; **projected cycle-end total**; **UNDER / OVER** verdict.
-- Product split (devin / cascade / terminal / review).
-- Org split vs each org's `max_cycle_acu_limit` / `max_session_acu_limit`.
-- Top-10 consumers + per-model burn (Windsurf key only).
-- If the ledger is fresh: Σ caps vs pool and users over their soft cap.
-- Flags anomalies (e.g. one user > 3× median, a product or model dominating).
+Read-only. Reports:
+- enterprise ACUs consumed, remaining vs `DAG_MONTHLY_ACU_POOL`, run-rate, projected cycle-end, UNDER/OVER verdict;
+- product split;
+- org consumption plus Local Agent org limits from `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`;
+- default user Local Agent limit;
+- top-10 users and per-model burn when the Windsurf key exists;
+- fresh ledger exposure if present;
+- UI instruction for Enterprise Settings > Consumption.
 
 ```zsh
 dag status
 ```
 
-### `dag models [file | names…]`
-Model governance and reporting. **Requires the Windsurf key** — model-level ACU data exists only in that family (Devin v3 is product-level).
+## `dag models [file | names…]`
 
-> **Limitation (verified 2026-06-10):** no API endpoint enables/disables models. Availability is controlled only in the Admin Portal UI. This command *reports and instructs*; the playbook re-checks the docs for a new API on every run and will use it automatically if one ships.
-
-What it does:
-1. Re-checks `docs.devin.ai/llms.txt` for a model-config API.
-2. Pulls per-model ACU burn (Windsurf `consumption`, `group_by=model_uid`).
-3. With a desired allowlist: diffs observed vs allowed — allowed & in use, allowed & unused, and **in use but NOT allowed** (with ACU burn and the users most affected).
-4. Prints exact Admin Portal steps (Settings → Models Configuration → enable/disable → optional Default Model Override).
+Read-only model governance. Requires the optional Windsurf key for model-level ACU burn.
 
 ```zsh
-dag models                                   # report current per-model burn only
-dag models claude-sonnet-4-6 swe-1.6         # diff against an inline allowlist
-dag models ./allowlist.txt                   # diff against a file
+dag models
+dag models claude-sonnet-4-6 swe-1.6
+dag models ./allowlist.txt
 ```
 
-### `dag doctor`
-Deterministic local diagnostic — **no agent launch, no token cost**. Probes both keys:
+Model enable/disable is still Admin Portal UI work unless Devin ships an API. The playbook re-checks docs before giving final instructions.
 
-| Capability | Probe | Present |
-|---|---|---|
-| Consumption Read (required) | GET `/v3/enterprise/consumption/cycles` | 200 |
-| Org Read (required) | GET `/v3/enterprise/organizations` | 200 |
-| Org-cap Write | PATCH a nonexistent org (mutates nothing) | 404/422; **403 is inconclusive** — the API masks unknown orgs as 403, so write permission is only proven at write time |
-| Roster Read (required) | GET `/v3/enterprise/members/users?limit=1` | 200 |
-| Metrics Read (required) | GET `/v3/enterprise/metrics/usage` | 200 |
-| Teams Read-only (optional) | POST `UserPageAnalytics` | 200 |
-| Analytics Read (optional) | GET Windsurf `consumption` (1-day, `page_size=1`) | 200 |
+## `dag doctor`
 
-Missing/failed **optional** Windsurf capabilities warn (per-model/IDE breakdown degraded) but exit 0. Exit `3` when a required v3 capability is missing, `1` when no cog key is found.
+Local deterministic diagnostic. No agent launch.
+
+Required `cog_` probes:
+- Consumption Read: `GET /v3/enterprise/consumption/cycles`
+- Org Read: `GET /v3/enterprise/organizations`
+- ACU Limit Read: `GET /v3beta1/enterprise/users/consumption/acu-limits`
+- ACU Limit Write: PATCH nonexistent org ACU-limit resource; `404/422` proves authz, `403` is inconclusive and verified at real write time
+- Roster Read: `GET /v3/enterprise/members/users?limit=1`
+- Metrics Read: `GET /v3/enterprise/metrics/usage`
+
+Optional Windsurf probes:
+- Teams Read-only: `POST /api/v1/UserPageAnalytics`
+- Analytics Read: one low-cost consumption request unless `DAG_DOCTOR_SKIP_ANALYTICS=1`
 
 ```zsh
-dag doctor                              # probe everything
-DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor  # skip the Windsurf analytics probe (saves 1 of 10/hr calls)
+dag doctor
+DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor
 ```
 
-Run it right after creating a key to confirm capabilities before any real work.
+## `dag dashboard`
 
-### `dag dashboard`
-Local, deterministic, **read-only** ACU burn dashboard — **no agent launch, no token cost, no API writes**. Fetches the current cycle, enterprise daily consumption, organizations, and per-org daily consumption (GETs only), computes burn-rate + forecast with `lib/dashboard.jq`, and writes a static HTML/CSS/JS app that opens straight from the file path (no local server, no npm).
+Local, read-only dashboard. Fetches cycle, enterprise daily consumption, orgs, and per-org daily consumption. Writes static files under `$DAG_STATE_DIR/dashboard/latest/` by default.
 
 ```zsh
-dag dashboard                          # write + open $DAG_STATE_DIR/dashboard/latest/dashboard.html
-dag dashboard --no-open                # write, print paths, don't open a browser
-dag dashboard --out /tmp/dag-dashboard # write to a specific directory
-dag dashboard --json-only              # only data.json + dashboard-data.js, no app files, no open
+dag dashboard
+dag dashboard --no-open
+dag dashboard --out /tmp/dag-dashboard
+dag dashboard --json-only
 ```
 
-What the dashboard shows:
-- **Headline cards** — consumed, remaining vs `DAG_MONTHLY_ACU_POOL`, daily run rate, projected cycle-end, UNDER/OVER verdict.
-- **Daily burn chart** — dependency-free SVG bars with per-product tooltips.
-- **Product split** — devin / cascade / terminal / review totals.
-- **Org table** — consumed, run rate, projected, cycle/session hard caps, % of cap, status badge (`ok` / `warning` ≥85% / `critical` ≥95% / `forecast_over` / `over` / `uncapped`).
-- **Warnings panel** — orgs over cap, forecast over cap, or uncapped.
-
-Generated files (`--out` dir, default `$DAG_STATE_DIR/dashboard/latest/`):
-
-| File | Content |
-|---|---|
-| `data.json` | The computed data document (cycle, enterprise forecast, product split, daily series, org rows, warnings) |
-| `dashboard-data.js` | `window.DAG_DASHBOARD_DATA = {…};` — data injection without CORS/file-fetch issues |
-| `dashboard.html` / `.css` / `.js` | Static app copied from `web/dashboard/` |
-
-Forecast math (all in `lib/dashboard.jq`, no mental arithmetic): `elapsed_days = max(1, ceil((min(now, before) − after) / 86400))`, `daily_run_rate = consumed / elapsed_days`, `projected_cycle_total = daily_run_rate × cycle_days`, `remaining = pool − consumed`. Org status uses unrounded projections; `forecast_over` outranks `critical`/`warning`.
-
-Endpoints called (Devin v3, Bearer `cog_` key, all GET): `/v3/enterprise/consumption/cycles`, `/v3/enterprise/consumption/daily`, `/v3/enterprise/organizations`, `/v3/enterprise/consumption/daily/organizations/{org_id}`.
-
-Limitations: snapshot, not live — re-run to refresh; per-user breakdown and per-model split are not included (use `dag user` / `dag status` / `dag models`); the pool is config (`DAG_MONTHLY_ACU_POOL`), not an API balance — no remaining-balance endpoint exists on this SKU. Any failed read (non-200, curl transport error, or invalid JSON body) aborts with the exact diagnostics quoted; nothing is written. The key is passed to curl via a header file inside a `0700` temp dir (`-H @file`), never argv — invisible to `ps`; `curl -q` ignores `~/.curlrc`. `DAG_NOW_EPOCH` pins "now" for deterministic output (used by tests).
-
-### `dag help`
-Prints usage and config reference. Also `dag -h`, `dag --help`.
-
----
+Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.css`, `dashboard.js`. No API writes; tests assert no curl write verbs.
 
 ## One-time setup — keys
 
 ### Required: Devin API v3 service-user key (`cog_…`)
 
-1. Open **app.devin.ai → Settings → Service users** (enterprise settings if visible — enterprise-scoped keys reach `/v3/enterprise/*` and every org).
-2. Create a service user with permissions: **ManageBilling** (consumption), **ViewOrgSessions** (sessions), **ViewAccountMetrics** (metrics), **ManageOrganizations** (only if you want org hard-cap writes).
-3. Copy the `cog_…` key (shown once) and store it:
+1. Open `app.devin.ai > Settings > Service users`.
+2. Create an enterprise-scoped service user with:
+   - **ViewAccountConsumption** — read ACU-limit settings;
+   - **ManageBilling** — update/delete ACU-limit settings;
+   - **ViewOrgSessions** — consumption/session context;
+   - **ViewAccountMetrics** — metrics probe.
+3. Store the key:
 
 ```zsh
 security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'
@@ -207,164 +211,108 @@ security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'
 
 Fallback: `export DEVIN_COG_KEY=cog_…`. Keychain wins when both exist.
 
-### Optional: Windsurf service key (per-model/IDE breakdown + roster activity)
+### Optional: Windsurf service key
 
-1. Open **https://windsurf.com/team/settings** → Service Keys.
-2. Scopes: **Analytics Read** + **Teams Read-only** (Billing scopes are useless on this SKU).
-3. Store it:
+Used for per-model/IDE breakdown and roster activity.
 
 ```zsh
 security add-generic-password -s devin-service-key -a "$USER" -w '<paste-key>'
 ```
 
-Fallback: `export DEVIN_SERVICE_KEY=<key>`. Without this key dag still runs; model/IDE breakdown and activity context are skipped.
+Fallback: `export DEVIN_SERVICE_KEY=<key>`.
 
-Keys are exported only into the agent session's environment — never printed, logged, or embedded in a prompt.
-
----
+Keys are exported only into child commands/sessions — never printed, logged, or embedded in prompts. Dashboard stores the Authorization header in a 0600 temp file to keep the key out of process args.
 
 ## Configuration
 
-`environment.env` holds defaults; **shell environment variables override them** per-run.
+`environment.env` holds defaults; shell environment variables override per run.
 
 | Variable | Default | Meaning |
-|---|---|---|
+|---|---:|---|
 | `DAG_MONTHLY_ACU_POOL` | `24000` | Monthly ACU pool to distribute |
-| `DAG_LAUNCHER` | `clscb` | Agent launcher command the prompt is handed to |
-| `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item, Devin v3 `cog_` key |
-| `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item, Windsurf service key |
-| `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Allocation ledger directory |
-| `DAG_PRINT_PROMPT` | _(unset)_ | If set, print the assembled prompt and exit — **does not launch the agent** |
-| `DAG_DOCTOR_SKIP_ANALYTICS` | _(unset)_ | If set, `dag doctor` skips the Windsurf analytics probe |
-| `DAG_NOW_EPOCH` | _(unset)_ | If set, `dag dashboard` uses this Unix epoch as "now" (deterministic forecast; used by tests) |
-| `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3 base URL `dag doctor` probes (override for testing) |
-| `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL `dag doctor` probes (override for testing) |
-
-```zsh
-DAG_MONTHLY_ACU_POOL=30000 dag set-limits        # try a different pool for one run
-DAG_PRINT_PROMPT=1 dag boost bob@corp.com 100     # see the exact prompt, launch nothing
-DAG_LAUNCHER=clb dag status                        # use a different Claude wrapper
-```
-
----
-
-## How a run works
-
-```
-dag set-limits
- └─ bin/dag: load environment.env (shell env wins)
- └─ validate args (boost email/amount; unknown cmd → exit 2)
- └─ resolve keys: cog (Keychain → $DEVIN_COG_KEY → exit 1 with setup hint, required)
-                  windsurf (Keychain → $DEVIN_SERVICE_KEY, optional — absence noted in prompt)
- └─ assemble prompt: playbooks/_common.md + playbooks/<cmd>.md + Run context
-    (today, pool, jq program paths, ledger path, key availability, command args)
- └─ export DEVIN_COG_KEY (+ DEVIN_SERVICE_KEY if present) into the child shell only
- └─ exec  zsh -ic "clscb '<prompt>'"   → interactive agent session opens
- └─ agent: API reads → jq math → preview → YOUR confirmation → ledger/API writes → verify
-```
-
-The **allocation ledger** (`$DAG_STATE_DIR/allocations.json`) is the source of truth for per-user soft caps:
-
-```json
-{ "cycle_start": 1778918400, "cycle_end": 1781596800, "updated": "…",
-  "caps": { "alice@corp.com": 280, "…": 230 }, "sum_caps": 23980 }
-```
-
-`boost` requires it; it's stale when `cycle_start` no longer matches the live cycle's `after` epoch.
-
----
+| `DAG_LAUNCHER` | `clscb` | Agent launcher for playbook commands |
+| `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
+| `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
+| `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger/dashboard state directory |
+| `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit |
+| `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
+| `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |
+| `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3/v3beta1 base URL |
+| `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL |
 
 ## Safety model
 
-- **No API write without confirmation.** The only API write is the organizations PATCH (org hard caps) — full plan + explicit confirm first. Ledger writes also get a preview + confirm.
-- **Reads gate writes.** Any failed read stops the run before any write; the exact API error body is quoted.
-- **Deterministic math.** All cap/headroom numbers come from the jq programs, never agent mental arithmetic.
-- **Rate-limit aware.** Windsurf consumption allows 10 req/hr/team; playbooks fetch once per run and back off on 429 instead of retrying. Devin v3 calls are batched sensibly.
-- **No key leakage.** Neither key ever appears in prompts, output, logs, or the ledger.
-
----
+- Agent writes require explicit confirmation.
+- Local global command is explicit and verifies immediately.
+- Reads gate writes: any failed read stops writes and quotes exact response body.
+- Every write is verified with a GET of the same ACU-limit resource.
+- Math lives in jq, not agent mental arithmetic.
+- Windsurf consumption calls are rate-limit aware.
+- Keys never appear in prompts, stdout, generated dashboard files, or ledgers.
 
 ## API surface touched
 
-| Endpoint | Method | Family / auth | Used by |
-|---|---|---|---|
-| `/v3/enterprise/consumption/cycles` | GET | v3, Bearer `cog_` | all commands (cycle boundaries) |
-| `/v3/enterprise/consumption/daily` | GET | v3 | status, set-limits (cross-check), user (team context), dashboard |
-| `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | v3 | status, dashboard |
-| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | v3 | user, set-limits/boost (fallback path) — URL-encode the `\|` in user_id |
-| `/v3/enterprise/members/users` | GET | v3 | set-limits, boost, user (roster, email↔user_id) |
-| `/v3/enterprise/organizations` | GET | v3 | status, set-limits, boost (hard-cap context), dashboard |
-| `/v3/enterprise/organizations/{org_id}` | PATCH | v3 | set-limits optional org hard caps (gated) |
-| `/v3/enterprise/metrics/usage` | GET | v3 | doctor |
-| `/api/v2alpha/analytics/consumption` | GET | Windsurf, Bearer | set-limits, boost, user, status, models (per-user/model/IDE detail) |
-| `/api/v1/UserPageAnalytics` | POST | Windsurf, body key | user (activity), doctor |
-
-Not called (structurally broken on this SKU): `GetTeamCreditBalance`, `UsageConfig`, `GetUsageConfig`. Full field-level contract lives in `playbooks/_common.md`.
-
----
+| Endpoint | Method | Used by |
+|---|---|---|
+| `/v3/enterprise/consumption/cycles` | GET | all agent commands, dashboard, doctor |
+| `/v3/enterprise/consumption/daily` | GET | set-limits, status, user context, dashboard |
+| `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | status, dashboard |
+| `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user |
+| `/v3/enterprise/members/users` | GET | set-limits, boost, user, doctor |
+| `/v3/enterprise/organizations` | GET | status, global command, dashboard, doctor |
+| `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` | GET/PATCH | global command, status, optional org guardrails |
+| `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user |
+| `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, doctor |
+| `/v3/enterprise/metrics/usage` | GET | doctor |
+| `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models |
+| `/api/v1/UserPageAnalytics` | POST | user, doctor |
 
 ## Files
 
 | Path | Responsibility |
 |---|---|
-| `bin/dag` | Dispatch, arg validation, env load, dual-key resolution, prompt assembly, agent launch |
-| `lib/key-resolve.zsh` | `dag_resolve_cog_key()` + `dag_resolve_service_key()`: Keychain → env var |
-| `lib/doctor.zsh` | `dag_doctor()`: deterministic dual-family HTTP probe (no agent) |
-| `lib/dashboard.zsh` | `dag_dashboard()`: fetch v3 consumption, compute forecast, write + open the local dashboard (no agent) |
-| `lib/dashboard.jq` | Burn-rate/forecast math + org cap status classification → dashboard data document |
-| `web/dashboard/` | Static dashboard app (`dashboard.html` / `.css` / `.js`), copied verbatim into the output dir |
-| `lib/compute-caps.jq` | Remaining-pool split; day-1 flat split; exhausted-pool warnings |
-| `lib/boost-plan.jq` | Zero-sum boost: recommended cap from projection, donor takes, Σ-invariant |
-| `lib/boost-check.jq` | Pool-headroom check (shortfall→overage path) |
-| `playbooks/_common.md` | API contract (both families) + hard rules (gates, rate limits, no key leakage) |
-| `playbooks/{set-limits,boost,user,status,models}.md` | Per-command step flows |
-| `environment.env` | Default config (env vars override) |
-| `test/` | zsh test files + `run.zsh` runner |
-
----
+| `bin/dag` | Dispatch, arg validation, env load, prompt assembly, local command dispatch |
+| `lib/key-resolve.zsh` | Keychain/env key resolution |
+| `lib/local-agent-limits.zsh` | Local `dag set limit global` implementation + live GET verification |
+| `lib/doctor.zsh` | Local capability probe |
+| `lib/dashboard.zsh` / `lib/dashboard.jq` | Local static dashboard fetch + forecast math |
+| `web/dashboard/` | Static dashboard assets |
+| `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
+| `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
+| `lib/boost-check.jq` | Pool-headroom check for overage path |
+| `playbooks/_common.md` | API contract, safety rules, UI instructions |
+| `playbooks/{set-limits,boost,user,status,models}.md` | Agent command flows |
+| `test/` | zsh tests + fixtures |
 
 ## Exit codes
 
 | Code | Meaning |
-|---|---|
-| `0` | Success (or `help`, or `DAG_PRINT_PROMPT` print-and-exit, or doctor with only optional warnings) |
-| `1` | No Devin v3 `cog_` key found (Keychain miss + `DEVIN_COG_KEY` unset), or a `dashboard` API read failed (exact body quoted) |
-| `2` | Usage error: no command, unknown command, or bad `boost`/`user`/`dashboard` arguments |
-| `3` | `dag doctor`: one or more **required** v3 capabilities missing or uncertain |
-| `127` | `dag` alias wrapper couldn't find the daemon entrypoint |
-
----
+|---:|---|
+| `0` | Success/help/print-prompt/local read success |
+| `1` | Missing key or read/write/verification failure |
+| `2` | Usage error |
+| `3` | `dag doctor`: required capability missing/uncertain |
+| `127` | global wrapper cannot find daemon entrypoint |
 
 ## Verification
 
 ```zsh
-zsh claude/devin-acu-governor/test/run.zsh                 # all test files (197 assertions)
-zsh -n claude/devin-acu-governor/bin/dag                   # parse check
-DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag status               # inspect assembled prompt, launch nothing
-dag dashboard --no-open --out /tmp/dag-dashboard            # smoke the local dashboard (read-only)
+zsh claude/devin-acu-governor/test/run.zsh
+zsh -n claude/devin-acu-governor/bin/dag
+zsh -n claude/devin-acu-governor/lib/*.zsh
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
+DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage: dual-key resolution order (10), cap math incl. day-1/mid-month/exhausted/fractional/single-user (15), boost-plan zero-sum reallocation incl. fund/shortfall/override/no-op + Σ-invariant (21), pool-headroom check (6), CLI dispatch + validation + prompt assembly + dual-key-leak guard (31), doctor capability classification + exit codes + key-leak guard (21), dashboard artifacts + deterministic forecast math + all six org statuses (incl. exact 0.85 / consumed==limit boundaries) + every read-failure path (non-200, invalid JSON, curl transport rc) + read-only curl guard + key-leak guard (93, fixture-driven with mocked `curl`/`open`).
-
----
+Test coverage now includes 228 assertions across key resolution, cap math, Boost/Borrow math, CLI prompt assembly, global org Local Agent limit write+verify, doctor v3beta1 probes, and dashboard artifact/error/read-only behavior.
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| `dag: no Devin API v3 service-user key` | cog key not stored. `security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'` or `export DEVIN_COG_KEY`. |
-| `note — no Windsurf service key` | Optional key absent; model/IDE breakdown skipped. Add it from windsurf.com/team/settings if needed. |
-| `dag: missing daemon entrypoint` (127) | Repo moved or `bin/dag` not executable. `chmod +x claude/devin-acu-governor/bin/dag`. |
-| `dag boost: first argument must be a user email` | Pass email then amount: `dag boost alice@corp.com 50`. |
-| v3 calls return `403 {"detail":"Unauthorized"}` | Wrong key family (Windsurf key on api.devin.ai) or missing RBAC permission. Recreate the `cog_` key enterprise-scoped with the permissions listed above. |
-| `GetTeamCreditBalance` "feature not available for your plan" | Expected on the Cognition/ACU SKU — that endpoint serves seat-credit plans. dag doesn't call it anymore. |
-| `UsageConfig` `invalid_argument` | Expected on this SKU — per-user credit caps don't exist on ACU billing. dag doesn't call it anymore. |
-| Windsurf consumption 429 | Hit the 10/hr team limit. Wait; the playbook reports when to retry. |
-| Caps look wrong mid-cycle | Expected: remaining-pool split keeps heavy users' spend and splits only the remainder. See `dag status`. |
-
----
-
-## Scope notes
-
-- **In scope:** manual, on-demand soft-cap distribution + zero-sum boosts (ledger), org-level hard caps (gated PATCH), consumption/product/model reporting.
-- **Out of scope (this round):** automated/scheduled enforcement (cron auto-throttle), per-user hard caps (no API exists on this SKU), org-group limits (`/v3/enterprise/org-group-limits` — 404, feature flag not enabled for this enterprise), and model enable/disable via API (no endpoint exists). The playbook structure makes new `dag <command>` verbs cheap — drop a `playbooks/<cmd>.md` and a `case` arm in `bin/dag`.
+| `dag: no Devin API v3 service-user key` | Store `cog_…` in Keychain or `DEVIN_COG_KEY`. |
+| `ACU Limit Read missing` in doctor | Key lacks `ViewAccountConsumption`. |
+| `ACU Limit Write missing` or real PATCH 403 | Key lacks `ManageBilling`, wrong key family, or wrong org scope. |
+| Multiple orgs for `dag set limit global` | Pass `org_id` or exact org name. |
+| Verification mismatch after PATCH | The API did not persist the requested limit; output quotes the GET body. Do not assume success. |
+| Windsurf analytics 429 | Rate limit is 10 req/hr/team. Retry later or skip model/IDE detail. |

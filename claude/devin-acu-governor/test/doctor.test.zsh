@@ -22,7 +22,8 @@ url=""
 for a in "$@"; do url="$a"; done
 case "$url" in
   *consumption/cycles*)        print -rn -- "${FAKE_CYCLES:-200}" ;;
-  *organizations/org-dag-doctor-probe*) print -rn -- "${FAKE_ORG_WRITE:-404}" ;;
+  *v3beta1/enterprise/organizations/org-dag-doctor-probe/consumption/acu-limits*) print -rn -- "${FAKE_LIMIT_WRITE:-404}" ;;
+  *v3beta1/enterprise/users/consumption/acu-limits*) print -rn -- "${FAKE_LIMIT_READ:-200}" ;;
   *enterprise/organizations*)  print -rn -- "${FAKE_ORGS:-200}" ;;
   *members/users*)             print -rn -- "${FAKE_ROSTER:-200}" ;;
   *metrics/usage*)             print -rn -- "${FAKE_METRICS:-200}" ;;
@@ -35,8 +36,8 @@ chmod +x "${tmpdir}/bin/curl"
 
 run_doctor() {  # env overrides via FAKE_* assignments prefixed to the call
   PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=cogk DEVIN_SERVICE_KEY=wsk \
-  FAKE_CYCLES="${FAKE_CYCLES:-200}" FAKE_ORG_WRITE="${FAKE_ORG_WRITE:-404}" \
-  FAKE_ORGS="${FAKE_ORGS:-200}" FAKE_ROSTER="${FAKE_ROSTER:-200}" \
+  FAKE_CYCLES="${FAKE_CYCLES:-200}" FAKE_LIMIT_WRITE="${FAKE_LIMIT_WRITE:-404}" \
+  FAKE_LIMIT_READ="${FAKE_LIMIT_READ:-200}" FAKE_ORGS="${FAKE_ORGS:-200}" FAKE_ROSTER="${FAKE_ROSTER:-200}" \
   FAKE_METRICS="${FAKE_METRICS:-200}" FAKE_TEAMS="${FAKE_TEAMS:-200}" \
   FAKE_ANALYTICS="${FAKE_ANALYTICS:-200}" \
   zsh "$dag" doctor 2>&1
@@ -47,7 +48,8 @@ out=$(run_doctor); rc=$?
 assert_exit "all rc" 0 $rc
 assert_contains "all summary" "$out" "All capabilities present"
 assert_contains "consumption line" "$out" "Consumption Read"
-assert_contains "org write line" "$out" "Org-cap Write"
+assert_contains "limit read line" "$out" "ACU Limit Read"
+assert_contains "limit write line" "$out" "ACU Limit Write"
 assert_contains "write noop note" "$out" "mutates nothing"
 
 # 2. Required v3 capability missing (consumption 403) -> exit 3.
@@ -56,10 +58,10 @@ assert_exit "v3 missing rc" 3 $rc
 assert_contains "v3 missing word" "$out" "missing"
 assert_contains "v3 missing hint" "$out" "app.devin.ai"
 
-# 3. Org-cap write probe: 403 = inconclusive (API masks unknown orgs) -> warn, exit 0.
-out=$(FAKE_ORG_WRITE=403 run_doctor); rc=$?
-assert_exit "org write inconclusive rc" 0 $rc
-assert_contains "org write inconclusive word" "$out" "inconclusive"
+# 3. ACU-limit write probe: 403 = inconclusive (API may mask unknown orgs) -> warn, exit 0.
+out=$(FAKE_LIMIT_WRITE=403 run_doctor); rc=$?
+assert_exit "limit write inconclusive rc" 0 $rc
+assert_contains "limit write inconclusive word" "$out" "inconclusive"
 
 # 4. Windsurf capability missing -> exit 0 with degradation warning.
 out=$(FAKE_TEAMS=403 run_doctor); rc=$?

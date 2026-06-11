@@ -2,11 +2,11 @@
 # dag doctor — probe both API keys and report which capabilities they hold.
 # Deterministic and local: no agent launch, no token cost. Mutates nothing.
 #
-# Required — Devin API v3 cog_ key (api.devin.ai): consumption, orgs, roster,
-# metrics, plus a safe org-cap write probe (PATCH against a nonexistent org:
-# 404/422 = permission present; 403 is INCONCLUSIVE because the API masks
-# unknown orgs as 403 — verified 2026-06-10: a key whose idempotent PATCH on a
-# real org returned 200 still got 403 here. Nothing is mutated either way.)
+# Required — Devin API v3/v3beta1 cog_ key (api.devin.ai): consumption, orgs,
+# roster, metrics, ACU-limit read, plus a safe ACU-limit write probe (PATCH
+# against a nonexistent org ACU-limit resource: 404/422 = permission present;
+# 403 is INCONCLUSIVE because APIs may mask unknown orgs as 403. Nothing is
+# mutated either way.)
 # Optional — Windsurf service key (server.codeium.com): per-model/IDE analytics
 # and roster activity. Missing key or scope degrades dag but does not fail doctor.
 #
@@ -66,9 +66,9 @@ dag_doctor() {
   local cog_auth="Authorization: Bearer ${cog_key}"
 
   print -r -- "dag doctor — probing API keys"
-  print -r -- "  (the org-cap write probe targets a nonexistent org; it mutates nothing.)"
+  print -r -- "  (the ACU-limit write probe targets a nonexistent org; it mutates nothing.)"
   print -r -- ""
-  print -r -- "Devin API v3 (api.devin.ai, cog_ key) — required:"
+  print -r -- "Devin API v3/v3beta1 (api.devin.ai, cog_ key) — required:"
 
   # ManageBilling — consumption cycles.
   code=$(_dag_http GET "${v3base}/v3/enterprise/consumption/cycles" "" "$cog_auth")
@@ -80,15 +80,20 @@ dag_doctor() {
   verdict=$(_dag_classify "$code" 200)
   _dag_line "Org Read         " "$code" "$verdict" || (( fails++ ))
 
-  # Org-cap write — PATCH a nonexistent org: 404/422 = authz passed. 403 is
-  # inconclusive (the API masks unknown orgs as 403), so it warns, not fails.
-  code=$(_dag_http PATCH "${v3base}/v3/enterprise/organizations/org-dag-doctor-probe" "{}" "$cog_auth")
+  # ACU-limit read — default user limit is a cheap read and proves ViewAccountConsumption.
+  code=$(_dag_http GET "${v3base}/v3beta1/enterprise/users/consumption/acu-limits" "" "$cog_auth")
+  verdict=$(_dag_classify "$code" 200)
+  _dag_line "ACU Limit Read   " "$code" "$verdict" || (( fails++ ))
+
+  # ACU-limit write — PATCH a nonexistent org ACU-limit resource: 404/422 = authz passed.
+  # 403 is inconclusive (API may mask unknown orgs), so it warns, not fails.
+  code=$(_dag_http PATCH "${v3base}/v3beta1/enterprise/organizations/org-dag-doctor-probe/consumption/acu-limits" '{"local_agent":{"cycle_acu_limit":1}}' "$cog_auth")
   verdict=$(_dag_classify "$code" 404 422)
   if [[ "$verdict" == missing ]]; then
-    print -r -- "  Org-cap Write      [${code}]  ⚠️  inconclusive — API masks unknown orgs as 403; verified only at write time"
+    print -r -- "  ACU Limit Write    [${code}]  ⚠️  inconclusive — API may mask unknown orgs as 403; verified only at write time"
     (( warns++ ))
   else
-    _dag_line "Org-cap Write    " "$code" "$verdict" || (( fails++ ))
+    _dag_line "ACU Limit Write  " "$code" "$verdict" || (( fails++ ))
   fi
 
   # Roster — enterprise members.
@@ -142,6 +147,6 @@ dag_doctor() {
   fi
   print -r -- "❌ ${fails} required capability(ies) missing or uncertain."
   print -r -- "   Recreate the cog_ key at app.devin.ai > Settings > Service users (enterprise-scoped)"
-  print -r -- "   with permissions: ManageBilling, ViewOrgSessions, ViewAccountMetrics, ManageOrganizations."
+  print -r -- "   with permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
   return 3
 }

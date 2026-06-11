@@ -29,7 +29,11 @@ dag_usage() {
 dag — Devin Enterprise ACU governor
 
 Usage:
-  dag set-limits              Distribute the monthly ACU pool as per-user soft caps (ledger)
+  dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
+  dag set limit global <acus> [org_id|org_name]
+                              Set one org-level Local Agent limit, then live-GET verify it
+  dag set-limit global <acus> [org_id|org_name]
+                              Alias for: dag set limit global
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dag user <email>            Deep-dive one user's consumption and model usage (read-only)
@@ -49,7 +53,7 @@ Config (environment.env; shell env vars override):
 
 Keys, one-time setup:
   Required — Devin API v3 service-user key (app.devin.ai > Settings > Service users,
-  enterprise-scoped, permissions ManageBilling + ViewOrgSessions + ViewAccountMetrics):
+  enterprise-scoped, permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions + ViewAccountMetrics):
     security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_...'
     Fallback: export DEVIN_COG_KEY=cog_...
   Optional — Windsurf service key (windsurf.com/team/settings; Analytics Read +
@@ -111,6 +115,33 @@ main() {
       dag_dashboard "$@"
       exit $?
       ;;
+    set)
+      if [[ "${1:-}" == "limit" && "${2:-}" == "global" ]]; then
+        shift 2
+        source "${daemon_dir}/lib/local-agent-limits.zsh"
+        dag_set_limit_global "$@"
+        exit $?
+      fi
+      print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name])"
+      dag_usage >&2
+      exit 2
+      ;;
+    set-limit)
+      if [[ "${1:-}" == "global" ]]; then
+        shift
+        source "${daemon_dir}/lib/local-agent-limits.zsh"
+        dag_set_limit_global "$@"
+        exit $?
+      fi
+      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global <acus> [org_id|org_name])"
+      dag_usage >&2
+      exit 2
+      ;;
+    set-limit-global)
+      source "${daemon_dir}/lib/local-agent-limits.zsh"
+      dag_set_limit_global "$@"
+      exit $?
+      ;;
     set-limits|status) ;;
     boost)
       local email="${1:-}" amount="${2:-}"
@@ -157,7 +188,7 @@ main() {
   if ! cog_key=$(dag_resolve_cog_key); then
     print -ru2 -- "dag: no Devin API v3 service-user key (cog_...) found."
     print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
-    print -ru2 -- "  permissions: ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+    print -ru2 -- "  permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
     print -ru2 -- "  Keychain: security add-generic-password -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
     print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
     exit 1
