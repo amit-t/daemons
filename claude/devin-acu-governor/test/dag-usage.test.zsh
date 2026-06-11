@@ -32,9 +32,15 @@ done
 body='{}' code=404
 case "$url" in
   *consumption/cycles*)
-    body='{"items":[{"after":0,"before":2000}]}'; code=200 ;;
+    body='{"items":[{"after":0,"before":500000}]}'; code=200 ;;
   *users/consumption/acu-limits*)              # default per-user cap
     body='{"local_agent":{"cycle_acu_limit":300}}'; code=200 ;;
+  *members/idp-users*)
+    body='{"items":[
+      {"user_id":"u1","email":"a@x.io","name":"A","idp_role_assignments":[{"idp_group_name":"Core Eng","org_id":"org-alpha","role":{"role_name":"Engineer"}}]},
+      {"user_id":"okta|u3","email":"c@x.io","name":"C","idp_role_assignments":[{"idp_group_name":"Core Eng","org_id":"org-beta","role":{"role_name":"Engineer"}}]},
+      {"user_id":"u2","email":"b@x.io","name":"B","idp_role_assignments":[{"idp_group_name":"Other Eng","org_id":"org-gamma","role":{"role_name":"Engineer"}}]}
+    ],"has_next_page":false,"total":3}'; code=200 ;;
   *members/users*)
     if [[ "$url" == *after=CUR1* ]]; then
       body='{"items":[{"user_id":"u2","email":"b@x.io","name":"B"}],"has_next_page":false}'; code=200
@@ -43,9 +49,9 @@ case "$url" in
     fi ;;
   *consumption/daily/users/*)
     case "$url" in
-      *daily/users/u1*)          body='{"total_acus":350}'; code=200 ;;
-      *daily/users/okta%7Cu3*)   body='{"total_acus":50}';  code=200 ;;
-      *daily/users/u2*)          body='{"total_acus":120}'; code=200 ;;
+      *daily/users/u1*)          body='{"total_acus":350,"consumption_by_date":[{"date":0,"acus":200,"acus_by_product":{"devin":100,"cascade":50,"terminal":30,"review":20}},{"date":172800,"acus":60,"acus_by_product":{"devin":20,"cascade":20,"terminal":10,"review":10}},{"date":259200,"acus":90,"acus_by_product":{"devin":50,"cascade":20,"terminal":10,"review":10}}]}'; code=200 ;;
+      *daily/users/okta%7Cu3*)   body='{"total_acus":50,"consumption_by_date":[{"date":0,"acus":20,"acus_by_product":{"devin":5,"cascade":5,"terminal":5,"review":5}},{"date":259200,"acus":30,"acus_by_product":{"devin":10,"cascade":10,"terminal":5,"review":5}}]}';  code=200 ;;
+      *daily/users/u2*)          body='{"total_acus":120,"consumption_by_date":[{"date":259200,"acus":120,"acus_by_product":{"devin":100,"cascade":10,"terminal":5,"review":5}}]}'; code=200 ;;
       *)                         body='{"total_acus":0}';   code=200 ;;
     esac ;;
   *enterprise/users/*/consumption/acu-limits*) # per-user override
@@ -61,7 +67,7 @@ chmod +x "${tmpdir}/bin/curl"
 writes="${tmpdir}/writes.log"; : > "$writes"
 run_usage() {
   PATH="${tmpdir}/bin:$PATH" DAG_TEST_WRITES="$writes" \
-    DEVIN_COG_KEY=test-cog-key DAG_NOW_EPOCH=1000 \
+    DEVIN_COG_KEY=test-cog-key DAG_NOW_EPOCH=345600 \
     zsh "$dag" usage "$@"
 }
 
@@ -112,6 +118,41 @@ out=$(run_usage --top abc 2>&1); rc=$?; assert_exit "usage --top non-int" 2 $rc
 out=$(run_usage --bogus 2>&1); rc=$?; assert_exit "usage bad flag" 2 $rc
 assert_contains "usage bad flag msg" "$out" "unknown flag"
 
+# 6b. IDP group mode prompts when no group is supplied, then filters to that group
+# and adds detailed current-cycle + last-3-days status columns.
+out=$(print -r -- "Core Eng" | run_usage --group 2>/dev/null); rc=$?
+assert_exit "usage --group prompt rc" 0 $rc
+assert_contains "usage --group title" "$out" "IDP group: Core Eng"
+assert_contains "usage --group last3 header" "$out" "LAST3"
+assert_contains "usage --group a" "$out" "a@x.io"
+assert_contains "usage --group c" "$out" "c@x.io"
+if [[ "$out" == *b@x.io* ]]; then _fail "usage --group should exclude b@x.io"; else _ok; fi
+assert_contains "usage --group a last3" "$out" "150"
+assert_contains "usage --group totals" "$out" "Group totals: 2 users"
+assert_contains "usage --group product mix" "$out" "last3 product mix"
+
+# 6c. IDP group mode accepts unquoted multi-word names before later flags.
+js=$(run_usage --group Core Eng --json 2>/dev/null); rc=$?
+assert_exit "usage --group json rc" 0 $rc
+assert_eq "usage --group json name" "Core Eng" "$(jq -r '.group.name' <<<"$js")"
+assert_eq "usage --group json row count" 2 "$(jq '.rows|length' <<<"$js")"
+assert_eq "usage --group json total last3" "180" "$(jq -r '.totals.last3_acus' <<<"$js")"
+assert_eq "usage --group json a last3" "150" "$(jq -r '.rows[]|select(.email=="a@x.io").last3_acus' <<<"$js")"
+
+# 6d. Alternate compact command spelling is accepted.
+out=$(PATH="${tmpdir}/bin:$PATH" DAG_TEST_WRITES="$writes" \
+  DEVIN_COG_KEY=test-cog-key DAG_NOW_EPOCH=345600 zsh "$dag" usage--group Core Eng 2>/dev/null); rc=$?
+assert_exit "usage--group alias rc" 0 $rc
+assert_contains "usage--group alias title" "$out" "IDP group: Core Eng"
+nwrites=$(wc -l < "$writes" | tr -d ' ')
+assert_eq "usage --group no write verbs" 0 "$nwrites"
+
+# 6e. Missing group fails with known group guidance.
+out=$(run_usage --group Missing Group 2>&1); rc=$?
+assert_exit "usage --group missing rc" 1 $rc
+assert_contains "usage --group missing msg" "$out" "no users found for IDP group 'Missing Group'"
+assert_contains "usage --group missing candidates" "$out" "Core Eng"
+
 # 7. Missing cog key -> exit 1 with setup hint.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DAG_NOW_EPOCH=1000 zsh "$dag" usage 2>&1); rc=$?
 assert_exit "usage no key rc" 1 $rc
@@ -120,5 +161,6 @@ assert_contains "usage no key hint" "$out" "devin-cog-key"
 # 8. help text advertises the command.
 out=$(PATH="${tmpdir}/bin:$PATH" zsh "$dag" help 2>&1)
 assert_contains "help lists usage" "$out" "dag usage"
+assert_contains "help lists usage group" "$out" "dag usage --group"
 
 report

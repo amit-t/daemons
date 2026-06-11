@@ -22,6 +22,8 @@ assert_exit "noargs rc" 2 $rc
 assert_contains "noargs usage" "$out" "Usage:"
 assert_contains "usage global command" "$out" "dag set limit global <acus>"
 assert_contains "usage all commands" "$out" "dag all commands [task...]"
+assert_contains "usage group command" "$out" "dag usage --group"
+assert_contains "status group command" "$out" "dag status --group"
 
 # 2. help -> exit 0.
 out=$(run_dag help 2>&1); rc=$?
@@ -51,6 +53,20 @@ assert_contains "local agent user api" "$out" "/v3beta1/enterprise/users/{user_i
 assert_contains "set-limits live verify" "$out" "GET each changed user limit after PATCH"
 assert_contains "set-limits ui instructions" "$out" "Enterprise Settings > Consumption"
 
+# 5b. set-limits-new prompt assembly: own playbook + borrow_caps.jq path in context.
+out=$(run_dag set-limits-new); rc=$?
+assert_exit "setlimitsnew rc" 0 $rc
+assert_contains "set-limits-new playbook" "$out" "# Playbook: set-limits-new"
+assert_contains "set-limits-new command" "$out" "command: set-limits-new"
+assert_contains "set-limits-new borrow jq" "$out" "borrow-caps.jq"
+assert_contains "set-limits-new borrow wording" "$out" "Borrowing"
+assert_contains "set-limits-new user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "set-limits-new live verify" "$out" "GET each changed user limit after PATCH"
+assert_contains "set-limits-new zero sum" "$out" "zero-sum"
+# usage help lists the new mode.
+out=$(run_dag 2>&1)
+assert_contains "usage lists set-limits-new" "$out" "dag set-limits-new"
+
 # 6. boost prompt carries args.
 out=$(run_dag boost alice@corp.com 50)
 assert_contains "boost playbook" "$out" "# Playbook: boost"
@@ -72,6 +88,18 @@ assert_contains "user email" "$out" "user: bob@corp.com"
 # 7. Env override: pool from environment wins over environment.env.
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DAG_MONTHLY_ACU_POOL=9999 zsh "$dag" status 2>/dev/null)
 assert_contains "env override" "$out" "DAG_MONTHLY_ACU_POOL: 9999"
+
+# 7b. status --group prompts when no group is supplied, then seeds a scoped agent prompt.
+out=$(print -r -- "Core Eng" | run_dag status --group 2>&1); rc=$?
+assert_exit "status --group prompt rc" 0 $rc
+assert_contains "status --group playbook" "$out" "# Playbook: status"
+assert_contains "status --group command" "$out" "requested shell command: dag status --group"
+assert_contains "status --group name" "$out" "idp group name: Core Eng"
+assert_contains "status --group last3" "$out" "last 3 days"
+
+out=$(run_dag status--group Core Eng); rc=$?
+assert_exit "status--group alias rc" 0 $rc
+assert_contains "status--group alias name" "$out" "idp group name: Core Eng"
 
 # 8. all commands prompt seeds all-docs mode, existing DAG command context, and the spin-up contract.
 out=$(run_dag all commands "design a weekly session spend audit"); rc=$?

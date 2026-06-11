@@ -42,11 +42,50 @@ _dag_usage_fetch() {
 # jq @uri-encode a single string (user_id can contain '|', cursors can carry reserved chars).
 _dag_uri() { jq -rn --arg s "$1" '$s|@uri'; }
 
+_dag_usage_prompt_group() {
+  local label=$1 group
+  if [[ -t 0 ]]; then
+    print -rn -- "${label}: IDP group name: " >&2
+    IFS= read -r group
+  else
+    IFS= read -r group || group=""
+  fi
+  if [[ -z "$(print -r -- "$group" | tr -d '[:space:]')" ]]; then
+    print -ru2 -- "${label}: IDP group name is required"
+    return 2
+  fi
+  print -r -- "$group"
+}
+
 dag_usage_report() {
-  local json_only=0 top=0
+  local json_only=0 top=0 group_mode=0 group_name=""
   while (( $# )); do
     case "$1" in
       --json) json_only=1 ;;
+      --group=*)
+        group_mode=1
+        group_name="${1#--group=}"
+        if [[ -z "$(print -r -- "$group_name" | tr -d '[:space:]')" ]]; then
+          print -ru2 -- "dag usage: --group requires an IDP group name"
+          return 2
+        fi
+        ;;
+      --group)
+        group_mode=1
+        shift
+        local -a group_parts
+        group_parts=()
+        while (( $# )) && [[ "$1" != --* ]]; do
+          group_parts+=("$1")
+          shift
+        done
+        if (( ${#group_parts} > 0 )); then
+          group_name="${(j: :)group_parts}"
+        else
+          group_name=$(_dag_usage_prompt_group "dag usage") || return $?
+        fi
+        continue
+        ;;
       --top)
         shift
         if [[ -z "${1:-}" || "$1" != <1-> ]]; then
@@ -56,7 +95,7 @@ dag_usage_report() {
         top=$1
         ;;
       *)
-        print -ru2 -- "dag usage: unknown flag '$1' (expected --json, --top <n>)"
+        print -ru2 -- "dag usage: unknown flag '$1' (expected --json, --top <n>, --group [idp-group-name])"
         return 2
         ;;
     esac
@@ -99,35 +138,75 @@ dag_usage_report() {
     defbody=$(_dag_usage_fetch "${base}/v3beta1/enterprise/users/consumption/acu-limits" "$hdr" 1) || return 1
     default_cap=$(jq -c '.local_agent.cycle_acu_limit // null' <<<"$defbody")
 
-    # 3. Roster (cursor pagination).
+    # 3. Roster (cursor pagination). In --group mode, the roster comes from the
+    # enterprise IDP membership endpoint and is filtered by exact IDP group name.
     local roster="${work}/roster.ndjson"
     : > "$roster"
     local cursor="" url page enc
-    while :; do
-      url="${base}/v3/enterprise/members/users?limit=100"
-      if [[ -n "$cursor" ]]; then
-        enc=$(_dag_uri "$cursor")
-        url+="&after=${enc}"
-      fi
-      page=$(_dag_usage_fetch "$url" "$hdr") || return 1
-      jq -c '.items[]? | {user_id, email, name}' <<<"$page" >> "$roster"
-      [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
-      cursor=$(jq -r '.end_cursor // empty' <<<"$page")
-      [[ -n "$cursor" ]] || break
-    done
+    if (( group_mode )); then
+      local idp_all="${work}/idp-users.ndjson"
+      : > "$idp_all"
+      while :; do
+        url="${base}/v3/enterprise/members/idp-users?first=200"
+        if [[ -n "$cursor" ]]; then
+          enc=$(_dag_uri "$cursor")
+          url+="&after=${enc}"
+        fi
+        page=$(_dag_usage_fetch "$url" "$hdr") || return 1
+        jq -c '.items[]?' <<<"$page" >> "$idp_all"
+        jq -c --arg group "$group_name" '
+          .items[]?
+          | select([.idp_role_assignments[]?.idp_group_name] | index($group))
+          | {
+              user_id, email, name,
+              idp_orgs: ([.idp_role_assignments[]? | select(.idp_group_name == $group) | .org_id] | unique),
+              idp_roles: ([.idp_role_assignments[]? | select(.idp_group_name == $group) | .role.role_name] | unique)
+            }' <<<"$page" >> "$roster"
+        [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
+        cursor=$(jq -r '.end_cursor // empty' <<<"$page")
+        [[ -n "$cursor" ]] || break
+      done
+    else
+      while :; do
+        url="${base}/v3/enterprise/members/users?limit=100"
+        if [[ -n "$cursor" ]]; then
+          enc=$(_dag_uri "$cursor")
+          url+="&after=${enc}"
+        fi
+        page=$(_dag_usage_fetch "$url" "$hdr") || return 1
+        jq -c '.items[]? | {user_id, email, name}' <<<"$page" >> "$roster"
+        [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
+        cursor=$(jq -r '.end_cursor // empty' <<<"$page")
+        [[ -n "$cursor" ]] || break
+      done
+    fi
 
     local n_users
     n_users=$(wc -l < "$roster" | tr -d ' ')
     if [[ "$n_users" == 0 ]]; then
-      print -ru2 -- "dag usage: roster is empty"
+      if (( group_mode )); then
+        local known
+        known=$(jq -rs 'map(.idp_role_assignments[]?.idp_group_name) | unique | .[:20] | join(", ")' "$idp_all")
+        [[ -n "$known" ]] || known="<none visible>"
+        print -ru2 -- "dag usage: no users found for IDP group '${group_name}'"
+        print -ru2 -- "dag usage: known IDP groups: ${known}"
+      else
+        print -ru2 -- "dag usage: roster is empty"
+      fi
       return 1
     fi
-    print -ru2 -- "dag usage: fetching consumption + cap for ${n_users} user(s)..."
+    if (( group_mode )); then
+      print -ru2 -- "dag usage: fetching consumption + cap for ${n_users} user(s) in IDP group '${group_name}'..."
+    else
+      print -ru2 -- "dag usage: fetching consumption + cap for ${n_users} user(s)..."
+    fi
 
     # 4. Per-user current-cycle consumption + explicit override.
     local users="${work}/users.ndjson"
     : > "$users"
     local line uid email name encid cbody obody consumed override i=0
+    local last3_after=$(( now - (3 * 86400) ))
+    local last3_acus last3_by_product idp_orgs idp_roles
     while IFS= read -r line; do
       uid=$(jq -r '.user_id' <<<"$line")
       email=$(jq -r '.email // ""' <<<"$line")
@@ -146,10 +225,33 @@ dag_usage_report() {
         "$hdr" 1) || { print -ru2 -- ""; return 1; }
       override=$(jq -c '.local_agent.cycle_acu_limit // null' <<<"$obody")
 
-      jq -nc --arg email "$email" --arg user_id "$uid" --arg name "$name" \
-        --argjson consumed "$consumed" --argjson override "$override" \
-        '{email:$email, user_id:$user_id, name:$name, consumed:$consumed, override:$override}' \
-        >> "$users"
+      if (( group_mode )); then
+        last3_acus=$(jq -c --argjson cutoff "$last3_after" \
+          '[.consumption_by_date[]? | select((.date // 0) >= $cutoff) | (.acus // 0)] | add // 0' \
+          <<<"$cbody")
+        last3_by_product=$(jq -c --argjson cutoff "$last3_after" '
+          reduce (.consumption_by_date[]? | select((.date // 0) >= $cutoff)) as $d
+          ({devin:0, cascade:0, terminal:0, review:0};
+            .devin += ($d.acus_by_product.devin // 0)
+            | .cascade += ($d.acus_by_product.cascade // 0)
+            | .terminal += ($d.acus_by_product.terminal // 0)
+            | .review += ($d.acus_by_product.review // 0))' <<<"$cbody")
+        idp_orgs=$(jq -c '.idp_orgs // []' <<<"$line")
+        idp_roles=$(jq -c '.idp_roles // []' <<<"$line")
+        jq -nc --arg email "$email" --arg user_id "$uid" --arg name "$name" \
+          --argjson consumed "$consumed" --argjson override "$override" \
+          --argjson last3_acus "$last3_acus" --argjson last3_by_product "$last3_by_product" \
+          --argjson idp_orgs "$idp_orgs" --argjson idp_roles "$idp_roles" \
+          '{email:$email, user_id:$user_id, name:$name, consumed:$consumed, override:$override,
+            last3_acus:$last3_acus, last3_by_product:$last3_by_product,
+            idp_orgs:$idp_orgs, idp_roles:$idp_roles}' \
+          >> "$users"
+      else
+        jq -nc --arg email "$email" --arg user_id "$uid" --arg name "$name" \
+          --argjson consumed "$consumed" --argjson override "$override" \
+          '{email:$email, user_id:$user_id, name:$name, consumed:$consumed, override:$override}' \
+          >> "$users"
+      fi
     done < "$roster"
     print -ru2 -- ""
 
@@ -169,6 +271,10 @@ dag_usage_report() {
         print -ru2 -- "dag usage: failed to compute usage table (lib/usage.jq)"
         return 1
       }
+    if (( group_mode )); then
+      data=$(jq --arg group "$group_name" --argjson last3_after "$last3_after" \
+        '. + {group:{name:$group, last3_days:3, last3_after:$last3_after}}' <<<"$data")
+    fi
 
     if (( json_only )); then
       print -r -- "$data"
@@ -179,6 +285,50 @@ dag_usage_report() {
     local after_d before_d
     after_d=$(date -r "$after" +%F)
     before_d=$(date -r "$before" +%F)
+    if (( group_mode )); then
+      local last3_after_d now_d
+      last3_after_d=$(date -r "$last3_after" +%F)
+      now_d=$(date -r "$now" +%F)
+      print -r -- "dag usage --group — IDP group: ${group_name}"
+      print -r -- "  cycle: ${after_d} → ${before_d}   last3: ${last3_after_d} → ${now_d}   pool: ${pool} ACUs   generated: ${generated_at}"
+      local defshow
+      defshow=$(jq -r 'if .default_cap == null then "<unset>" else (.default_cap|tostring) end' <<<"$data")
+      print -r -- "  default per-user Local Agent cap: ${defshow}"
+      print -r -- ""
+
+      local rows
+      rows=$(jq -r '
+        def r1($x): (($x*10)|round)/10;
+        (["EMAIL","CYCLE","LAST3","3D/DAY","DEVIN","CASCADE","TERMINAL","REVIEW","CAP","USED%","STATE","ROLES"]),
+        (.rows | sort_by((.last3_acus // 0), .sort_key) | reverse | .[] | [
+          .email,
+          (r1(.consumed)|tostring),
+          (r1(.last3_acus // 0)|tostring),
+          (r1(.last3_avg_per_day // 0)|tostring),
+          (r1(.last3_by_product.devin // 0)|tostring),
+          (r1(.last3_by_product.cascade // 0)|tostring),
+          (r1(.last3_by_product.terminal // 0)|tostring),
+          (r1(.last3_by_product.review // 0)|tostring),
+          (if .cap == null then "∞" else (.cap|tostring) end),
+          (if .ratio == null then "—" else (r1(.ratio*100)|tostring) end),
+          .state,
+          ((.idp_roles // []) | join(","))
+        ]) | @tsv' <<<"$data")
+      if (( top > 0 )); then
+        rows=$(print -r -- "$rows" | head -n $(( top + 1 )))
+      fi
+      print -r -- "$rows" | column -t -s $'\t'
+      print -r -- ""
+
+      jq -r '.totals |
+        "Group totals: \(.users) users  cycle \((.total_consumed*10|round)/10)  last3 \((.last3_acus*10|round)/10)  sum_caps \(.sum_caps)  " +
+        "OVER \(.n_over)  NEAR \(.n_near)  UNLIMITED \(.n_unlimited)  BLOCKED \(.n_blocked)"' <<<"$data"
+      jq -r '.totals.last3_by_product |
+        "last3 product mix: devin \((.devin*10|round)/10)  cascade \((.cascade*10|round)/10)  terminal \((.terminal*10|round)/10)  review \((.review*10|round)/10)"' <<<"$data"
+      print -r -- "UI: app.devin.ai > Enterprise Settings > Consumption shows current-cycle Local Agent usage by product/user; Local Agent limits are API-managed."
+      return 0
+    fi
+
     print -r -- "dag usage — per-user consumed vs Local Agent cap"
     print -r -- "  cycle: ${after_d} → ${before_d}   pool: ${pool} ACUs   generated: ${generated_at}"
     local defshow

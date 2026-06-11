@@ -4,7 +4,7 @@
 
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
-- `doctor`, `dashboard`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
+- `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
 - `all commands` launches a broad Claude-agent lab seeded with the Devin docs index, the pinned ACU/UsageConfig docs, and every current DAG playbook so ad hoc tasks can graduate into exact `dag ...` commands. It can open without a Devin key for docs/design work, but live API calls require `DEVIN_COG_KEY`.
 
 Current ACU-limit contract comes from Devin docs: <https://docs.devin.ai/admin/billing/acu-limits>. Generic DAG sessions also seed from the full docs index at <https://docs.devin.ai/llms.txt> and the Windsurf/Devin Desktop UsageConfig reference at <https://docs.devin.ai/desktop/accounts/api-reference/usage-config#overview>.
@@ -32,17 +32,23 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | Command | Mutates | Purpose |
 |---|---:|---|
 | `dag set-limits` | ✅ user limits + ledger | Discover engineers/user IDs, compute remaining-pool prorated caps, PATCH every user's Local Agent override, live-GET verify each write |
+| `dag set-limits-new` | ✅ user limits + ledger | Cap only users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming capped users; PATCH recipients + donors; live-GET verify; Σ caps unchanged |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
 | `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
+| `dag usage --group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Local exact-IDP-group report; prompts when name is omitted; adds last-3-days per-user usage/product/status detail |
+| `dag usage--group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Alias for `dag usage --group` |
 | `dag status` | ❌ read-only | Enterprise burn, projection, org Local Agent caps, default user limit, top users/models |
+| `dag status --group [idp_group_name]` | ❌ read-only | Agent status report scoped to one exact IDP group; prompts when name is omitted; emphasizes last-3-days user patterns |
+| `dag status--group [idp_group_name]` | ❌ read-only | Alias-style compact spelling for `dag status --group` |
 | `dag models [file\|names…]` | ❌ report | Per-model burn + Admin Portal allowlist walkthrough |
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
 | `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
 | `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
 | `dag dashboard` | ❌ read-only | Local burn-rate + forecast dashboard with org and user consumed-vs-cap ACUs; no agent, no writes; optional `--refresh` auto-regeneration |
+| `dag setup-extract` | ❌ local secret output | Print pasteable target-machine `security add-generic-password` commands containing the currently configured DAG keys |
 | `dag help` | ❌ | Usage text |
 
 Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, and waits for explicit confirmation. The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
@@ -71,6 +77,34 @@ Proration math: `cap_i = floor(consumed_i) + floor((pool − total_consumed) / N
 
 ```zsh
 dag set-limits
+```
+
+## `dag set-limits-new` — Seed caps for the uncapped, by Borrowing
+
+Goal: give an enforceable Local Agent cap to engineers who currently have **no explicit override** (they ride the inherited org/default limit) — e.g. newly-added hires — **without** disturbing existing capped users beyond a zero-sum Borrow. Total Σ explicit caps is unchanged, so the team never tips into overage. Use this instead of `dag set-limits` when you only want to onboard the uncapped, not re-prorate everyone.
+
+Roles:
+- **Recipients** = users whose live `local_agent.cycle_acu_limit` is **unset**. They get new caps.
+- **Donors** = users whose cap **is** set, ranked lowest consumer first. They lend cap headroom. Recipients are never donors; no donor is cut below its consumed ACUs + 10% buffer.
+
+Flow:
+1. GET current cycle, roster, and per-user consumption (Windsurf one-shot or `daily/users/{user_id}` loop).
+2. GET every user's live override and partition into recipients (unset) vs donors (set).
+3. Confirm the recipient set (drop service accounts / non-engineers). If none, report "all users already capped" and stop.
+4. Run `lib/borrow-caps.jq` on `{donor_buffer, recipients:[{user_id,email,consumed}], donors:[{user_id,email,cap,consumed}]}`.
+5. Preview the recipient caps and donor Borrow table; the output proves `sum_before == sum_after` (`zero_sum: true`).
+6. On confirmation, PATCH every recipient and tapped donor via `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`; GET each to verify.
+7. Update the ledger; report newly-capped users, donors + given, and any left uncapped.
+
+Borrow math (`lib/borrow-caps.jq`), zero-sum in every mode:
+- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + share`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Remaining budget is prorated evenly.
+- `min_cover` — headroom covers consumption only: `cap_i = ceil(consumed_i)`, no growth headroom (warns).
+- `partial` — headroom too thin: fund the cheapest recipients first, leave the rest uncapped (listed), never create overage.
+
+No recipient is ever capped below its own current consumption. The borrow draws from the lowest consumers first.
+
+```zsh
+dag set-limits-new
 ```
 
 ## `dag set limit global <acus> [org_id|org_name]`
@@ -158,6 +192,27 @@ dag usage --json          # structured rows + totals (no table), for piping to j
 
 Columns: `EMAIL  CONSUMED  CAP  USED%  SOURCE  STATE`, then a totals line (`sum_caps`, `OVER/NEAR/UNLIMITED/BLOCKED` counts) and the Enterprise Settings UI instruction. No Windsurf key needed — Devin v3 per-user consumption covers it.
 
+### `dag usage --group`
+
+Local, deterministic, read-only. Filters the report to users whose enterprise membership includes an exact IDP group assignment. `--group` prompts for the group name when omitted; group names with spaces can be passed either quoted or as bare words before later flags.
+
+Flow:
+1. Resolve the `cog_` key.
+2. GET current cycle and the default per-user Local Agent cap, same as `dag usage`.
+3. GET `/v3/enterprise/members/idp-users` with cursor pagination, then keep only rows whose `idp_role_assignments[].idp_group_name` exactly matches the requested group.
+4. Per matching user: GET current-cycle `/v3/enterprise/consumption/daily/users/{user_id}` and explicit `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
+5. Compute effective cap, current-cycle consumed ACUs, cap state, last-3-days ACUs, last-3-days average/day, and last-3-days product mix (`devin`, `cascade`, `terminal`, `review`).
+6. Sort the visible table by last-3-days burn, then pressure.
+
+```zsh
+dag usage --group                       # prompt: IDP group name
+dag usage --group "Platform Eng"        # exact IDP group match
+dag usage --group Platform Eng --json   # unquoted multi-word group before later flags
+dag usage--group "Platform Eng" --top 5 # compact spelling
+```
+
+Columns: `EMAIL  CYCLE  LAST3  3D/DAY  DEVIN  CASCADE  TERMINAL  REVIEW  CAP  USED%  STATE  ROLES`, then group totals and last-3-days product mix. If no users match, the command exits 1 and prints visible IDP group names as guidance.
+
 ## `dag status`
 
 Read-only. Reports:
@@ -171,7 +226,12 @@ Read-only. Reports:
 
 ```zsh
 dag status
+dag status --group              # prompt: IDP group name, then launch scoped status playbook
+dag status --group "Core Eng"   # scoped exact-IDP-group status
+dag status--group Core Eng      # compact spelling
 ```
+
+`dag status --group` keeps `dag status` agent-driven, but seeds the playbook with the exact IDP group name and a GET-only scope. The agent must resolve membership through `/v3/enterprise/members/idp-users`, then report only those users with current-cycle usage/status and a detailed last-3-days pattern. It does not write.
 
 ## `dag models [file | names…]`
 
@@ -189,7 +249,7 @@ Model enable/disable is still Admin Portal UI work unless Devin ships an API. Th
 
 Generic Devin API/DAG command lab. It launches a Claude-agent session with:
 - the common `dag` API contract and write-safety rules;
-- the complete current DAG playbooks (`set-limits`, `boost`, `user`, `status`, `models`);
+- the complete current DAG playbooks (`set-limits`, `set-limits-new`, `boost`, `user`, `status`, `models`);
 - startup instructions to fetch `https://docs.devin.ai/llms.txt` before making API claims;
 - pinned documentation seeds for ACU limits, API overview/auth/pagination, and UsageConfig;
 - a "spin it up" contract for promoting useful ad hoc work into either an exact existing `dag ...` command or a ready-to-implement new command spec.
@@ -214,6 +274,7 @@ Required `cog_` probes:
 - ACU Limit Read: `GET /v3beta1/enterprise/users/consumption/acu-limits`
 - ACU Limit Write: PATCH nonexistent org ACU-limit resource; `404/422` proves authz, `403` is inconclusive and verified at real write time
 - Roster Read: `GET /v3/enterprise/members/users?limit=1`
+- IDP Group Read: `GET /v3/enterprise/members/idp-users?first=1`
 - Metrics Read: `GET /v3/enterprise/metrics/usage`
 
 Optional Windsurf probes:
@@ -259,7 +320,8 @@ Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.
    - **ViewAccountConsumption** — read ACU-limit settings;
    - **ManageBilling** — update/delete ACU-limit settings;
    - **ViewOrgSessions** — consumption/session context;
-   - **ViewAccountMetrics** — metrics probe.
+   - **ViewAccountMetrics** — metrics probe;
+   - **ViewAccountMembership** — IDP group membership for `usage --group` and `status --group`.
 3. Store the key:
 
 ```zsh
@@ -267,6 +329,24 @@ security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_…'
 ```
 
 Fallback: `export DEVIN_COG_KEY=cog_…`. Keychain wins when both exist.
+
+### Migrating keys to another Mac
+
+`dag setup-extract` prints pasteable zsh commands that set both DAG keychain items on a target machine. It intentionally prints live secrets to stdout; run only in a trusted terminal and paste directly into the other Mac.
+
+```zsh
+dag setup-extract
+```
+
+Output shape:
+
+```zsh
+security add-generic-password -U -s devin-cog-key -a "$USER" -w '...'
+security add-generic-password -U -s devin-service-key -a "$USER" -w '...'
+# Verify after installing dag on target: dag doctor
+```
+
+If either source key is missing, the command exits non-zero and prints no setup commands.
 
 ### Optional: Windsurf service key
 
@@ -341,8 +421,9 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
+| `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,boost,user,status,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,boost,user,status,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
@@ -365,7 +446,7 @@ DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, cap math, Boost/Borrow math, CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio/group math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 
@@ -374,6 +455,7 @@ Test coverage spans key resolution, cap math, Boost/Borrow math, CLI prompt asse
 | `dag: no Devin API v3 service-user key` | Store `cog_…` in Keychain or `DEVIN_COG_KEY`. |
 | `ACU Limit Read missing` in doctor | Key lacks `ViewAccountConsumption`. |
 | `ACU Limit Write missing` or real PATCH 403 | Key lacks `ManageBilling`, wrong key family, or wrong org scope. |
+| `IDP Group Read missing` in doctor | Key lacks `ViewAccountMembership`; `dag usage --group` and `dag status --group` need it. |
 | Only one org should change | Pass `org_id` or exact org name; omitting selector intentionally updates all orgs. |
 | Verification mismatch after PATCH | The API did not persist the requested limit; output quotes the GET body. Do not assume success. |
 | Windsurf analytics 429 | Rate limit is 10 req/hr/team. Retry later or skip model/IDE detail. |

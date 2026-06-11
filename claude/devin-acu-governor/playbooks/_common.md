@@ -6,7 +6,7 @@ The org is on the **Cognition platform SKU**: consumption-based ACU billing. The
 
 ## Devin API v3 (primary — required) + v3beta1 ACU limits
 
-Base URL: `https://api.devin.ai`. Auth header on every call: `Authorization: Bearer $DEVIN_COG_KEY` (enterprise-scoped service-user key, exported in this shell). Reading ACU-limit settings requires **ViewAccountConsumption**; updating or deleting settings requires **ManageBilling**.
+Base URL: `https://api.devin.ai`. Auth header on every call: `Authorization: Bearer $DEVIN_COG_KEY` (enterprise-scoped service-user key, exported in this shell). Reading ACU-limit settings requires **ViewAccountConsumption**; updating or deleting settings requires **ManageBilling**; IDP group membership reads require **ViewAccountMembership**.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -15,6 +15,7 @@ Base URL: `https://api.devin.ai`. Auth header on every call: `Authorization: Bea
 | `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | Same shape, one org. |
 | `/v3/enterprise/consumption/daily/users/{user_id}` | GET | Same shape, one user. **URL-encode `user_id`** — it can contain `|` (e.g. `email|abc...`, `okta|Org|xyz`). |
 | `/v3/enterprise/members/users?limit=<n>` | GET | Roster: `items[]` of `{user_id, email, name, role_assignments[]}`. Cursor pagination (`end_cursor`, `has_next_page`). This is the email ↔ user_id map required for per-user Local Agent limit writes. |
+| `/v3/enterprise/members/idp-users?first=<n>` | GET | IDP-derived enterprise membership: `items[]` of `{user_id, email, name, idp_role_assignments[]}` where assignments include `idp_group_name`, `role`, and `org_id`. Cursor pagination (`end_cursor`, `has_next_page`). Use this for exact-IDP-group `dag usage --group` / `dag status --group` scoping. Requires `ViewAccountMembership`. |
 | `/v3/enterprise/organizations` | GET | Organization roster: `items[]` of `{org_id, name, max_session_acu_limit, max_cycle_acu_limit}`. Use this to discover `org_id` for org-level Local Agent limits. |
 | `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` | GET/PATCH/DELETE | **Local Agent org cap + cloud-agent org cap.** PATCH body uses `{"local_agent":{"cycle_acu_limit":N}}` to set combined Devin Desktop/Windsurf JetBrains/Devin CLI usage for that billing org; `{"local_agent":null}` clears it. PATCH returns `204`; follow with GET to verify. |
 | `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH/DELETE | **Individual user Local Agent override + billing org attribution.** PATCH body uses `{"local_agent":{"cycle_acu_limit":N}}` to set an override, or include `billing_org_id` when assigning attribution. A user override replaces, not adds to, the default user limit. PATCH returns `204`; GET returns only explicit settings, not effective inherited defaults. |

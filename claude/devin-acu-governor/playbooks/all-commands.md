@@ -37,7 +37,10 @@ Before answering task-specific questions:
 Use the appended playbooks to route known tasks:
 
 - Use `dag status` for enterprise burn, projection, org/user limits, top consumers, and model burn.
+- Use `dag status --group [idp_group_name]` for an agent status report scoped to one exact IDP group, with last-3-days member usage/status patterns.
 - Use `dag user <email>` for one user's consumption, effective Local Agent limit, product/model/IDE split, and trajectory.
+- Use `dag usage [--json] [--top <n>]` for a local no-agent per-user consumed-vs-cap table.
+- Use `dag usage --group [idp_group_name] [--json] [--top <n>]` for a local no-agent exact-IDP-group usage/status table with last-3-days detail.
 - Use `dag set-limits` for prorated per-user Local Agent limit writes across confirmed engineers.
 - Use `dag boost <email> [acus]` for Boost/Borrow user cap adjustments.
 - Use `dag set limit global <acus> [org_id|org_name]` for deterministic org-level Local Agent cap writes.

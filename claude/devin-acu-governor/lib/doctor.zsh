@@ -3,7 +3,7 @@
 # Deterministic and local: no agent launch, no token cost. Mutates nothing.
 #
 # Required — Devin API v3/v3beta1 cog_ key (api.devin.ai): consumption, orgs,
-# roster, metrics, ACU-limit read, plus a safe ACU-limit write probe (PATCH
+# roster, IDP group roster, metrics, ACU-limit read, plus a safe ACU-limit write probe (PATCH
 # against a nonexistent org ACU-limit resource: 404/422 = permission present;
 # 403 is INCONCLUSIVE because APIs may mask unknown orgs as 403. Nothing is
 # mutated either way.)
@@ -101,6 +101,11 @@ dag_doctor() {
   verdict=$(_dag_classify "$code" 200)
   _dag_line "Roster Read      " "$code" "$verdict" || (( fails++ ))
 
+  # IDP group roster — needed by usage/status --group.
+  code=$(_dag_http GET "${v3base}/v3/enterprise/members/idp-users?first=1" "" "$cog_auth")
+  verdict=$(_dag_classify "$code" 200)
+  _dag_line "IDP Group Read   " "$code" "$verdict" || (( fails++ ))
+
   # ViewAccountMetrics — usage metrics.
   code=$(_dag_http GET "${v3base}/v3/enterprise/metrics/usage" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
@@ -147,6 +152,6 @@ dag_doctor() {
   fi
   print -r -- "❌ ${fails} required capability(ies) missing or uncertain."
   print -r -- "   Recreate the cog_ key at app.devin.ai > Settings > Service users (enterprise-scoped)"
-  print -r -- "   with permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+  print -r -- "   with permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics, ViewAccountMembership."
   return 3
 }
