@@ -311,6 +311,8 @@ The dashboard shows:
 
 Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.css`, `dashboard.js`. No API writes; tests assert no curl write verbs.
 
+**Transient-failure resilience.** Every GET retries gateway/overload classes — HTTP `429`, `502`, `503`, `504` (e.g. a `504 Gateway Time-out` with an HTML body), and curl transport errors — with bounded linear backoff (`DAG_FETCH_RETRIES`, default 3; `DAG_FETCH_RETRY_SLEEP` seconds × attempt, default 2). If the two per-user ACU-limit endpoints still fail transiently after retries, the dashboard **degrades instead of aborting**: a failed per-user override falls back to the default cap (`cap_source: default`), and a failed default-cap endpoint leaves uncapped users marked `uncapped`. Each degradation prints a warning to stderr. Hard errors (`4xx`/`500`) and any other endpoint remain fatal and quote the exact response body — a single flaky user-limit call no longer takes down the whole dashboard.
+
 ## One-time setup — keys
 
 ### Required: Devin API v3 service-user key (`cog_…`)
@@ -376,6 +378,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |
 | `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3/v3beta1 base URL |
 | `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL |
+| `DAG_FETCH_RETRIES` | `3` | Dashboard: retries for transient fetch failures (429/502/503/504, transport) |
+| `DAG_FETCH_RETRY_SLEEP` | `2` | Dashboard: backoff seconds × attempt between transient retries |
 
 ## Safety model
 
@@ -459,3 +463,5 @@ Test coverage spans key resolution, setup-extract command generation, cap math, 
 | Only one org should change | Pass `org_id` or exact org name; omitting selector intentionally updates all orgs. |
 | Verification mismatch after PATCH | The API did not persist the requested limit; output quotes the GET body. Do not assume success. |
 | Windsurf analytics 429 | Rate limit is 10 req/hr/team. Retry later or skip model/IDE detail. |
+| `dashboard: GET … [504] transient; retry` | Devin edge returned a gateway timeout; the fetch auto-retries. Persistent on a per-user ACU-limit endpoint degrades to the default cap (warns on stderr) rather than aborting. Raise `DAG_FETCH_RETRIES` if your gateway is slow. |
+| Dashboard exits on `504`/`502`/`503` for cycles/daily/orgs | Those reads are required; transient retries are exhausted. Re-run, or raise `DAG_FETCH_RETRIES`/`DAG_FETCH_RETRY_SLEEP`. |

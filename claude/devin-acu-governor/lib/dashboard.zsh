@@ -10,28 +10,72 @@
 # Requires: $daemon_dir set and lib/key-resolve.zsh sourced (bin/dag does both).
 # DAG_NOW_EPOCH overrides "now" for deterministic tests.
 
+# Gateway/overload HTTP classes that typically clear on retry. A 504 Gateway
+# Time-out from Devin's edge (HTML body, not JSON) is the canonical case.
+_dag_dash_is_transient_code() { [[ "$1" == (429|502|503|504) ]] }
+
+# Record whether the last fetch's final failure was transient. _dag_dash_fetch
+# almost always runs inside a $(...) command substitution, so a plain global
+# cannot reach the caller — the flag is persisted to DAG_FETCH_FLAG_FILE (set by
+# the writer) which survives the subshell. Callers read it via _last_transient.
+_dag_dash_mark_transient() {  # $1 = 0|1
+  DAG_FETCH_LAST_TRANSIENT=$1
+  [[ -n "${DAG_FETCH_FLAG_FILE:-}" ]] && print -r -- "$1" > "${DAG_FETCH_FLAG_FILE}"
+}
+_dag_dash_last_transient() {  # true iff the last fetch failed transiently
+  [[ "$(<"${DAG_FETCH_FLAG_FILE}" 2>/dev/null)" == 1 ]]
+}
+
 # $1=url $2=auth-header-file -> body on stdout; any failure quotes the exact
-# diagnostics on stderr and returns 1. The header file (not argv) carries the
-# key so it never shows in process listings; -q (first arg) ignores ~/.curlrc.
+# diagnostics on stderr and returns 1. Transient failures (curl transport error,
+# or HTTP 429/502/503/504) are retried with bounded linear backoff before giving
+# up; DAG_FETCH_RETRIES (default 3) and DAG_FETCH_RETRY_SLEEP seconds (default 2,
+# multiplied by attempt number) tune it. On the final give-up, the global
+# DAG_FETCH_LAST_TRANSIENT is set to 1 for transient classes and 0 for hard
+# errors, so callers can choose to degrade gracefully instead of aborting the
+# whole dashboard. The header file (not argv) carries the key so it never shows
+# in process listings; -q (first arg) ignores ~/.curlrc.
 _dag_dash_fetch() {
   local url=$1 hdr=$2 response code body crc
-  response=$(curl -q -sS -w $'\n%{http_code}' -H "@${hdr}" "$url" 2>"${hdr:h}/curl-err")
-  crc=$?
-  if (( crc != 0 )); then
-    print -ru2 -- "dag dashboard: GET ${url} failed: curl exit ${crc}: $(<"${hdr:h}/curl-err")"
-    return 1
-  fi
-  code=${response##*$'\n'}
-  body=${response%$'\n'*}
-  if [[ "$code" != 200 ]]; then
-    print -ru2 -- "dag dashboard: GET ${url} failed [${code}]: ${body}"
-    return 1
-  fi
-  if ! jq -e . <<<"$body" >/dev/null 2>&1; then
-    print -ru2 -- "dag dashboard: GET ${url} returned invalid JSON: ${body}"
-    return 1
-  fi
-  print -r -- "$body"
+  local retries=${DAG_FETCH_RETRIES:-3} sleep_base=${DAG_FETCH_RETRY_SLEEP:-2} attempt=0 wait
+  _dag_dash_mark_transient 0
+  while true; do
+    response=$(curl -q -sS -w $'\n%{http_code}' -H "@${hdr}" "$url" 2>"${hdr:h}/curl-err")
+    crc=$?
+    code=${response##*$'\n'}
+    body=${response%$'\n'*}
+    if (( crc != 0 )); then
+      # Transport-level failure (timeout, partial body, reset) — always transient.
+      _dag_dash_mark_transient 1
+      if (( attempt < retries )); then
+        wait=$(( sleep_base * (attempt + 1) ))
+        print -ru2 -- "dag dashboard: GET ${url} curl exit ${crc}; transient; retry $((attempt + 1))/${retries} in ${wait}s"
+        (( wait > 0 )) && sleep "$wait"
+        (( attempt++ )); continue
+      fi
+      print -ru2 -- "dag dashboard: GET ${url} failed: curl exit ${crc}: $(<"${hdr:h}/curl-err")"
+      return 1
+    fi
+    if [[ "$code" != 200 ]]; then
+      if _dag_dash_is_transient_code "$code"; then
+        _dag_dash_mark_transient 1
+        if (( attempt < retries )); then
+          wait=$(( sleep_base * (attempt + 1) ))
+          print -ru2 -- "dag dashboard: GET ${url} [${code}] transient; retry $((attempt + 1))/${retries} in ${wait}s"
+          (( wait > 0 )) && sleep "$wait"
+          (( attempt++ )); continue
+        fi
+      fi
+      print -ru2 -- "dag dashboard: GET ${url} failed [${code}]: ${body}"
+      return 1
+    fi
+    if ! jq -e . <<<"$body" >/dev/null 2>&1; then
+      print -ru2 -- "dag dashboard: GET ${url} returned invalid JSON: ${body}"
+      return 1
+    fi
+    print -r -- "$body"
+    return 0
+  done
 }
 
 _dag_dash_urlencode() {  # $1=raw string -> URL-encoded on stdout
@@ -75,11 +119,13 @@ _dag_dashboard_write_once() {  # $1=open_after $2=json_only $3=out_dir $4=refres
   local now="${DAG_NOW_EPOCH:-$(date +%s)}"
   local pool="${DAG_MONTHLY_ACU_POOL:-24000}"
 
-  local work hdr
+  local work hdr DAG_FETCH_FLAG_FILE
   work=$(mktemp -d) || return 1
   {
     # mktemp dir is 0700; the header file keeps the key out of curl's argv.
     hdr="${work}/auth-header"
+    # Subshell-surviving channel for the fetch transient flag (see _dag_dash_fetch).
+    DAG_FETCH_FLAG_FILE="${work}/fetch-transient"
     print -r -- "Authorization: Bearer ${key}" > "$hdr" || return 1
     chmod 600 "$hdr"
 
@@ -99,8 +145,15 @@ _dag_dashboard_write_once() {  # $1=open_after $2=json_only $3=out_dir $4=refres
     _dag_dash_fetch "${base}/v3/enterprise/organizations" "$hdr" \
       > "${work}/organizations.json" || return 1
     _dag_dash_fetch_members "$base" "$hdr" "${work}/members-users.json" || return 1
-    _dag_dash_fetch "${base}/v3beta1/enterprise/users/consumption/acu-limits" "$hdr" \
-      > "${work}/user-default-limit.json" || return 1
+    # Default per-user ACU cap. A persistent transient failure here must not nuke
+    # the whole dashboard: fall back to "no default" (uncapped) and warn loudly.
+    local default_limit_json
+    if ! default_limit_json=$(_dag_dash_fetch "${base}/v3beta1/enterprise/users/consumption/acu-limits" "$hdr"); then
+      _dag_dash_last_transient || return 1
+      print -ru2 -- "dag dashboard: default ACU-limit endpoint unavailable after retries; users without an explicit cap will show uncapped"
+      default_limit_json='{}'
+    fi
+    print -r -- "$default_limit_json" > "${work}/user-default-limit.json" || return 1
 
     : > "${work}/org-dailies.json"
     local oid od
@@ -119,7 +172,15 @@ _dag_dashboard_write_once() {  # $1=open_after $2=json_only $3=out_dir $4=refres
       ud=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/users/${uid_q}?time_after=${after}&time_before=${before}" "$hdr") || return 1
       jq -n --arg user_id "$uid" --argjson daily "$ud" \
         '{user_id: $user_id, daily: $daily}' >> "${work}/user-dailies.json" || return 1
-      ul=$(_dag_dash_fetch "${base}/v3beta1/enterprise/users/${uid_q}/consumption/acu-limits" "$hdr") || return 1
+      # Per-user explicit cap. Called once per user, so it is the endpoint most
+      # likely to hit a transient 504 at scale. A persistent transient failure
+      # degrades to "no explicit cap" (user falls back to the default) instead of
+      # aborting the entire dashboard for everyone else.
+      if ! ul=$(_dag_dash_fetch "${base}/v3beta1/enterprise/users/${uid_q}/consumption/acu-limits" "$hdr"); then
+        _dag_dash_last_transient || return 1
+        print -ru2 -- "dag dashboard: user ${uid} ACU-limit endpoint unavailable after retries; using default cap"
+        ul='{}'
+      fi
       jq -n --arg user_id "$uid" --argjson limits "$ul" \
         '{user_id: $user_id, limits: $limits}' >> "${work}/user-limits.json" || return 1
     done < <(jq -r '.items[]?.user_id' "${work}/members-users.json")

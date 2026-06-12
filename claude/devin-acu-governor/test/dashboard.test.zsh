@@ -38,6 +38,19 @@ emit() {  # $1 body-file  $2 code  $3 body-override
   print -rn -- $'\n'"$2"
   exit "${FAKE_CURL_RC:-0}"
 }
+# Transient injection: emit FAKE_TRANSIENT_CODE (HTML body, like a real gateway)
+# for the first FAKE_TRANSIENT_TIMES requests whose URL contains FAKE_TRANSIENT_URL.
+# -1 = always fail. TRANSIENT_COUNTER persists the attempt count across the
+# separate curl subprocesses the dashboard spawns.
+if [[ -n "${FAKE_TRANSIENT_URL:-}" && "$url" == *"${FAKE_TRANSIENT_URL}"* ]]; then
+  n=$(<"${TRANSIENT_COUNTER}" 2>/dev/null); n=${n:-0}
+  if [[ "${FAKE_TRANSIENT_TIMES:-0}" == "-1" ]] || (( n < ${FAKE_TRANSIENT_TIMES:-0} )); then
+    print -r -- $(( n + 1 )) > "${TRANSIENT_COUNTER}"
+    print -rn -- "<html><head><title>504 Gateway Time-out</title></head><body><center><h1>504 Gateway Time-out</h1></center></body></html>"
+    print -rn -- $'\n'"${FAKE_TRANSIENT_CODE:-504}"
+    exit 0
+  fi
+fi
 case "$url" in
   *consumption/cycles*)
     emit "${FIXTURES}/cycles.json" "${FAKE_CYCLES_CODE:-200}" "${FAKE_CYCLES_BODY:-}" ;;
@@ -93,6 +106,9 @@ run_dash() {
   FAKE_USER_DAILY_CODE="${FAKE_USER_DAILY_CODE:-200}" FAKE_USER_DAILY_BODY="${FAKE_USER_DAILY_BODY:-}" \
   FAKE_DEFAULT_USER_LIMIT_CODE="${FAKE_DEFAULT_USER_LIMIT_CODE:-200}" FAKE_DEFAULT_USER_LIMIT_BODY="${FAKE_DEFAULT_USER_LIMIT_BODY:-}" \
   FAKE_USER_LIMIT_CODE="${FAKE_USER_LIMIT_CODE:-200}" FAKE_USER_LIMIT_BODY="${FAKE_USER_LIMIT_BODY:-}" \
+  FAKE_TRANSIENT_URL="${FAKE_TRANSIENT_URL:-}" FAKE_TRANSIENT_TIMES="${FAKE_TRANSIENT_TIMES:-0}" \
+  FAKE_TRANSIENT_CODE="${FAKE_TRANSIENT_CODE:-504}" TRANSIENT_COUNTER="${TRANSIENT_COUNTER:-${tmpdir}/transient.cnt}" \
+  DAG_FETCH_RETRIES="${DAG_FETCH_RETRIES:-3}" DAG_FETCH_RETRY_SLEEP="${DAG_FETCH_RETRY_SLEEP:-0}" \
   zsh "$dag" dashboard "$@"
 }
 
@@ -243,6 +259,51 @@ assert_contains "invalid body quoted" "$out" "not json"
 out=$(FAKE_CURL_RC=18 run_dash --no-open --out "${tmpdir}/dash-err6" 2>&1); rc=$?
 if (( rc != 0 )); then _ok; else _fail "curl transport failure must exit non-zero"; fi
 assert_contains "curl rc reported" "$out" "curl exit 18"
+
+# 8e. Transient 504 on a per-user ACU-limit endpoint recovers on retry:
+#     dashboard exits 0 and that user's EXPLICIT cap survives (not degraded).
+cnt="${tmpdir}/t-recover.cnt"; rm -f "$cnt"
+out=$(FAKE_TRANSIENT_URL="email%7Calice/consumption/acu-limits" FAKE_TRANSIENT_TIMES=2 \
+  FAKE_TRANSIENT_CODE=504 TRANSIENT_COUNTER="$cnt" DAG_FETCH_RETRIES=3 DAG_FETCH_RETRY_SLEEP=0 \
+  run_dash --no-open --out "${tmpdir}/dash-504-recover" 2>&1); rc=$?
+assert_exit "504 recover rc" 0 $rc
+assert_contains "504 retry logged" "$out" "transient; retry"
+assert_eq "504 recover attempts" "2" "$(<"$cnt")"
+ufr() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-recover/data.json" }
+assert_eq "504 recover alice cap" "200" "$(ufr alice@example.com .effective_cycle_acu_limit)"
+assert_eq "504 recover alice source" "explicit" "$(ufr alice@example.com .cap_source)"
+
+# 8f. Persistent 504 on a per-user ACU-limit endpoint degrades gracefully:
+#     dashboard still exits 0; that user falls back to the default cap.
+cnt="${tmpdir}/t-degrade.cnt"; rm -f "$cnt"
+out=$(FAKE_TRANSIENT_URL="email%7Calice/consumption/acu-limits" FAKE_TRANSIENT_TIMES=-1 \
+  FAKE_TRANSIENT_CODE=504 TRANSIENT_COUNTER="$cnt" DAG_FETCH_RETRIES=2 DAG_FETCH_RETRY_SLEEP=0 \
+  run_dash --no-open --out "${tmpdir}/dash-504-degrade" 2>&1); rc=$?
+assert_exit "504 degrade rc" 0 $rc
+assert_contains "504 degrade warned" "$out" "using default cap"
+udg() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-degrade/data.json" }
+assert_eq "504 degrade alice cap" "100" "$(udg alice@example.com .effective_cycle_acu_limit)"
+assert_eq "504 degrade alice source" "default" "$(udg alice@example.com .cap_source)"
+if [[ -f "${tmpdir}/dash-504-degrade/dashboard.html" ]]; then _ok; else _fail "degraded run wrote no dashboard"; fi
+
+# 8g. Persistent 504 on the default ACU-limit endpoint degrades: users without an
+#     explicit cap show uncapped; the dashboard still renders.
+cnt="${tmpdir}/t-defdeg.cnt"; rm -f "$cnt"
+out=$(FAKE_TRANSIENT_URL="users/consumption/acu-limits" FAKE_TRANSIENT_TIMES=-1 \
+  FAKE_TRANSIENT_CODE=504 TRANSIENT_COUNTER="$cnt" DAG_FETCH_RETRIES=2 DAG_FETCH_RETRY_SLEEP=0 \
+  run_dash --no-open --out "${tmpdir}/dash-504-defdeg" 2>&1); rc=$?
+assert_exit "504 default-limit degrade rc" 0 $rc
+assert_contains "504 default-limit warned" "$out" "default ACU-limit endpoint unavailable"
+udd() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-defdeg/data.json" }
+assert_eq "504 default-limit bob uncapped" "uncapped" "$(udd bob@example.com .status)"
+assert_eq "504 default-limit alice explicit kept" "explicit" "$(udd alice@example.com .cap_source)"
+
+# 8h. A hard 500 (not a gateway-timeout class) on a per-user limit stays FATAL —
+#     retry/degrade applies only to transient 429/502/503/504, not real errors.
+out=$(FAKE_USER_LIMIT_CODE=500 FAKE_USER_LIMIT_BODY='{"detail":"hard 500"}' \
+  run_dash --no-open --out "${tmpdir}/dash-hard500" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "hard 500 on user limit must stay fatal"; fi
+if [[ "$out" == *"transient; retry"* ]]; then _fail "500 was retried as transient"; else _ok; fi
 
 # 9. dag help lists the dashboard command.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=k zsh "$dag" help 2>&1); rc=$?
