@@ -609,6 +609,32 @@ describe("buildOrchestratorPrompt", () => {
     expect(prompt).toContain("do_not_treat_as_user_request");
     expect(prompt).toContain("If Amit's entire message is exactly `Reset`");
     expect(prompt).toContain("aicc --reset");
+    expect(prompt).toContain("the base Codex orchestrator");
+  });
+
+  test("names the selected base orchestrator agent while kid panes stay unchanged", () => {
+    const context = {
+      cwd: "/work/project-x",
+      workspaceName: "project-x",
+      workspaceId: "workspace:1",
+      orchestratorSurfaceId: "surface:1",
+      devinPanelEnabled: true,
+      claudeSurfaceId: "surface:2",
+      devinSurfaceId: "surface:4",
+      reusedClaude: true,
+      reusedDevin: false,
+    };
+
+    for (const [agent, displayName] of [
+      ["claude", "Claude"],
+      ["codex", "Codex"],
+      ["devin", "Devin"],
+    ] as const) {
+      const prompt = buildOrchestratorPrompt(context, agent);
+      expect(prompt).toContain(`the base ${displayName} orchestrator`);
+      expect(prompt).toContain("Claude/kid-claude runs clscb");
+      expect(prompt).toContain("close the base " + displayName + " orchestrator");
+    }
   });
 
   test("tells the orchestrator to open Devin below Claude with dey.boil before passing Devin prompts", () => {

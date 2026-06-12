@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Run from any project directory, `aicc` makes Codex the base orchestrator tab with Amit's `cxscb` launcher and coordinates optional kid-named side panes in the same cMUX workspace. Claude and the extra Codex panel are enabled by default as `kid-claude` and `kid-codex`; Devin is disabled by default and only becomes AICC-managed as `kid-devin` when `AICC_CREATE_DEVIN_PANEL=true`. AICC suppresses Codex Apps/external MCP startup for the base orchestrator and the optional Codex panel, reuses existing enabled managed panes when present, retitles legacy `Claude`/`Codex`/`Devin` panes to their kid-prefixed names, creates only missing enabled panes, and starts a durable AICC poller. The poller checks enabled Claude/Codex/Devin panes every 60 seconds, records meaningful events, nudges the base Codex orchestrator with a safe control envelope, and handles Claude usage-limit auto-resume.
+Run from any project directory, `aicc` makes Codex the base orchestrator tab with Amit's `cxscb` launcher and coordinates optional kid-named side panes in the same cMUX workspace. The base orchestrator agent is selectable per launch with `--agent claude|codex|devin` (shorthands `--claude`, `--codex`, `--devin`; default `codex`); kid panes and their launch commands never change with this flag. Claude and the extra Codex panel are enabled by default as `kid-claude` and `kid-codex`; Devin is disabled by default and only becomes AICC-managed as `kid-devin` when `AICC_CREATE_DEVIN_PANEL=true`. AICC suppresses Codex Apps/external MCP startup for the base orchestrator and the optional Codex panel, reuses existing enabled managed panes when present, retitles legacy `Claude`/`Codex`/`Devin` panes to their kid-prefixed names, creates only missing enabled panes, and starts a durable AICC poller. The poller checks enabled Claude/Codex/Devin panes every 60 seconds, records meaningful events, nudges the base Codex orchestrator with a safe control envelope, and handles Claude usage-limit auto-resume.
 
 ## Behavior
 
@@ -25,7 +25,9 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
    - When a lower enabled pane already exists and an upper enabled pane is missing, AICC splits `up` from the lower pane to restore stack order without closing anything.
    - Legacy managed pane titles `Claude`, `Codex`, and `Devin` are reused and retitled to `kid-claude`, `kid-codex`, and `kid-devin` instead of duplicated.
 5. Launch only newly-created panes with:
-   - Base Codex orchestrator: `cxscb --disable apps -c 'mcp_servers={}' <orchestrator prompt>`
+   - Base orchestrator, default `--agent codex`: `cxscb --disable apps -c 'mcp_servers={}' <orchestrator prompt>`
+   - Base orchestrator, `--agent claude`: `clscb <orchestrator prompt>`
+   - Base orchestrator, `--agent devin`: `devin --permission-mode dangerous -- <orchestrator prompt>`
    - Claude panel: `zsh -lc 'cd <cwd> && clscb'`
    - Codex panel: `zsh -lc "cd <cwd> && cxscb --disable apps -c 'mcp_servers={}'"`
    - Devin panel, when enabled: `zsh -lc 'cd <cwd> && dey.boil'`
@@ -67,6 +69,20 @@ AICC_CREATE_DEVIN_PANEL=false
 - `AICC_CREATE_DEVIN_PANEL=false` (current default): do not create, reuse, poll, reset, or route Devin. Existing Devin panes are left untouched. Set `true` to opt into Devin.
 
 Exported shell environment variables with the same names override `environment.env`.
+
+## Base orchestrator agent selection
+
+The parent orchestrator can be Claude, Codex, or Devin; kid panes stay exactly the same:
+
+```zsh
+aicc                       # default: Codex orchestrator (cxscb)
+aicc --agent claude        # Claude orchestrator (clscb)
+aicc --claude              # shorthand for --agent claude
+aicc --agent devin "task"  # Devin orchestrator (devin --permission-mode dangerous -- <prompt>)
+aicc--claude "task"        # global shorthand functions from aliases.zsh: aicc--claude / aicc--codex / aicc--devin
+```
+
+The flag only swaps the process the orchestrator prompt is handed to. The base tab keeps the title `codex` for every agent because reset and the AICC daemon locate the base tab by that exact title. An invalid `--agent` value exits 2 before any cMUX changes.
 
 ## Codex MCP suppression
 

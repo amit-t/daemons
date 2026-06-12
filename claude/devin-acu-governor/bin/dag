@@ -29,6 +29,10 @@ dag_usage() {
 dag — Devin Enterprise ACU governor
 
 Usage:
+  dag [--agent claude|codex|devin] <command ...>
+                              Pick the parent agent that runs the playbook session
+                              (default claude via clscb); shorthands --claude/--codex/--devin;
+                              agent flags go before the command
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
   dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
                               by Borrowing headroom from the lowest-consuming capped users
@@ -67,10 +71,15 @@ Examples:
   dag usage --user-email alice@corp.com
   dag usage --user-email alice@corp.com --json
   dag usage --group "Platform Eng" --top 5
+  dag --agent codex status
+  dag --devin boost alice@corp.com
 
 Config (environment.env; shell env vars override):
   DAG_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)
-  DAG_LAUNCHER               agent launcher command (default clscb)
+  DAG_LAUNCHER               agent launcher command when no --agent given (default clscb)
+  DAG_LAUNCHER_CLAUDE        launcher for --agent claude (default clscb)
+  DAG_LAUNCHER_CODEX         launcher for --agent codex (default cxscb)
+  DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous --)
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
@@ -184,11 +193,51 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   for line in "$@"; do print -r -- "- ${line}"; done
 }
 
+dag_resolve_launcher() {  # $1 = agent (claude|codex|devin|""); prints launcher command prefix.
+  case "$1" in
+    claude) print -r -- "${DAG_LAUNCHER_CLAUDE:-clscb}" ;;
+    codex)  print -r -- "${DAG_LAUNCHER_CODEX:-cxscb}" ;;
+    devin)  print -r -- "${DAG_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
+    *)      return 2 ;;
+  esac
+}
+
 main() {
   dag_load_env
   : ${DAG_MONTHLY_ACU_POOL:=24000}
-  : ${DAG_LAUNCHER:=clscb}
   : ${DAG_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
+
+  local agent=""
+  while (( $# )); do
+    case "${1:-}" in
+      --agent=*)
+        agent="${1#--agent=}"
+        shift
+        ;;
+      --agent)
+        agent="${2:-}"
+        if [[ -z "$agent" ]]; then
+          print -ru2 -- "dag: --agent expects one of claude, codex, devin"
+          exit 2
+        fi
+        shift 2
+        ;;
+      --claude|--codex|--devin)
+        agent="${1#--}"
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [[ -n "$agent" && "$agent" != (claude|codex|devin) ]]; then
+    print -ru2 -- "dag: --agent expects one of claude, codex, devin (got: ${agent})"
+    exit 2
+  fi
+  local launcher
+  launcher=$(dag_resolve_launcher "$agent") || exit 2
 
   local cmd="${1:-}"
   if [[ -z "$cmd" ]]; then
@@ -378,6 +427,11 @@ main() {
   local prompt
   prompt=$(dag_build_prompt "$cmd" "${context_lines[@]}")
 
+  if [[ -n "${DAG_PRINT_LAUNCHER:-}" ]]; then
+    print -r -- "$launcher"
+    exit 0
+  fi
+
   if [[ -n "${DAG_PRINT_PROMPT:-}" ]]; then
     print -r -- "$prompt"
     exit 0
@@ -385,7 +439,7 @@ main() {
 
   [[ -n "$_dag_have_cog_key" ]] && export DEVIN_COG_KEY="$cog_key"
   [[ -n "$_dag_have_windsurf_key" ]] && export DEVIN_SERVICE_KEY="$windsurf_key"
-  exec zsh -ic "${DAG_LAUNCHER} $(printf '%q' "$prompt")"
+  exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
 }
 
 main "$@"

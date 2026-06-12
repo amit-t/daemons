@@ -33,3 +33,11 @@ dag() {
 
   "$daemon_entry" "$@"
 }
+
+# Parent-agent shorthands: same daemons, different base agent. Kid agents unchanged.
+aicc--claude() { aicc --agent claude "$@" }
+aicc--codex()  { aicc --agent codex "$@" }
+aicc--devin()  { aicc --agent devin "$@" }
+dag--claude()  { dag --agent claude "$@" }
+dag--codex()   { dag --agent codex "$@" }
+dag--devin()   { dag --agent devin "$@" }

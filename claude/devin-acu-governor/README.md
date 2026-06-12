@@ -4,6 +4,7 @@
 
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
+- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>`. The playbook prompt is identical for every agent.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
 - `all commands` launches a broad Claude-agent lab seeded with the Devin docs index, the pinned ACU/UsageConfig docs, and every current DAG playbook so ad hoc tasks can graduate into exact `dag ...` commands. It can open without a Devin key for docs/design work, but live API calls require `DEVIN_COG_KEY`.
 
@@ -396,7 +397,11 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | Variable | Default | Meaning |
 |---|---:|---|
 | `DAG_MONTHLY_ACU_POOL` | `24000` | Monthly ACU pool to distribute |
-| `DAG_LAUNCHER` | `clscb` | Agent launcher for playbook commands |
+| `DAG_LAUNCHER` | `clscb` | Agent launcher for playbook commands when no `--agent` flag is given |
+| `DAG_LAUNCHER_CLAUDE` | `clscb` | Launcher used by `--agent claude` |
+| `DAG_LAUNCHER_CODEX` | `cxscb` | Launcher used by `--agent codex` |
+| `DAG_LAUNCHER_DEVIN` | `devin --permission-mode dangerous --` | Launcher used by `--agent devin`; prompt is appended after the trailing `--` |
+| `DAG_PRINT_LAUNCHER` | unset | For agent commands, print the resolved launcher and exit |
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
 | `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger/dashboard state directory |

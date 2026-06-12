@@ -146,4 +146,49 @@ assert_contains "no ws key note" "$out" "Windsurf key: ABSENT"
 out=$(run_dag set-limits)
 if [[ "$out" == *test-cog-key* || "$out" == *test-ws-key* ]]; then _fail "key leaked into prompt"; else _ok; fi
 
+# 12. Parent agent selection (--agent / shorthands) resolves the launcher.
+run_dag_launcher() { PATH="${tmpdir}/bin:$PATH" DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
+out=$(run_dag_launcher status); rc=$?
+assert_exit "default launcher rc" 0 $rc
+assert_contains "default launcher claude" "$out" "clscb"
+out=$(run_dag_launcher --agent codex status); rc=$?
+assert_exit "agent codex rc" 0 $rc
+assert_contains "agent codex launcher" "$out" "cxscb"
+out=$(run_dag_launcher --agent=devin status); rc=$?
+assert_exit "agent devin rc" 0 $rc
+assert_contains "agent devin launcher" "$out" "devin --permission-mode dangerous --"
+out=$(run_dag_launcher --claude status); rc=$?
+assert_exit "shorthand claude rc" 0 $rc
+assert_contains "shorthand claude launcher" "$out" "clscb"
+out=$(run_dag_launcher --codex status); rc=$?
+assert_exit "shorthand codex rc" 0 $rc
+assert_contains "shorthand codex launcher" "$out" "cxscb"
+out=$(run_dag_launcher --devin status); rc=$?
+assert_exit "shorthand devin rc" 0 $rc
+assert_contains "shorthand devin launcher" "$out" "devin --permission-mode dangerous --"
+
+# 13. Env overrides per-agent launchers; legacy DAG_LAUNCHER only applies without --agent.
+out=$(DAG_LAUNCHER_CODEX="my-codex" run_dag_launcher --codex status)
+assert_contains "codex launcher override" "$out" "my-codex"
+out=$(DAG_LAUNCHER="my-default" run_dag_launcher status)
+assert_contains "legacy launcher override" "$out" "my-default"
+out=$(DAG_LAUNCHER="my-default" run_dag_launcher --codex status)
+assert_contains "agent flag beats legacy launcher" "$out" "cxscb"
+
+# 14. Invalid agent -> exit 2; agent flags rejected after the command.
+out=$(run_dag_launcher --agent gemini status 2>&1); rc=$?
+assert_exit "bad agent rc" 2 $rc
+assert_contains "bad agent message" "$out" "claude, codex, devin"
+out=$(run_dag_launcher --agent 2>&1); rc=$?
+assert_exit "missing agent rc" 2 $rc
+
+# 15. Agent flag does not leak into the prompt or break command dispatch.
+out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" --agent codex set-limits); rc=$?
+assert_exit "agent prompt rc" 0 $rc
+assert_contains "agent prompt playbook" "$out" "# Playbook: set-limits"
+if [[ "$out" == *--agent* ]]; then _fail "--agent leaked into prompt"; else _ok; fi
+# Usage mentions agent selection.
+out=$(run_dag help)
+assert_contains "usage agent flag" "$out" "--agent claude|codex|devin"
+
 report

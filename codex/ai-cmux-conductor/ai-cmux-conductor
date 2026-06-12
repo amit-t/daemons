@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAiCmuxConductorArgs } from "./src/ai-cmux-conductor/args.ts";
 import { loadAiCmuxConductorEnv } from "./src/ai-cmux-conductor/config.ts";
-import { runCodexLauncher } from "./src/ai-cmux-conductor/codex-launch.ts";
+import { runAgentLauncher } from "./src/ai-cmux-conductor/agent-launch.ts";
 import { runAiCmuxConductorDaemon } from "./src/ai-cmux-conductor/watcher-daemon.ts";
 import { buildOrchestratorPrompt, conductorHelpText, prepareConductor } from "./src/ai-cmux-conductor/conductor.ts";
 import { buildResetStatusText, resetAiCmuxWorkspace } from "./src/ai-cmux-conductor/reset.ts";
@@ -26,6 +26,11 @@ const args = parseAiCmuxConductorArgs(process.argv);
 if (args.help) {
   console.log(conductorHelpText());
   process.exit(0);
+}
+
+if (args.agentError) {
+  console.error(`aicc: ${args.agentError}`);
+  process.exit(2);
 }
 
 const conductorEnv = loadAiCmuxConductorEnv(process.env);
@@ -85,5 +90,5 @@ try {
   console.warn(`AICC watcher daemon warning: ${message}`);
 }
 
-const prompt = `${buildOrchestratorPrompt(prepared.context)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;
-await runCodexLauncher(prompt, process.cwd());
+const prompt = `${buildOrchestratorPrompt(prepared.context, args.agent)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;
+await runAgentLauncher(args.agent, prompt, process.cwd());
