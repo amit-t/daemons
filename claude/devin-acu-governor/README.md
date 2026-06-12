@@ -48,7 +48,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
 | `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
 | `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
-| `dag dashboard` | ❌ read-only | Local burn-rate + forecast dashboard with org and user consumed-vs-cap ACUs; no agent, no writes; optional `--refresh` auto-regeneration |
+| `dag dashboard` | ❌ read-only | Local React burn-rate + forecast dashboard (interactive charts, filterable/sortable org + user cap tables) served on `127.0.0.1`; no agent, no writes; optional `--refresh` background data refresh without page reloads |
 | `dag setup-extract` | ❌ local secret output | Print pasteable target-machine `security add-generic-password` commands containing the currently configured DAG keys |
 | `dag help` | ❌ | Usage text |
 
@@ -316,28 +316,34 @@ DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor
 
 ## `dag dashboard`
 
-Local, read-only dashboard. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle ACUs, the default per-user Local Agent cap, and each user's explicit Local Agent override. Writes static files under `$DAG_STATE_DIR/dashboard/latest/` by default.
+Local, read-only dashboard — a React app (`web/dashboard-app/`, Vite + recharts) served from a localhost-only HTTP server. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle ACUs, the default per-user Local Agent cap, and each user's explicit Local Agent override into `data.json`, stages the built app next to it under `$DAG_STATE_DIR/dashboard/latest/` by default, and serves it at `http://127.0.0.1:8642/`. Local-only by design: the server binds `127.0.0.1` and nothing is deployed.
 
 ```zsh
 dag dashboard
 dag dashboard --no-open
 dag dashboard --out /tmp/dag-dashboard
 dag dashboard --json-only
+dag dashboard --port 9000
 dag dashboard --refresh 30
 dag dashboard --refresh 5 --no-open --out /tmp/dag-dashboard
+dag dashboard --rebuild
 ```
 
 The dashboard shows:
 
-- enterprise consumed/remaining/run-rate/projection cards;
-- daily burn chart and product split;
-- organization consumed/projected/cap/status table;
-- user consumed/effective-cap/headroom/status table, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap;
+- enterprise consumed/remaining/run-rate/projection/verdict cards with cycle progress;
+- interactive daily burn chart (stacked per-product bars, plus a cumulative + forecast view with the pool reference line) and a product-split donut;
+- organization table: sortable columns, status filter chips, per-row cap meters;
+- user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap;
 - warnings for org cap risk and users already over effective cap.
 
-`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running, regenerates the dashboard files on that cadence, and writes refresh metadata so the open browser page reloads itself on the same interval. Keep the terminal process alive; stop with `Ctrl-C`.
+**First run builds the app once** (`npm install && npm run build` in `web/dashboard-app/`; requires Node.js). Later runs reuse the build; `--rebuild` forces a fresh one (run after pulling app changes).
 
-Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.css`, `dashboard.js`. No API writes; tests assert no curl write verbs.
+`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**; the app polls `data.json` (every 60 s, `cache: no-store`) and updates in place — no page reloads. Without `--refresh` the command still keeps the server running on a static snapshot. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
+
+Port: default `8642`; pin with `--port <n>` or `DAG_DASHBOARD_PORT`. If the default port is busy, a free one is picked automatically (warned on stderr).
+
+Generated files in the output dir: `data.json` plus the staged app build (`index.html`, `assets/`). `--json-only` writes only `data.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
 
 **Transient-failure resilience.** Every GET retries gateway/overload classes — HTTP `429`, `502`, `503`, `504` (e.g. a `504 Gateway Time-out` with an HTML body), and curl transport errors — with bounded linear backoff (`DAG_FETCH_RETRIES`, default 3; `DAG_FETCH_RETRY_SLEEP` seconds × attempt, default 2). If the two per-user ACU-limit endpoints still fail transiently after retries, the dashboard **degrades instead of aborting**: a failed per-user override falls back to the default cap (`cap_source: default`), and a failed default-cap endpoint leaves uncapped users marked `uncapped`. Each degradation prints a warning to stderr. Hard errors (`4xx`/`500`) and any other endpoint remain fatal and quote the exact response body — a single flaky user-limit call no longer takes down the whole dashboard.
 
@@ -412,6 +418,11 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL |
 | `DAG_FETCH_RETRIES` | `3` | Dashboard: retries for transient fetch failures (429/502/503/504, transport) |
 | `DAG_FETCH_RETRY_SLEEP` | `2` | Dashboard: backoff seconds × attempt between transient retries |
+| `DAG_DASHBOARD_PORT` | unset | Dashboard: pin the local server port (same as `--port`) |
+| `DAG_DASHBOARD_DEFAULT_PORT` | `8642` | Dashboard: port tried when none is pinned |
+| `DAG_DASHBOARD_APP_DIR` | `web/dashboard-app` | Dashboard: React app source/build directory |
+| `DAG_DASHBOARD_NPM` | `npm` | Dashboard: npm command for the one-time app build |
+| `DAG_DASHBOARD_PYTHON` | `python3` | Dashboard: python used for the localhost static server |
 
 ## Safety model
 
@@ -452,9 +463,9 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/key-resolve.zsh` | Keychain/env key resolution |
 | `lib/local-agent-limits.zsh` | Local `dag set limit global` implementation + live GET verification |
 | `lib/doctor.zsh` | Local capability probe |
-| `lib/dashboard.zsh` / `lib/dashboard.jq` | Local static dashboard fetch + forecast math |
+| `lib/dashboard.zsh` / `lib/dashboard.jq` | Dashboard data fetch + forecast math, one-time app build, localhost server |
 | `lib/usage.zsh` / `lib/usage.jq` | Local `dag usage` per-user consumed-vs-cap fetch + ratio table math |
-| `web/dashboard/` | Static dashboard assets |
+| `web/dashboard-app/` | React dashboard app (Vite + recharts); `dist/` and `node_modules/` are gitignored, built on first `dag dashboard` run |
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
