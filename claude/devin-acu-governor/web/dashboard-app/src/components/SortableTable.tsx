@@ -13,6 +13,7 @@ interface Props<T> {
   rows: T[]
   rowKey: (row: T) => string
   initialSort: { key: string; dir: 'asc' | 'desc' }
+  onRowClick?: (row: T) => void
 }
 
 // Null sort values always sink to the bottom regardless of direction —
@@ -25,7 +26,7 @@ function compare(a: string | number | null, b: string | number | null): number {
   return String(a).localeCompare(String(b))
 }
 
-export function SortableTable<T>({ columns, rows, rowKey, initialSort }: Props<T>) {
+export function SortableTable<T>({ columns, rows, rowKey, initialSort, onRowClick }: Props<T>) {
   const [sort, setSort] = useState(initialSort)
 
   const sorted = useMemo(() => {
@@ -70,7 +71,11 @@ export function SortableTable<T>({ columns, rows, rowKey, initialSort }: Props<T
         </thead>
         <tbody>
           {sorted.map((row) => (
-            <tr key={rowKey(row)}>
+            <tr
+              key={rowKey(row)}
+              className={onRowClick ? 'clickable' : undefined}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+            >
               {columns.map((c) => (
                 <td key={c.key} className={c.numeric ? 'num' : ''}>
                   {c.render(row)}

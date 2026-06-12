@@ -8,6 +8,8 @@
 #     --slurpfile userd    <stream of {user_id, daily} docs, one per user> \
 #     --slurpfile userl    <stream of {user_id, limits} docs, one per user> \
 #     --slurpfile defaultl <default user ACU-limit response> \
+#     --slurpfile sessions <{available, items} Devin Cloud sessions for the cycle> \
+#     --slurpfile modela   <{available, stale, reason, fetched_at, rows} Windsurf model/IDE analytics> \
 #     -f lib/dashboard.jq
 
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
@@ -76,12 +78,41 @@ def user_status($consumed; $limit):
 | ($userd | map({key: .user_id, value: (.daily.total_acus // 0)}) | from_entries) as $user_consumed
 | ($userl | map({key: .user_id, value: (.limits // {})}) | from_entries) as $user_limits
 | ($defaultl[0].local_agent.cycle_acu_limit // null) as $default_user_limit
-| ($userlist | map(
+| ($userd | map({key: .user_id, value: (.daily.consumption_by_date // [])}) | from_entries) as $user_daily
+| ($sessions[0] // {available: false, items: []}) as $sess
+| (($sess.items // []) | map(select(.user_id != null)) | group_by(.user_id)
+   | map({key: .[0].user_id,
+          value: {count: length, acus: (([.[].acus_consumed // 0] | add) | r2)}})
+   | from_entries) as $user_sessions
+| ($modela[0] // {available: false, rows: []}) as $ma
+| (($ma.rows // []) | group_by(.user_id)
+   | map({key: .[0].user_id, value: .}) | from_entries) as $ma_by_user
+| (($ma.rows // []) | map(select(.user_email != "")) | group_by(.user_email)
+   | map({key: .[0].user_email, value: .}) | from_entries) as $ma_by_email
+# Aggregate one user's Windsurf rows along a dimension ("model" or "ide").
+| def dim_split($rows; $key):
+    ($rows | group_by(.[$key])
+     | map({($key): .[0][$key],
+            acus: (([.[].acus] | add) | r2),
+            messages: ([.[].messages] | add)})
+     | sort_by(-.acus, -.messages));
+  ($userlist | map(
     . as $u
     | ($user_consumed[$u.user_id] // 0) as $uc
     | ($user_limits[$u.user_id] // {}) as $lim
     | ($lim.local_agent.cycle_acu_limit // null) as $explicit_limit
     | (if $explicit_limit == null then $default_user_limit else $explicit_limit end) as $effective_limit
+    | (($user_daily[$u.user_id] // []) | map(
+        (.date | day_forms) as $d
+        | {date: $d.date,
+           epoch: $d.epoch,
+           acus: ((.acus // 0) | r2),
+           devin: ((.acus_by_product.devin // 0) | r2),
+           cascade: ((.acus_by_product.cascade // 0) | r2),
+           terminal: ((.acus_by_product.terminal // 0) | r2),
+           review: ((.acus_by_product.review // 0) | r2)}
+      ) | sort_by(.epoch)) as $udaily
+    | ($ma_by_user[$u.user_id] // $ma_by_email[$u.email] // []) as $ma_rows
     | {
         user_id: $u.user_id,
         email: ($u.email // ""),
@@ -97,7 +128,19 @@ def user_status($consumed; $limit):
         headroom: (if $effective_limit == null then null else (($effective_limit - $uc) | r2) end),
         pct_limit: (if ($effective_limit // 0) == 0 then null
                     else (($uc / $effective_limit) | r3) end),
-        status: user_status($uc; $effective_limit)
+        status: user_status($uc; $effective_limit),
+        daily: $udaily,
+        product_totals: {
+          devin: (([$udaily[].devin] | add // 0) | r2),
+          cascade: (([$udaily[].cascade] | add // 0) | r2),
+          terminal: (([$udaily[].terminal] | add // 0) | r2),
+          review: (([$udaily[].review] | add // 0) | r2)
+        },
+        sessions: (if $sess.available
+                   then ($user_sessions[$u.user_id] // {count: 0, acus: 0})
+                   else null end),
+        models: dim_split($ma_rows; "model"),
+        ides: dim_split($ma_rows; "ide")
       }
   ) | sort_by(-.consumed, .email)) as $user_rows
 | {
@@ -145,6 +188,23 @@ def user_status($consumed; $limit):
       terminal: ((.acus_by_product.terminal // 0) | r2),
       review: ((.acus_by_product.review // 0) | r2)
     })),
+    sessions_info: {
+      available: $sess.available,
+      count: (($sess.items // []) | length),
+      acus: ((([($sess.items // [])[].acus_consumed // 0] | add) // 0) | r2)
+    },
+    model_analytics: {
+      available: $ma.available,
+      stale: ($ma.stale // false),
+      reason: ($ma.reason // null),
+      fetched_at: ($ma.fetched_at // null),
+      fetched_at_epoch: ($ma.fetched_at_epoch // null),
+      start_date: ($ma.start_date // null),
+      end_date: ($ma.end_date // null),
+      # rows kept verbatim so the next refresh can reuse this section (TTL /
+      # rate-limit carry-forward) without refetching the Windsurf API.
+      rows: ($ma.rows // [])
+    },
     orgs: $org_rows,
     users: $user_rows,
     warnings: (

@@ -54,6 +54,10 @@ fi
 case "$url" in
   *consumption/cycles*)
     emit "${FIXTURES}/cycles.json" "${FAKE_CYCLES_CODE:-200}" "${FAKE_CYCLES_BODY:-}" ;;
+  *v3/enterprise/sessions*)
+    emit "${FIXTURES}/sessions.json" "${FAKE_SESSIONS_CODE:-200}" "${FAKE_SESSIONS_BODY:-}" ;;
+  *api/v2alpha/analytics/consumption*)
+    emit "${FIXTURES}/windsurf-consumption.json" "${FAKE_WINDSURF_CODE:-200}" "${FAKE_WINDSURF_BODY:-}" ;;
   *enterprise/members/users*)
     emit "${FIXTURES}/members-users.json" "${FAKE_USERS_CODE:-200}" "${FAKE_USERS_BODY:-}" ;;
   *v3beta1/enterprise/users/consumption/acu-limits*)
@@ -151,6 +155,8 @@ run_dash() {
   WRITE_LOG="${tmpdir}/write.log" CURL_URL_LOG="${tmpdir}/curl-urls.log" \
   SERVE_LOG="${SERVE_LOG:-${tmpdir}/serve.log}" NPM_LOG="${NPM_LOG:-${tmpdir}/npm.log}" \
   DEVIN_COG_KEY=test-cog-key-SECRET DAG_NOW_EPOCH=$now_epoch \
+  DEVIN_SERVICE_KEY="${TEST_WINDSURF_KEY-test-windsurf-key-SECRET}" \
+  DAG_MODEL_ANALYTICS_TTL_MINUTES="${DAG_MODEL_ANALYTICS_TTL_MINUTES:-}" \
   DAG_STATE_DIR="${tmpdir}/state" \
   DAG_DASHBOARD_APP_DIR="${DAG_DASHBOARD_APP_DIR:-$appdir}" \
   DAG_DASHBOARD_PYTHON="${DAG_DASHBOARD_PYTHON:-python3}" \
@@ -168,6 +174,8 @@ run_dash() {
   FAKE_USER_DAILY_CODE="${FAKE_USER_DAILY_CODE:-200}" FAKE_USER_DAILY_BODY="${FAKE_USER_DAILY_BODY:-}" \
   FAKE_DEFAULT_USER_LIMIT_CODE="${FAKE_DEFAULT_USER_LIMIT_CODE:-200}" FAKE_DEFAULT_USER_LIMIT_BODY="${FAKE_DEFAULT_USER_LIMIT_BODY:-}" \
   FAKE_USER_LIMIT_CODE="${FAKE_USER_LIMIT_CODE:-200}" FAKE_USER_LIMIT_BODY="${FAKE_USER_LIMIT_BODY:-}" \
+  FAKE_SESSIONS_CODE="${FAKE_SESSIONS_CODE:-200}" FAKE_SESSIONS_BODY="${FAKE_SESSIONS_BODY:-}" \
+  FAKE_WINDSURF_CODE="${FAKE_WINDSURF_CODE:-200}" FAKE_WINDSURF_BODY="${FAKE_WINDSURF_BODY:-}" \
   FAKE_TRANSIENT_URL="${FAKE_TRANSIENT_URL:-}" FAKE_TRANSIENT_TIMES="${FAKE_TRANSIENT_TIMES:-0}" \
   FAKE_TRANSIENT_CODE="${FAKE_TRANSIENT_CODE:-504}" TRANSIENT_COUNTER="${TRANSIENT_COUNTER:-${tmpdir}/transient.cnt}" \
   DAG_FETCH_RETRIES="${DAG_FETCH_RETRIES:-3}" DAG_FETCH_RETRY_SLEEP="${DAG_FETCH_RETRY_SLEEP:-0}" \
@@ -196,9 +204,11 @@ assert_contains "server port" "$serve_line" "8642"
 assert_contains "server local bind" "$serve_line" "--bind 127.0.0.1"
 assert_contains "server directory" "$serve_line" "--directory ${out_dir:A}"
 
-# 4. Key never leaks into stdout or any generated file.
-if [[ "$out" == *test-cog-key-SECRET* ]]; then _fail "key leaked to stdout"; else _ok; fi
-if grep -R "test-cog-key-SECRET" "$out_dir" >/dev/null 2>&1; then _fail "key leaked into generated files"; else _ok; fi
+# 4. Keys never leak into stdout or any generated file (cog_ and Windsurf).
+if [[ "$out" == *test-cog-key-SECRET* ]]; then _fail "cog key leaked to stdout"; else _ok; fi
+if [[ "$out" == *test-windsurf-key-SECRET* ]]; then _fail "windsurf key leaked to stdout"; else _ok; fi
+if grep -R "test-cog-key-SECRET" "$out_dir" >/dev/null 2>&1; then _fail "cog key leaked into generated files"; else _ok; fi
+if grep -R "test-windsurf-key-SECRET" "$out_dir" >/dev/null 2>&1; then _fail "windsurf key leaked into generated files"; else _ok; fi
 
 # 5. Forecast math deterministic under DAG_NOW_EPOCH.
 jqd() { jq -r "$1" "${out_dir}/data.json" }
@@ -282,6 +292,52 @@ else
   _ok
 fi
 
+# 7e. Per-user detail data: daily series with both date forms + product split.
+assert_eq "alice daily count" "2" "$(user_field alice@example.com '.daily | length')"
+assert_eq "alice daily[0] epoch" "1778918400" "$(user_field alice@example.com '.daily[0].epoch')"
+assert_eq "alice daily[0] date" "2026-05-16" "$(user_field alice@example.com '.daily[0].date')"
+assert_eq "alice daily[0] acus" "40" "$(user_field alice@example.com '.daily[0].acus')"
+assert_eq "alice daily[1] acus" "80.25" "$(user_field alice@example.com '.daily[1].acus')"
+assert_eq "alice daily[1] cascade" "50.25" "$(user_field alice@example.com '.daily[1].cascade')"
+assert_eq "alice product cascade total" "75.25" "$(user_field alice@example.com '.product_totals.cascade')"
+assert_eq "alice product devin total" "30" "$(user_field alice@example.com '.product_totals.devin')"
+assert_eq "bob daily string date kept" "2026-06-10" "$(user_field bob@example.com '.daily[0].date')"
+assert_eq "zero daily empty" "0" "$(user_field zero@example.com '.daily | length')"
+
+# 7f. Devin Cloud session stats grouped per user; service-user sessions excluded
+#     from user rows but counted in the enterprise total.
+assert_eq "sessions available" "true" "$(jqd '.sessions_info.available')"
+assert_eq "sessions total count" "5" "$(jqd '.sessions_info.count')"
+assert_eq "sessions total acus" "21.5" "$(jqd '.sessions_info.acus')"
+assert_eq "alice session count" "2" "$(user_field alice@example.com '.sessions.count')"
+assert_eq "alice session acus" "12.5" "$(user_field alice@example.com '.sessions.acus')"
+assert_eq "bob session count" "1" "$(user_field bob@example.com '.sessions.count')"
+assert_eq "zero session count" "0" "$(user_field zero@example.com '.sessions.count')"
+if grep -E "v3/enterprise/sessions\?first=200&created_after=1778918400&created_before=1781596800" "${tmpdir}/curl-urls.log" >/dev/null; then
+  _ok
+else
+  _fail "sessions request missing cycle window"
+fi
+
+# 7g. Windsurf model/IDE analytics joined per user, aggregated + sorted by ACUs.
+assert_eq "model analytics available" "true" "$(jqd '.model_analytics.available')"
+assert_eq "model analytics stale" "false" "$(jqd '.model_analytics.stale')"
+assert_eq "model analytics start" "2026-05-16" "$(jqd '.model_analytics.start_date')"
+assert_eq "model analytics end" "2026-06-15" "$(jqd '.model_analytics.end_date')"
+assert_eq "alice model count" "2" "$(user_field alice@example.com '.models | length')"
+assert_eq "alice top model" "claude-sonnet-4-6" "$(user_field alice@example.com '.models[0].model')"
+assert_eq "alice top model acus" "40" "$(user_field alice@example.com '.models[0].acus')"
+assert_eq "alice top model messages" "153" "$(user_field alice@example.com '.models[0].messages')"
+assert_eq "alice chisel ide acus" "30.5" "$(user_field alice@example.com '.ides[] | select(.ide=="chisel").acus')"
+assert_eq "alice ide count" "2" "$(user_field alice@example.com '.ides | length')"
+assert_eq "bob model" "gpt-6" "$(user_field bob@example.com '.models[0].model')"
+assert_eq "zero models empty" "0" "$(user_field zero@example.com '.models | length')"
+if grep -E "api/v2alpha/analytics/consumption\?start_date=2026-05-16&end_date=2026-06-15&product=agent&group_by=user,model_uid,ide" "${tmpdir}/curl-urls.log" >/dev/null; then
+  _ok
+else
+  _fail "windsurf analytics request missing cycle dates or grouping"
+fi
+
 # 7a. User IDs with reserved characters are URL-encoded in read endpoints.
 curl_log="${tmpdir}/curl-urls.log"
 if grep -F "email%7Calice" "$curl_log" >/dev/null 2>&1; then _ok; else _fail "encoded alice user_id not requested"; fi
@@ -309,6 +365,23 @@ assert_contains "hook exposes manual refresh" "$hook_src" "refreshNow"
 assert_contains "hook marks refreshing" "$hook_src" "refreshStatus: 'refreshing'"
 assert_contains "hook marks refreshed" "$hook_src" "refreshStatus: 'refreshed'"
 assert_contains "hook schedules by dashboard refresh window" "$hook_src" "data.refresh.interval_ms"
+
+# 7h. Per-user detail view wired into the app: clickable user rows open a
+#     drawer with the daily line chart, model/IDE split, and session stats.
+detail_src=$(<"${script_dir}/../web/dashboard-app/src/components/UserDetail.tsx")
+assert_contains "detail daily chart" "$detail_src" "Daily ACU usage"
+assert_contains "detail models panel" "$detail_src" "Models"
+assert_contains "detail surfaces panel" "$detail_src" "Surfaces"
+assert_contains "detail cloud sessions card" "$detail_src" "Devin Cloud sessions"
+assert_contains "detail session acus card" "$detail_src" "Cloud session ACUs"
+assert_contains "detail devin desktop label" "$detail_src" "Devin Desktop"
+assert_contains "detail esc to close" "$detail_src" "Escape"
+sortable_src=$(<"${script_dir}/../web/dashboard-app/src/components/SortableTable.tsx")
+assert_contains "table supports row click" "$sortable_src" "onRowClick"
+assert_contains "app renders user detail" "$app_src" "UserDetail"
+assert_contains "app tracks selected user" "$app_src" "selectedUserId"
+user_table_src_body=$(<"$user_table_src")
+assert_contains "user table forwards selection" "$user_table_src_body" "onRowClick={onSelect}"
 
 # 7c. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
 out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \
@@ -411,6 +484,67 @@ out=$(FAKE_USER_LIMIT_CODE=500 FAKE_USER_LIMIT_BODY='{"detail":"hard 500"}' \
   run_dash --no-open --out "${tmpdir}/dash-hard500" 2>&1); rc=$?
 if (( rc != 0 )); then _ok; else _fail "hard 500 on user limit must stay fatal"; fi
 if [[ "$out" == *"transient; retry"* ]]; then _fail "500 was retried as transient"; else _ok; fi
+
+# 8i. Sessions endpoint failure (e.g. missing ViewOrgSessions) degrades:
+#     dashboard renders, user session stats null, enterprise section flagged off.
+out=$(FAKE_SESSIONS_CODE=500 FAKE_SESSIONS_BODY='{"detail":"sessions denied"}' \
+  run_dash --no-open --out "${tmpdir}/dash-nosess" 2>&1); rc=$?
+assert_exit "sessions degrade rc" 0 $rc
+assert_contains "sessions degrade warned" "$out" "Devin Cloud session stats"
+nsf() { jq -r "$1" "${tmpdir}/dash-nosess/data.json" }
+assert_eq "sessions degrade available" "false" "$(nsf '.sessions_info.available')"
+assert_eq "sessions degrade user null" "null" "$(nsf '.users[] | select(.email=="alice@example.com").sessions')"
+if [[ -f "${tmpdir}/dash-nosess/index.html" ]]; then _ok; else _fail "sessions-degraded run staged no app"; fi
+
+# 8j. No Windsurf service key: model analytics marked unavailable with reason;
+#     user model/IDE lists empty; dashboard renders.
+: > "${tmpdir}/curl-urls.log"
+out=$(TEST_WINDSURF_KEY="" run_dash --no-open --out "${tmpdir}/dash-nowskey" 2>&1); rc=$?
+assert_exit "no windsurf key rc" 0 $rc
+nwk() { jq -r "$1" "${tmpdir}/dash-nowskey/data.json" }
+assert_eq "no windsurf key available" "false" "$(nwk '.model_analytics.available')"
+assert_eq "no windsurf key reason" "no_windsurf_key" "$(nwk '.model_analytics.reason')"
+assert_eq "no windsurf key models empty" "0" "$(nwk '.users[] | select(.email=="alice@example.com") | .models | length')"
+if grep -F "api/v2alpha/analytics/consumption" "${tmpdir}/curl-urls.log" >/dev/null 2>&1; then
+  _fail "windsurf API called without a key"
+else
+  _ok
+fi
+
+# 8k. Windsurf refusal (429 rate limit) with no previous snapshot: unavailable
+#     with reason fetch_failed; dashboard still renders.
+out=$(FAKE_WINDSURF_CODE=429 run_dash --no-open --out "${tmpdir}/dash-ws429" 2>&1); rc=$?
+assert_exit "windsurf 429 rc" 0 $rc
+assert_contains "windsurf 429 warned" "$out" "model analytics unavailable"
+assert_eq "windsurf 429 available" "false" "$(jq -r '.model_analytics.available' "${tmpdir}/dash-ws429/data.json")"
+assert_eq "windsurf 429 reason" "fetch_failed" "$(jq -r '.model_analytics.reason' "${tmpdir}/dash-ws429/data.json")"
+
+# 8l. Windsurf refusal WITH a previous good snapshot in the out dir: the prior
+#     model/IDE section is carried forward and flagged stale; per-user model
+#     splits survive. (TTL forced to 0 so the refetch is attempted.)
+wsdir="${tmpdir}/dash-ws-carry"
+out=$(run_dash --no-open --out "$wsdir" 2>&1); rc=$?
+assert_exit "carry-forward seed rc" 0 $rc
+out=$(FAKE_WINDSURF_CODE=429 DAG_MODEL_ANALYTICS_TTL_MINUTES=0 \
+  run_dash --no-open --out "$wsdir" 2>&1); rc=$?
+assert_exit "carry-forward rc" 0 $rc
+assert_contains "carry-forward warned" "$out" "carrying previous snapshot forward"
+cff() { jq -r "$1" "${wsdir}/data.json" }
+assert_eq "carry-forward available" "true" "$(cff '.model_analytics.available')"
+assert_eq "carry-forward stale" "true" "$(cff '.model_analytics.stale')"
+assert_eq "carry-forward alice top model" "claude-sonnet-4-6" "$(cff '.users[] | select(.email=="alice@example.com").models[0].model')"
+
+# 8m. Within the TTL the previous section is reused without any Windsurf request
+#     (the API allows 10 req/hr/team) — even though the endpoint would fail.
+: > "${tmpdir}/curl-urls.log"
+out=$(FAKE_WINDSURF_CODE=500 run_dash --no-open --out "$wsdir" 2>&1); rc=$?
+assert_exit "ttl reuse rc" 0 $rc
+assert_eq "ttl reuse available" "true" "$(cff '.model_analytics.available')"
+if grep -F "api/v2alpha/analytics/consumption" "${tmpdir}/curl-urls.log" >/dev/null 2>&1; then
+  _fail "windsurf API refetched inside the TTL"
+else
+  _ok
+fi
 
 # 9. dag help lists the dashboard command and its flags.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=k zsh "$dag" help 2>&1); rc=$?

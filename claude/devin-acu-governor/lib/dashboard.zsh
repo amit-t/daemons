@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # dag dashboard — local, read-only ACU burn-rate + forecast dashboard.
 # Fetches Devin v3 consumption (cycles, enterprise daily, orgs, per-org daily,
-# users, per-user daily, per-user Local Agent limits), computes burn-rate +
+# users, per-user daily, per-user Local Agent limits, Devin Cloud sessions) and
+# optionally Windsurf per-user model/IDE analytics, computes burn-rate +
 # forecast via lib/dashboard.jq into data.json, then serves the React app in
 # web/dashboard-app (built once, on first run) over a localhost HTTP server.
 # With --refresh, a background loop refetches data.json on the cadence; the
@@ -110,6 +111,110 @@ _dag_dash_fetch_members() {  # $1=base $2=auth-header-file $3=output-file
   }' "$pages" > "$out"
 }
 
+# Devin Cloud sessions created inside the cycle (cursor pagination, like members).
+# $1=base $2=auth-header-file $3=after $4=before $5=output-file
+_dag_dash_fetch_sessions() {
+  local base=$1 hdr=$2 after=$3 before=$4 out=$5 pages="${5}.pages" cursor="" cursor_q="" url page has_next
+  : > "$pages" || return 1
+  while true; do
+    url="${base}/v3/enterprise/sessions?first=200&created_after=${after}&created_before=${before}"
+    if [[ -n "$cursor" ]]; then
+      cursor_q=$(_dag_dash_urlencode "$cursor") || return 1
+      url="${url}&after=${cursor_q}"
+    fi
+    page=$(_dag_dash_fetch "$url" "$hdr") || return 1
+    print -r -- "$page" >> "$pages" || return 1
+    has_next=$(jq -r '.has_next_page // false' <<<"$page") || return 1
+    cursor=$(jq -r '.end_cursor // empty' <<<"$page") || return 1
+    [[ "$has_next" == "true" && -n "$cursor" ]] || break
+  done
+  jq -s '{available: true, items: [.[].items[]?]}' "$pages" > "$out"
+}
+
+# Per-user model/IDE ACU split for the cycle, from the Windsurf analytics API
+# (separate service key; GET /api/v2alpha/analytics/consumption grouped by
+# user,model_uid,ide). Optional enrichment — never fails the dashboard:
+#   - no Windsurf key       -> {available:false, reason:"no_windsurf_key"}
+#   - previous fetch younger than DAG_MODEL_ANALYTICS_TTL_MINUTES (default 20)
+#                            -> previous data.json section reused, no request
+#                              (the API allows only 10 requests/hour/team)
+#   - request refused        -> previous good section carried forward stale:true,
+#                              else {available:false, reason:"fetch_failed"}
+# $1=out_dir $2=work $3=now $4=after $5=before; writes $2/model-analytics.json.
+_dag_dash_fetch_model_analytics() {
+  local out_dir=$1 work=$2 now=$3 after=$4 before=$5
+  local out="${work}/model-analytics.json" prev="${out_dir}/data.json"
+  local ttl_min="${DAG_MODEL_ANALYTICS_TTL_MINUTES:-20}"
+  local wkey
+  if ! wkey=$(dag_resolve_service_key); then
+    jq -n '{available: false, reason: "no_windsurf_key", stale: false, fetched_at: null, rows: []}' > "$out"
+    return 0
+  fi
+
+  local prev_sect=""
+  if [[ -f "$prev" ]]; then
+    prev_sect=$(jq -c 'if (.model_analytics.available // false) == true then .model_analytics else empty end' "$prev" 2>/dev/null)
+  fi
+  if [[ -n "$prev_sect" ]]; then
+    local prev_epoch
+    prev_epoch=$(jq -r '.fetched_at_epoch // 0' <<<"$prev_sect")
+    if (( now - prev_epoch < ttl_min * 60 )); then
+      print -r -- "$prev_sect" > "$out"
+      return 0
+    fi
+  fi
+
+  # Separate header file: this is the Windsurf key, not the cog_ key.
+  local whdr="${work}/windsurf-auth-header"
+  print -r -- "Authorization: Bearer ${wkey}" > "$whdr" || return 1
+  chmod 600 "$whdr"
+
+  local wbase="${DAG_WINDSURF_API_BASE:-https://server.codeium.com}"
+  local start_date end_date eff_end=$(( now < before ? now : before ))
+  start_date=$(date -u -r "$after" +%Y-%m-%d)
+  end_date=$(date -u -r "$eff_end" +%Y-%m-%d)
+
+  local pages="${out}.pages" cursor="" cursor_q="" url page
+  : > "$pages" || return 1
+  while true; do
+    url="${wbase}/api/v2alpha/analytics/consumption?start_date=${start_date}&end_date=${end_date}&product=agent&group_by=user,model_uid,ide&page_size=10000"
+    if [[ -n "$cursor" ]]; then
+      cursor_q=$(_dag_dash_urlencode "$cursor") || return 1
+      url="${url}&page_cursor=${cursor_q}"
+    fi
+    if ! page=$(_dag_dash_fetch "$url" "$whdr"); then
+      if [[ -n "$prev_sect" ]]; then
+        jq -c '. + {stale: true}' <<<"$prev_sect" > "$out"
+        print -ru2 -- "dag dashboard: Windsurf model analytics refused (rate limit is 10 req/hr/team); carrying previous snapshot forward (stale)"
+      else
+        jq -n '{available: false, reason: "fetch_failed", stale: false, fetched_at: null, rows: []}' > "$out"
+        print -ru2 -- "dag dashboard: Windsurf model analytics unavailable; user detail views will omit the model split"
+      fi
+      return 0
+    fi
+    print -r -- "$page" >> "$pages" || return 1
+    cursor=$(jq -r '.pagination.next_page_cursor // empty' <<<"$page") || return 1
+    [[ -n "$cursor" ]] || break
+  done
+
+  local fetched_at
+  fetched_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
+  jq -s --arg fetched_at "$fetched_at" --argjson now "$now" \
+    --arg start_date "$start_date" --arg end_date "$end_date" '{
+      available: true, reason: null, stale: false,
+      fetched_at: $fetched_at, fetched_at_epoch: $now,
+      start_date: $start_date, end_date: $end_date,
+      rows: [.[].data[]? | {
+        user_id: (.user_id // ""),
+        user_email: (.user_email // ""),
+        model: (.model_uid // "unknown"),
+        ide: (.ide // "unknown"),
+        acus: (.consumption.billed_acus // 0),
+        messages: (.consumption.message_count // 0)
+      }]
+    }' "$pages" > "$out"
+}
+
 # Fetch everything and write ${out_dir}/data.json atomically.
 # $1=out_dir $2=refresh_minutes-or-empty (recorded as metadata for the UI).
 _dag_dashboard_write_data() {
@@ -162,6 +267,17 @@ _dag_dashboard_write_data() {
     fi
     print -r -- "$default_limit_json" > "${work}/user-default-limit.json" || return 1
 
+    # Devin Cloud sessions: enrichment for the per-user detail view. Any
+    # failure (including a missing ViewOrgSessions permission) degrades to
+    # "unavailable" instead of nuking the whole dashboard.
+    if ! _dag_dash_fetch_sessions "$base" "$hdr" "$after" "$before" "${work}/sessions.json"; then
+      print -ru2 -- "dag dashboard: enterprise sessions endpoint unavailable; user detail views will omit Devin Cloud session stats"
+      print -r -- '{"available": false, "items": []}' > "${work}/sessions.json" || return 1
+    fi
+
+    # Windsurf model/IDE analytics: optional second key; degrades internally.
+    _dag_dash_fetch_model_analytics "$out_dir" "$work" "$now" "$after" "$before" || return 1
+
     : > "${work}/org-dailies.json"
     local oid od
     for oid in $(jq -r '.items[]?.org_id' "${work}/organizations.json"); do
@@ -208,6 +324,8 @@ _dag_dashboard_write_data() {
       --slurpfile userd "${work}/user-dailies.json" \
       --slurpfile userl "${work}/user-limits.json" \
       --slurpfile defaultl "${work}/user-default-limit.json" \
+      --slurpfile sessions "${work}/sessions.json" \
+      --slurpfile modela "${work}/model-analytics.json" \
       -f "${daemon_dir}/lib/dashboard.jq" > "${out_dir}/data.json.tmp"; then
       rm -f "${out_dir}/data.json.tmp"
       print -ru2 -- "dag dashboard: failed to compute dashboard data (lib/dashboard.jq)"

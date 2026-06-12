@@ -5,6 +5,7 @@ import { BurnChart } from './components/BurnChart'
 import { ProductSplitPanel } from './components/ProductSplit'
 import { OrgTable } from './components/OrgTable'
 import { UserTable } from './components/UserTable'
+import { UserDetail } from './components/UserDetail'
 
 // Re-render the "x ago" labels every 30s without refetching.
 function useClock() {
@@ -18,6 +19,9 @@ function useClock() {
 export default function App() {
   const { data, error, stale, refreshStatus, refreshNow } = useDashboardData()
   useClock()
+  // Selection is by id, not row object, so a background refresh swaps in the
+  // freshly fetched row while the drawer stays open.
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
 
   if (!data) {
     return (
@@ -36,6 +40,9 @@ export default function App() {
   }
 
   const { enterprise: ent, cycle, refresh } = data
+  const selectedUser = selectedUserId
+    ? (data.users.find((u) => u.user_id === selectedUserId) ?? null)
+    : null
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
@@ -148,7 +155,16 @@ export default function App() {
       </section>
 
       <OrgTable orgs={data.orgs} />
-      <UserTable users={data.users} />
+      <UserTable users={data.users} onSelect={(u) => setSelectedUserId(u.user_id)} />
+
+      {selectedUser && (
+        <UserDetail
+          user={selectedUser}
+          cycle={cycle}
+          modelAnalytics={data.model_analytics}
+          onClose={() => setSelectedUserId(null)}
+        />
+      )}
 
       <footer>
         generated {data.generated_at} · local-only console · data via Devin v3 API (read-only) ·

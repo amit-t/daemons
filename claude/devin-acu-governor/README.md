@@ -48,7 +48,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
 | `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
 | `dag doctor` | ❌ probe | Probe required v3/v3beta1 key permissions plus optional Windsurf scopes |
-| `dag dashboard` | ❌ read-only | Local React burn-rate + forecast dashboard (interactive charts, filterable/sortable org + user cap tables) served on `127.0.0.1`; no agent, no writes; optional `--refresh` background data refresh without page reloads |
+| `dag dashboard` | ❌ read-only | Local React burn-rate + forecast dashboard (interactive charts, filterable/sortable org + user cap tables, click-through per-user detail view with daily ACU chart, model/IDE split, and Devin Cloud session stats) served on `127.0.0.1`; no agent, no writes; optional `--refresh` background data refresh without page reloads |
 | `dag setup-extract` | ❌ local secret output | Print pasteable target-machine `security add-generic-password` commands containing the currently configured DAG keys |
 | `dag help` | ❌ | Usage text |
 
@@ -316,7 +316,7 @@ DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor
 
 ## `dag dashboard`
 
-Local, read-only dashboard — a React app (`web/dashboard-app/`, Vite + recharts) served from a localhost-only HTTP server. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle ACUs, the default per-user Local Agent cap, and each user's explicit Local Agent override into `data.json`, stages the built app next to it under `$DAG_STATE_DIR/dashboard/latest/` by default, and serves it at `http://127.0.0.1:8642/`. Local-only by design: the server binds `127.0.0.1` and nothing is deployed.
+Local, read-only dashboard — a React app (`web/dashboard-app/`, Vite + recharts) served from a localhost-only HTTP server. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle daily ACUs, the default per-user Local Agent cap, each user's explicit Local Agent override, the cycle's Devin Cloud sessions, and (optionally, with the Windsurf key) the per-user model/IDE ACU split into `data.json`, stages the built app next to it under `$DAG_STATE_DIR/dashboard/latest/` by default, and serves it at `http://127.0.0.1:8642/`. Local-only by design: the server binds `127.0.0.1` and nothing is deployed.
 
 ```zsh
 dag dashboard
@@ -336,7 +336,8 @@ The dashboard shows:
 - organization table: sortable columns, status filter chips, per-row cap meters;
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; `Billing org` is the last column, with `Status` shifted left of cap source/org;
 - top-bar `Refresh now` control plus `refreshing` / `refreshed` background status for manual and auto-refresh fetches;
-- warnings for org cap risk and users already over effective cap.
+- warnings for org cap risk and users already over effective cap;
+- **per-user detail view**: click any user row to open a drawer with that user's daily ACU line chart over the cycle (with a dashed "cap pace" reference line), Devin Cloud session stats (sessions initiated this cycle + their summed ACUs, from `/v3/enterprise/sessions`), the user's product split (devin/cascade/terminal/review), and — when the optional Windsurf service key is configured — the model split and surface split (Devin Desktop / Windsurf / JetBrains / Devin CLI) of their Devin Desktop & Local usage, with billed ACUs and message counts per row. Close with `Esc`, the `✕` button, or a click outside.
 
 Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that.
 
@@ -349,6 +350,11 @@ Port: default `8642`; pin with `--port <n>` or `DAG_DASHBOARD_PORT`. If the defa
 Generated files in the output dir: `data.json` plus the staged app build (`index.html`, `assets/`). `--json-only` writes only `data.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
 
 **Transient-failure resilience.** Every GET retries gateway/overload classes — HTTP `429`, `502`, `503`, `504` (e.g. a `504 Gateway Time-out` with an HTML body), and curl transport errors — with bounded linear backoff (`DAG_FETCH_RETRIES`, default 3; `DAG_FETCH_RETRY_SLEEP` seconds × attempt, default 2). If the two per-user ACU-limit endpoints still fail transiently after retries, the dashboard **degrades instead of aborting**: a failed per-user override falls back to the default cap (`cap_source: default`), and a failed default-cap endpoint leaves uncapped users marked `uncapped`. Each degradation prints a warning to stderr. Hard errors (`4xx`/`500`) and any other endpoint remain fatal and quote the exact response body — a single flaky user-limit call no longer takes down the whole dashboard.
+
+**Detail-view enrichments degrade, never abort.** The two data sources that exist only for the per-user detail drawer are treated as optional:
+
+- *Devin Cloud sessions* (`/v3/enterprise/sessions`, needs **ViewOrgSessions**): any failure — including a key without the permission — marks `sessions_info.available: false`; user rows carry `sessions: null` and the drawer shows `—`.
+- *Windsurf model/IDE analytics* (`GET https://server.codeium.com/api/v2alpha/analytics/consumption?…&group_by=user,model_uid,ide`, needs the optional Windsurf service key with **Analytics Read**): without the key the drawer simply omits the model split (`model_analytics.reason: no_windsurf_key`). The endpoint is rate-limited to **10 requests/hour/team**, so the dashboard fetches it at most once per `DAG_MODEL_ANALYTICS_TTL_MINUTES` (default 20) and otherwise reuses the section from the previous `data.json`. If a refetch is refused (e.g. the rate limit), the previous snapshot is carried forward and flagged `stale: true` in the UI; with no previous snapshot it degrades to `available: false`.
 
 ## One-time setup — keys
 
@@ -426,6 +432,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_DASHBOARD_APP_DIR` | `web/dashboard-app` | Dashboard: React app source/build directory |
 | `DAG_DASHBOARD_NPM` | `npm` | Dashboard: npm command for the one-time app build |
 | `DAG_DASHBOARD_PYTHON` | `python3` | Dashboard: python used for the localhost static server |
+| `DAG_MODEL_ANALYTICS_TTL_MINUTES` | `20` | Dashboard: minimum minutes between Windsurf model-analytics refetches (endpoint allows 10 req/hr/team) |
+| `DAG_WINDSURF_API_BASE` | `https://server.codeium.com` | Dashboard: Windsurf analytics base URL |
 
 ## Safety model
 
@@ -452,7 +460,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, dashboard, usage |
 | `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, dashboard, usage, doctor |
 | `/v3/enterprise/metrics/usage` | GET | doctor |
-| `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models |
+| `/v3/enterprise/sessions` | GET | dashboard (per-user Devin Cloud session stats; degrades if unavailable) |
+| `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models, dashboard (per-user model/IDE split; TTL-cached) |
 | `/api/v1/UserPageAnalytics` | POST | user, doctor |
 | `https://docs.devin.ai/llms.txt` | GET | all commands, models doc re-check |
 | `https://docs.devin.ai/admin/billing/acu-limits` | GET | all commands seed, common contract source |

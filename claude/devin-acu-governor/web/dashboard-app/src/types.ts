@@ -57,6 +57,30 @@ export interface OrgRow {
   status: OrgStatus
 }
 
+export interface UserProductTotals {
+  devin: number
+  cascade: number
+  terminal: number
+  review: number
+}
+
+export interface UserSessions {
+  count: number
+  acus: number
+}
+
+export interface ModelUsage {
+  model: string
+  acus: number
+  messages: number
+}
+
+export interface IdeUsage {
+  ide: string
+  acus: number
+  messages: number
+}
+
 export interface UserRow {
   user_id: string
   email: string
@@ -70,6 +94,27 @@ export interface UserRow {
   headroom: number | null
   pct_limit: number | null
   status: UserStatus
+  daily: DailyPoint[]
+  product_totals: UserProductTotals
+  sessions: UserSessions | null
+  models: ModelUsage[]
+  ides: IdeUsage[]
+}
+
+export interface SessionsInfo {
+  available: boolean
+  count: number
+  acus: number
+}
+
+export interface ModelAnalyticsInfo {
+  available: boolean
+  stale: boolean
+  reason: string | null
+  fetched_at: string | null
+  fetched_at_epoch: number | null
+  start_date: string | null
+  end_date: string | null
 }
 
 export interface RefreshInfo {
@@ -87,6 +132,8 @@ export interface DashboardData {
   cap_totals: CapTotals
   product_split: ProductSplit[]
   daily: DailyPoint[]
+  sessions_info: SessionsInfo
+  model_analytics: ModelAnalyticsInfo
   orgs: OrgRow[]
   users: UserRow[]
   warnings: string[]

@@ -30,7 +30,7 @@ const columns: Column<UserRow>[] = [
   { key: 'org', label: 'Billing org', sortValue: (u) => u.billing_org_id, render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span> },
 ]
 
-export function UserTable({ users }: { users: UserRow[] }) {
+export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u: UserRow) => void }) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Set<UserStatus>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<CapSource>>(new Set())
@@ -93,9 +93,10 @@ export function UserTable({ users }: { users: UserRow[] }) {
         rows={rows}
         rowKey={(u) => u.user_id}
         initialSort={{ key: 'consumed', dir: 'desc' }}
+        onRowClick={onSelect}
       />
       <div className="row-count">
-        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view
+        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view · click a row for the per-user detail view
       </div>
     </section>
   )

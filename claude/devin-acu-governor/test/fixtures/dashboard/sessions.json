@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "session_id": "s-alice-1",
+      "user_id": "email|alice",
+      "service_user_id": null,
+      "org_id": "platform",
+      "title": "Fix flaky CI",
+      "status": "exit",
+      "created_at": 1781000000,
+      "updated_at": 1781003600,
+      "acus_consumed": 10.5,
+      "origin": "webapp"
+    },
+    {
+      "session_id": "s-alice-2",
+      "user_id": "email|alice",
+      "service_user_id": null,
+      "org_id": "platform",
+      "title": "Refactor auth module",
+      "status": "running",
+      "created_at": 1781100000,
+      "updated_at": 1781101000,
+      "acus_consumed": 2,
+      "origin": "webapp"
+    },
+    {
+      "session_id": "s-bob-1",
+      "user_id": "email|bob",
+      "service_user_id": null,
+      "org_id": "research",
+      "title": "Write API docs",
+      "status": "suspended",
+      "created_at": 1781200000,
+      "updated_at": 1781205000,
+      "acus_consumed": 5,
+      "origin": "api"
+    },
+    {
+      "session_id": "s-svc-1",
+      "user_id": null,
+      "service_user_id": "svc|nightly-ci",
+      "org_id": "platform",
+      "title": "Nightly dependency bump",
+      "status": "exit",
+      "created_at": 1781300000,
+      "updated_at": 1781303000,
+      "acus_consumed": 3,
+      "origin": "api"
+    },
+    {
+      "session_id": "s-ghost-1",
+      "user_id": "email|ghost",
+      "service_user_id": null,
+      "org_id": "labs",
+      "title": "Departed user session",
+      "status": "exit",
+      "created_at": 1781400000,
+      "updated_at": 1781401000,
+      "acus_consumed": 1,
+      "origin": "webapp"
+    }
+  ],
+  "end_cursor": null,
+  "has_next_page": false,
+  "total": 5
+}

@@ -346,6 +346,9 @@ td {
 
 tr:hover td { background: rgba(255, 178, 36, 0.03); }
 
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: rgba(255, 178, 36, 0.07); }
+
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.dim { color: var(--text-dim); }
 
@@ -487,4 +490,165 @@ footer {
   color: var(--text-faint);
   font-size: 11px;
   text-align: center;
+}
+
+/* ---------- per-user detail drawer ---------- */
+
+.detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 7, 0.72);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detail-drawer {
+  width: min(720px, 94vw);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.55);
+  padding: 20px 24px 28px;
+  animation: drawer-in 0.18s ease-out;
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.detail-name {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  margin: 0 0 4px;
+}
+
+.detail-sub {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.detail-sub .dim { color: var(--text-faint); }
+
+.detail-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-close {
+  font-family: var(--mono);
+  font-size: 13px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.detail-close:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.detail-cards { margin-bottom: 16px; }
+
+.detail-panel { margin-bottom: 16px; }
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .detail-grid { grid-template-columns: 1fr; }
+}
+
+.detail-empty {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  padding: 6px 0;
+}
+
+.detail-footer {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+/* horizontal bar lists (models / surfaces / product split) */
+
+.bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.1fr) 2fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+}
+
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.bar-track {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.bar-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--amber);
+}
+
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 52px;
+}
+
+.bar-msgs {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  text-align: right;
+  min-width: 64px;
 }
