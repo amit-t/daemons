@@ -18,6 +18,15 @@ For every daemon creation or daemon behavior change, create or update the releva
 - Root `README.md` for repository layout/global exposure conventions.
 - `<family>/<daemon-name>/README.md` for daemon-specific purpose, usage, files, and verification.
 
+## Completion commit/push rule
+
+- When you finish user-requested work, run the relevant verification before reporting completion.
+- If verification passes, commit the scoped work with a clear message and push the current branch.
+- If the branch has no upstream, push with upstream tracking (`git push -u origin HEAD`) unless the push is rejected.
+- Stage only files you intentionally changed. Do not include unrelated dirty work from other agents or earlier tasks.
+- If verification fails, required credentials are missing, or push is rejected, do not claim completion; report the exact blocker and leave the work unpushed.
+- Never commit secrets, tokens, generated credentials, or local-only scratch artifacts.
+
 ## Shell preference
 
 - Prefer zsh for shell entrypoints and wrappers.
