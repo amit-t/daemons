@@ -35,12 +35,29 @@ case "$url" in
     body='{"items":[{"after":0,"before":500000}]}'; code=200 ;;
   *users/consumption/acu-limits*)              # default per-user cap
     body='{"local_agent":{"cycle_acu_limit":300}}'; code=200 ;;
+  *members/idp-users*email=idp-only%40x.io*)
+    body='{"items":[
+      {"user_id":"idp|only","email":"idp-only@x.io","name":"IDP Only","idp_role_assignments":[{"idp_group_name":"IDP Only","org_id":"org-idp","role":{"role_name":"Engineer"}}]}
+    ],"has_next_page":false,"total":1}'; code=200 ;;
+  *members/idp-users*email=missing%40x.io*)
+    body='{"items":[],"has_next_page":false,"total":0}'; code=200 ;;
   *members/idp-users*)
     body='{"items":[
       {"user_id":"u1","email":"a@x.io","name":"A","idp_role_assignments":[{"idp_group_name":"Core Eng","org_id":"org-alpha","role":{"role_name":"Engineer"}}]},
       {"user_id":"okta|u3","email":"c@x.io","name":"C","idp_role_assignments":[{"idp_group_name":"Core Eng","org_id":"org-beta","role":{"role_name":"Engineer"}}]},
+      {"user_id":"idp|only","email":"idp-only@x.io","name":"IDP Only","idp_role_assignments":[{"idp_group_name":"IDP Only","org_id":"org-idp","role":{"role_name":"Engineer"}}]},
       {"user_id":"u2","email":"b@x.io","name":"B","idp_role_assignments":[{"idp_group_name":"Other Eng","org_id":"org-gamma","role":{"role_name":"Engineer"}}]}
-    ],"has_next_page":false,"total":3}'; code=200 ;;
+    ],"has_next_page":false,"total":4}'; code=200 ;;
+  *members/users*email=a%40x.io*)
+    body='{"items":[{"user_id":"u1","email":"a@x.io","name":"A"}],"has_next_page":false,"total":1}'; code=200 ;;
+  *members/users*email=dupe%40x.io*)
+    body='{"items":[{"user_id":"dupe-1","email":"dupe@x.io","name":"Dupe One"},{"user_id":"dupe-2","email":"DUPE@x.io","name":"Dupe Two"}],"has_next_page":false,"total":2}'; code=200 ;;
+  *members/users*email=authfail%40x.io*)
+    body='{"items":[{"user_id":"authfail","email":"authfail@x.io","name":"Auth Fail"}],"has_next_page":false,"total":1}'; code=200 ;;
+  *members/users*email=idp-only%40x.io*)
+    body='{"items":[],"has_next_page":false,"total":0}'; code=200 ;;
+  *members/users*email=missing%40x.io*)
+    body='{"items":[],"has_next_page":false,"total":0}'; code=200 ;;
   *members/users*)
     if [[ "$url" == *after=CUR1* ]]; then
       body='{"items":[{"user_id":"u2","email":"b@x.io","name":"B"}],"has_next_page":false}'; code=200
@@ -51,6 +68,8 @@ case "$url" in
     case "$url" in
       *daily/users/u1*)          body='{"total_acus":350,"consumption_by_date":[{"date":0,"acus":200,"acus_by_product":{"devin":100,"cascade":50,"terminal":30,"review":20}},{"date":172800,"acus":60,"acus_by_product":{"devin":20,"cascade":20,"terminal":10,"review":10}},{"date":259200,"acus":90,"acus_by_product":{"devin":50,"cascade":20,"terminal":10,"review":10}}]}'; code=200 ;;
       *daily/users/okta%7Cu3*)   body='{"total_acus":50,"consumption_by_date":[{"date":0,"acus":20,"acus_by_product":{"devin":5,"cascade":5,"terminal":5,"review":5}},{"date":259200,"acus":30,"acus_by_product":{"devin":10,"cascade":10,"terminal":5,"review":5}}]}';  code=200 ;;
+      *daily/users/idp%7Conly*)   body='{"total_acus":42,"consumption_by_date":[{"date":259200,"acus":42,"acus_by_product":{"devin":20,"cascade":10,"terminal":7,"review":5}}]}'; code=200 ;;
+      *daily/users/authfail*)     body='{"error":"forbidden","detail":"missing consumption permission"}'; code=403 ;;
       *daily/users/u2*)          body='{"total_acus":120,"consumption_by_date":[{"date":259200,"acus":120,"acus_by_product":{"devin":100,"cascade":10,"terminal":5,"review":5}}]}'; code=200 ;;
       *)                         body='{"total_acus":0}';   code=200 ;;
     esac ;;
@@ -139,6 +158,62 @@ assert_eq "usage --group json row count" 2 "$(jq '.rows|length' <<<"$js")"
 assert_eq "usage --group json total last3" "180" "$(jq -r '.totals.last3_acus' <<<"$js")"
 assert_eq "usage --group json a last3" "150" "$(jq -r '.rows[]|select(.email=="a@x.io").last3_acus' <<<"$js")"
 
+# 6e. --user-email resolves a normalized direct members/users email query, then
+# prints one user's cycle total plus daily/product breakdown.
+out=$(run_usage --user-email " A@X.IO " 2>/dev/null); rc=$?
+assert_exit "usage --user-email direct rc" 0 $rc
+assert_contains "usage --user-email title" "$out" "dag usage --user-email — user: a@x.io"
+assert_contains "usage --user-email user id" "$out" "user_id: u1"
+assert_contains "usage --user-email source" "$out" "lookup: members/users exact email query"
+assert_contains "usage --user-email total" "$out" "total: 350 ACUs"
+assert_contains "usage --user-email daily header" "$out" "DATE"
+assert_contains "usage --user-email daily product" "$out" "DEVIN"
+assert_contains "usage --user-email day one" "$out" "1970-01-01"
+assert_contains "usage --user-email product number" "$out" "100"
+
+# 6f. --user-email JSON keeps the same selected-user detail machine-readable.
+js=$(run_usage --user-email a@x.io --json 2>/dev/null); rc=$?
+assert_exit "usage --user-email json rc" 0 $rc
+assert_eq "usage --user-email json email" "a@x.io" "$(jq -r '.user.email' <<<"$js")"
+assert_eq "usage --user-email json id" "u1" "$(jq -r '.user.user_id' <<<"$js")"
+assert_eq "usage --user-email json total" "350" "$(jq -r '.usage.total_acus' <<<"$js")"
+assert_eq "usage --user-email json days" "3" "$(jq -r '.usage.daily|length' <<<"$js")"
+assert_eq "usage --user-email json devin total" "170" "$(jq -r '.usage.product_totals.devin' <<<"$js")"
+assert_eq "usage --user-email json cap source" "default" "$(jq -r '.effective_cap.source' <<<"$js")"
+
+# 6g. --user-email falls back to IDP-derived users when direct enterprise lookup has no exact match.
+out=$(run_usage --user-email idp-only@x.io 2>/dev/null); rc=$?
+assert_exit "usage --user-email idp fallback rc" 0 $rc
+assert_contains "usage --user-email idp title" "$out" "idp-only@x.io"
+assert_contains "usage --user-email idp encoded id" "$out" "user_id: idp|only"
+assert_contains "usage --user-email idp source" "$out" "lookup: idp-users exact email query"
+assert_contains "usage --user-email idp total" "$out" "total: 42 ACUs"
+
+# 6h. --user-email reports useful stable failures.
+out=$(run_usage --user-email not-an-email 2>&1); rc=$?
+assert_exit "usage --user-email invalid rc" 2 $rc
+assert_contains "usage --user-email invalid msg" "$out" "must be an email"
+
+out=$(run_usage --user-email "" 2>&1); rc=$?
+assert_exit "usage --user-email empty rc" 2 $rc
+assert_contains "usage --user-email empty msg" "$out" "must be an email"
+
+out=$(run_usage --user-email missing@x.io 2>&1); rc=$?
+assert_exit "usage --user-email not found rc" 1 $rc
+assert_contains "usage --user-email not found msg" "$out" "no user found for email missing@x.io"
+assert_contains "usage --user-email not found scope" "$out" "members/users and idp-users"
+
+out=$(run_usage --user-email dupe@x.io 2>&1); rc=$?
+assert_exit "usage --user-email duplicate rc" 1 $rc
+assert_contains "usage --user-email duplicate msg" "$out" "multiple users found for email dupe@x.io"
+assert_contains "usage --user-email duplicate id 1" "$out" "dupe-1"
+assert_contains "usage --user-email duplicate id 2" "$out" "dupe-2"
+
+out=$(run_usage --user-email authfail@x.io 2>&1); rc=$?
+assert_exit "usage --user-email auth failure rc" 1 $rc
+assert_contains "usage --user-email auth failure status" "$out" "failed [403]"
+assert_contains "usage --user-email auth failure permission" "$out" "ViewAccountConsumption"
+
 # 6d. Alternate compact command spelling is accepted.
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_TEST_WRITES="$writes" \
   DEVIN_COG_KEY=test-cog-key DAG_NOW_EPOCH=345600 zsh "$dag" usage--group Core Eng 2>/dev/null); rc=$?
@@ -162,5 +237,6 @@ assert_contains "usage no key hint" "$out" "devin-cog-key"
 out=$(PATH="${tmpdir}/bin:$PATH" zsh "$dag" help 2>&1)
 assert_contains "help lists usage" "$out" "dag usage"
 assert_contains "help lists usage group" "$out" "dag usage --group"
+assert_contains "help lists usage user email" "$out" "dag usage --user-email <email>"
 
 report

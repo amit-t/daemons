@@ -42,6 +42,9 @@ Usage:
   dag usage [--json] [--top <n>]
                               List every user's consumed ACUs, effective Local Agent cap,
                               and consumed/cap ratio (read-only, local, no agent)
+  dag usage --user-email <email> [--json]
+                              Resolve one email to a Devin user_id, then print that user's
+                              current-cycle total ACUs plus daily/product breakdown
   dag usage --group [idp_group_name] [--json] [--top <n>]
   dag usage--group [idp_group_name] [--json] [--top <n>]
                               Same local report, scoped to one IDP group, with current-cycle
@@ -59,6 +62,11 @@ Usage:
   dag setup-extract           Print pasteable target-machine keychain setup commands
                               with the currently configured DAG keys (secret output)
   dag help                    Show this help
+
+Examples:
+  dag usage --user-email alice@corp.com
+  dag usage --user-email alice@corp.com --json
+  dag usage --group "Platform Eng" --top 5
 
 Config (environment.env; shell env vars override):
   DAG_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)

@@ -192,6 +192,30 @@ dag usage --json          # structured rows + totals (no table), for piping to j
 
 Columns: `EMAIL  CONSUMED  CAP  USED%  SOURCE  STATE`, then a totals line (`sum_caps`, `OVER/NEAR/UNLIMITED/BLOCKED` counts) and the Enterprise Settings UI instruction. No Windsurf key needed — Devin v3 per-user consumption covers it.
 
+### `dag usage --user-email`
+
+Local, deterministic, read-only. Resolves one email address to a Devin `user_id`, then prints that user's current-cycle ACU total and daily breakdown. Email input is trimmed, lowercased for lookup, and rejected before API calls when it is empty or not email-like.
+
+Flow:
+1. Resolve the `cog_` key.
+2. GET current cycle and the default per-user Local Agent cap, same as `dag usage`.
+3. Resolve the email in this order:
+   - exact email query against `/v3/enterprise/members/users`;
+   - paginated `/v3/enterprise/members/users` roster scan, filtered client-side by exact email;
+   - paginated exact email query against `/v3/enterprise/members/idp-users` for IDP-derived users.
+4. Fail closed on no exact match (`exit 1`) or duplicate exact matches (`exit 1`, listing visible `user_id`s).
+5. GET `/v3/enterprise/consumption/daily/users/{user_id}` for the current cycle, and GET `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` for the explicit cap override.
+6. Render total ACUs, effective Local Agent cap, and daily rows with product columns (`devin`, `cascade`, `terminal`, `review`) when present in the v3 response.
+
+Date behavior: uses the active billing cycle returned by `/v3/enterprise/consumption/cycles`; there are no custom date flags. Tests pin the clock with `DAG_NOW_EPOCH`.
+
+```zsh
+dag usage --user-email alice@corp.com
+dag usage --user-email Alice@Corp.com --json
+```
+
+Columns: `DATE  ACUS  DEVIN  CASCADE  TERMINAL  REVIEW`, followed by product totals and the Enterprise Settings UI instruction. Permission/auth failures exit `1` and print the HTTP status/body plus a permission hint; tokens are never printed.
+
 ### `dag usage --group`
 
 Local, deterministic, read-only. Filters the report to users whose enterprise membership includes an exact IDP group assignment. `--group` prompts for the group name when omitted; group names with spaces can be passed either quoted or as bare words before later flags.
@@ -323,7 +347,7 @@ Generated files: `data.json`, `dashboard-data.js`, `dashboard.html`, `dashboard.
    - **ManageBilling** — update/delete ACU-limit settings;
    - **ViewOrgSessions** — consumption/session context;
    - **ViewAccountMetrics** — metrics probe;
-   - **ViewAccountMembership** — IDP group membership for `usage --group` and `status --group`.
+   - **ViewAccountMembership** — enterprise/IDP membership for `usage`, `usage --user-email`, `usage --group`, and `status --group`.
 3. Store the key:
 
 ```zsh
@@ -400,6 +424,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `/v3/enterprise/consumption/daily/organizations/{org_id}` | GET | status, dashboard |
 | `/v3/enterprise/consumption/daily/users/{user_id}` | GET | set-limits fallback, boost fallback, user, dashboard, usage |
 | `/v3/enterprise/members/users` | GET | set-limits, boost, user, dashboard, usage, doctor |
+| `/v3/enterprise/members/idp-users` | GET | usage `--user-email` fallback, usage `--group`, status `--group`, doctor |
 | `/v3/enterprise/organizations` | GET | status, global command, dashboard, doctor |
 | `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` | GET/PATCH | global command, status, optional org guardrails |
 | `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, dashboard, usage |
@@ -450,7 +475,7 @@ DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio/group math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 
@@ -459,7 +484,7 @@ Test coverage spans key resolution, setup-extract command generation, cap math, 
 | `dag: no Devin API v3 service-user key` | Store `cog_…` in Keychain or `DEVIN_COG_KEY`. |
 | `ACU Limit Read missing` in doctor | Key lacks `ViewAccountConsumption`. |
 | `ACU Limit Write missing` or real PATCH 403 | Key lacks `ManageBilling`, wrong key family, or wrong org scope. |
-| `IDP Group Read missing` in doctor | Key lacks `ViewAccountMembership`; `dag usage --group` and `dag status --group` need it. |
+| `IDP Group Read missing` in doctor | Key lacks `ViewAccountMembership`; `dag usage --user-email` IDP fallback, `dag usage --group`, and `dag status --group` need it. |
 | Only one org should change | Pass `org_id` or exact org name; omitting selector intentionally updates all orgs. |
 | Verification mismatch after PATCH | The API did not persist the requested limit; output quotes the GET body. Do not assume success. |
 | Windsurf analytics 429 | Rate limit is 10 req/hr/team. Retry later or skip model/IDE detail. |

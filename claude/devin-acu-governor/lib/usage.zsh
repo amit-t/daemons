@@ -30,6 +30,22 @@ _dag_usage_fetch() {
   fi
   if [[ "$code" != 200 ]]; then
     print -ru2 -- "dag usage: GET ${url} failed [${code}]: ${body}"
+    if [[ "$code" == 401 || "$code" == 403 ]]; then
+      case "$url" in
+        */v3/enterprise/members/idp-users*)
+          print -ru2 -- "dag usage: permission hint: IDP lookup requires ViewAccountMembership on the Devin service-user key."
+          ;;
+        */v3/enterprise/members/users*)
+          print -ru2 -- "dag usage: permission hint: user lookup requires ViewAccountMembership on the Devin service-user key."
+          ;;
+        */v3/enterprise/consumption/daily*|*/v3/enterprise/consumption/cycles*)
+          print -ru2 -- "dag usage: permission hint: usage consumption requires ViewAccountConsumption on the Devin service-user key."
+          ;;
+        */v3beta1/enterprise/users*/consumption/acu-limits*)
+          print -ru2 -- "dag usage: permission hint: Local Agent ACU-limit reads require ViewAccountConsumption on the Devin service-user key."
+          ;;
+      esac
+    fi
     return 1
   fi
   if ! jq -e . <<<"$body" >/dev/null 2>&1; then
@@ -41,6 +57,223 @@ _dag_usage_fetch() {
 
 # jq @uri-encode a single string (user_id can contain '|', cursors can carry reserved chars).
 _dag_uri() { jq -rn --arg s "$1" '$s|@uri'; }
+
+_dag_usage_normalize_email() {
+  jq -rn --arg s "${1:-}" '$s | gsub("^\\s+|\\s+$"; "") | ascii_downcase'
+}
+
+_dag_usage_valid_email() {
+  local email="${1:-}"
+  [[ -n "$email" && "$email" =~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' ]]
+}
+
+_dag_usage_filter_email_matches() {  # $1=email $2=lookup-source; JSON page on stdin -> ndjson matches.
+  local email=$1 source=$2
+  jq -c --arg email "$email" --arg source "$source" '
+    .items[]?
+    | select((.email // "" | ascii_downcase) == $email)
+    | select((.user_id // "") != "")
+    | {user_id, email, name: (.name // ""), lookup_source: $source}
+  '
+}
+
+_dag_usage_resolve_stage() {  # $1=email $2=matches-file; emits match or returns 3 for no match.
+  local email=$1 matches_file=$2 count
+  count=$(wc -l < "$matches_file" | tr -d ' ')
+  if (( count == 0 )); then
+    return 3
+  fi
+  if (( count > 1 )); then
+    print -ru2 -- "dag usage: multiple users found for email ${email}; refusing to guess."
+    jq -r '"  - user_id: \(.user_id)  email: \(.email)  source: \(.lookup_source)"' "$matches_file" >&2
+    return 1
+  fi
+  cat "$matches_file"
+}
+
+_dag_usage_resolve_user_email() {  # $1=base $2=hdr $3=normalized-email $4=workdir -> one JSON user.
+  local base=$1 hdr=$2 email=$3 work=$4 enc_email page url cursor enc matches
+  enc_email=$(_dag_uri "$email")
+
+  # Prefer exact email query on the enterprise users endpoint.
+  matches="${work}/email-matches-users-query.ndjson"
+  : > "$matches"
+  cursor=""
+  while :; do
+    url="${base}/v3/enterprise/members/users?limit=100&email=${enc_email}"
+    if [[ -n "$cursor" ]]; then
+      enc=$(_dag_uri "$cursor")
+      url+="&after=${enc}"
+    fi
+    page=$(_dag_usage_fetch "$url" "$hdr") || return 1
+    _dag_usage_filter_email_matches "$email" "members/users exact email query" <<<"$page" >> "$matches"
+    [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
+    cursor=$(jq -r '.end_cursor // empty' <<<"$page")
+    [[ -n "$cursor" ]] || break
+  done
+  _dag_usage_resolve_stage "$email" "$matches"
+  case $? in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+
+  # Fallback: scan enterprise users because older API variants may ignore or not
+  # narrow by email query.
+  matches="${work}/email-matches-users-scan.ndjson"
+  : > "$matches"
+  cursor=""
+  while :; do
+    url="${base}/v3/enterprise/members/users?limit=100"
+    if [[ -n "$cursor" ]]; then
+      enc=$(_dag_uri "$cursor")
+      url+="&after=${enc}"
+    fi
+    page=$(_dag_usage_fetch "$url" "$hdr") || return 1
+    _dag_usage_filter_email_matches "$email" "members/users roster scan" <<<"$page" >> "$matches"
+    [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
+    cursor=$(jq -r '.end_cursor // empty' <<<"$page")
+    [[ -n "$cursor" ]] || break
+  done
+  _dag_usage_resolve_stage "$email" "$matches"
+  case $? in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+
+  # Final fallback: IDP-derived enterprise members. Existing --group support
+  # already depends on this endpoint and permission.
+  matches="${work}/email-matches-idp-query.ndjson"
+  : > "$matches"
+  cursor=""
+  while :; do
+    url="${base}/v3/enterprise/members/idp-users?first=200&email=${enc_email}"
+    if [[ -n "$cursor" ]]; then
+      enc=$(_dag_uri "$cursor")
+      url+="&after=${enc}"
+    fi
+    page=$(_dag_usage_fetch "$url" "$hdr") || return 1
+    _dag_usage_filter_email_matches "$email" "idp-users exact email query" <<<"$page" >> "$matches"
+    [[ "$(jq -r '.has_next_page // false' <<<"$page")" == "true" ]] || break
+    cursor=$(jq -r '.end_cursor // empty' <<<"$page")
+    [[ -n "$cursor" ]] || break
+  done
+  _dag_usage_resolve_stage "$email" "$matches"
+  case $? in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+
+  print -ru2 -- "dag usage: no user found for email ${email} in members/users and idp-users lookup scope."
+  return 1
+}
+
+_dag_usage_user_detail_json() {  # stdin: consumption body; args = user_json default_cap override after before gen pool
+  local user_json=$1 default_cap=$2 override=$3 after=$4 before=$5 gen=$6 pool=$7
+  jq -c \
+    --argjson user "$user_json" \
+    --argjson default_cap "$default_cap" \
+    --argjson override "$override" \
+    --argjson after "$after" \
+    --argjson before "$before" \
+    --arg generated_at "$gen" \
+    --argjson pool "$pool" '
+    def products($d): {
+      devin: ($d.acus_by_product.devin // 0),
+      cascade: ($d.acus_by_product.cascade // 0),
+      terminal: ($d.acus_by_product.terminal // 0),
+      review: ($d.acus_by_product.review // 0)
+    };
+    (.consumption_by_date // [] | map({
+      date: (.date // 0),
+      acus: (.acus // 0),
+      acus_by_product: products(.)
+    }) | sort_by(.date)) as $daily
+    | ((.total_acus // ([$daily[].acus] | add // 0))) as $total
+    | (if $override != null then {cap: $override, source: "override"}
+       elif $default_cap != null then {cap: $default_cap, source: "default"}
+       else {cap: null, source: "none"} end) as $cap
+    | (if $cap.cap == null then null
+       elif $cap.cap == 0 then null
+       else ($total / $cap.cap) end) as $ratio
+    | (if $cap.cap == null then "UNLIMITED"
+       elif $cap.cap == 0 then (if $total > 0 then "OVER" else "BLOCKED" end)
+       elif $ratio >= 1 then "OVER"
+       elif $ratio >= 0.8 then "NEAR"
+       else "OK" end) as $state
+    | {
+        generated_at: $generated_at,
+        pool: $pool,
+        cycle: {after: $after, before: $before},
+        user: {
+          email: $user.email,
+          user_id: $user.user_id,
+          name: ($user.name // ""),
+          lookup_source: $user.lookup_source
+        },
+        default_cap: $default_cap,
+        override: $override,
+        effective_cap: ($cap + {ratio: $ratio, state: $state}),
+        usage: {
+          total_acus: $total,
+          daily: $daily,
+          product_totals: (reduce $daily[] as $d (
+            {devin:0, cascade:0, terminal:0, review:0};
+            .devin += ($d.acus_by_product.devin // 0)
+            | .cascade += ($d.acus_by_product.cascade // 0)
+            | .terminal += ($d.acus_by_product.terminal // 0)
+            | .review += ($d.acus_by_product.review // 0)
+          ))
+        }
+      }'
+}
+
+_dag_usage_render_user_email() {  # $1=data-json $2=after_d $3=before_d
+  local data=$1 after_d=$2 before_d=$3
+  local email uid name source generated pool total cap_text used_text state
+  email=$(jq -r '.user.email' <<<"$data")
+  uid=$(jq -r '.user.user_id' <<<"$data")
+  name=$(jq -r '.user.name // ""' <<<"$data")
+  source=$(jq -r '.user.lookup_source' <<<"$data")
+  generated=$(jq -r '.generated_at' <<<"$data")
+  pool=$(jq -r '.pool' <<<"$data")
+  total=$(jq -r '(.usage.total_acus * 10 | round) / 10' <<<"$data")
+  cap_text=$(jq -r 'if .effective_cap.cap == null then "∞ (none)" else "\(.effective_cap.cap) (\(.effective_cap.source))" end' <<<"$data")
+  used_text=$(jq -r 'if .effective_cap.ratio == null then "—" else "\(((.effective_cap.ratio * 1000 | round) / 10))%" end' <<<"$data")
+  state=$(jq -r '.effective_cap.state' <<<"$data")
+
+  print -r -- "dag usage --user-email — user: ${email}"
+  if [[ -n "$name" ]]; then
+    print -r -- "  user_id: ${uid}   name: ${name}   lookup: ${source}"
+  else
+    print -r -- "  user_id: ${uid}   lookup: ${source}"
+  fi
+  print -r -- "  cycle: ${after_d} → ${before_d}   pool: ${pool} ACUs   generated: ${generated}"
+  print -r -- "  total: ${total} ACUs"
+  print -r -- "  effective Local Agent cap: ${cap_text}   used: ${used_text}   state: ${state}"
+  print -r -- ""
+
+  local rows
+  rows=$(jq -r '
+    def r1($x): (($x*10)|round)/10;
+    def day:
+      if (.date | type) == "number" then (.date | strftime("%Y-%m-%d"))
+      else (.date | tostring) end;
+    (["DATE","ACUS","DEVIN","CASCADE","TERMINAL","REVIEW"]),
+    (.usage.daily[] | [
+      day,
+      (r1(.acus)|tostring),
+      (r1(.acus_by_product.devin // 0)|tostring),
+      (r1(.acus_by_product.cascade // 0)|tostring),
+      (r1(.acus_by_product.terminal // 0)|tostring),
+      (r1(.acus_by_product.review // 0)|tostring)
+    ]) | @tsv' <<<"$data")
+  print -r -- "$rows" | column -t -s $'\t'
+  print -r -- ""
+
+  jq -r '.usage.product_totals |
+    "product totals: devin \((.devin*10|round)/10)  cascade \((.cascade*10|round)/10)  terminal \((.terminal*10|round)/10)  review \((.review*10|round)/10)"' <<<"$data"
+  print -r -- "UI: app.devin.ai > Enterprise Settings > Consumption shows current-cycle Local Agent usage by product/user; Local Agent limits are API-managed."
+}
 
 _dag_usage_prompt_group() {
   local label=$1 group
@@ -58,10 +291,23 @@ _dag_usage_prompt_group() {
 }
 
 dag_usage_report() {
-  local json_only=0 top=0 group_mode=0 group_name=""
+  local json_only=0 top=0 group_mode=0 group_name="" user_mode=0 user_email_raw="" user_email=""
   while (( $# )); do
     case "$1" in
       --json) json_only=1 ;;
+      --user-email=*)
+        user_mode=1
+        user_email_raw="${1#--user-email=}"
+        ;;
+      --user-email)
+        user_mode=1
+        shift
+        if [[ -z "${1+x}" ]]; then
+          print -ru2 -- "dag usage: --user-email requires an email address"
+          return 2
+        fi
+        user_email_raw="$1"
+        ;;
       --group=*)
         group_mode=1
         group_name="${1#--group=}"
@@ -95,12 +341,24 @@ dag_usage_report() {
         top=$1
         ;;
       *)
-        print -ru2 -- "dag usage: unknown flag '$1' (expected --json, --top <n>, --group [idp-group-name])"
+        print -ru2 -- "dag usage: unknown flag '$1' (expected --json, --top <n>, --group [idp-group-name], --user-email <email>)"
         return 2
         ;;
     esac
     shift
   done
+
+  if (( user_mode && group_mode )); then
+    print -ru2 -- "dag usage: --user-email cannot be combined with --group"
+    return 2
+  fi
+  if (( user_mode )); then
+    user_email=$(_dag_usage_normalize_email "$user_email_raw")
+    if ! _dag_usage_valid_email "$user_email"; then
+      print -ru2 -- "dag usage: --user-email must be an email address (got: ${user_email_raw:-<missing>})"
+      return 2
+    fi
+  fi
 
   local key
   if ! key=$(dag_resolve_cog_key); then
@@ -137,6 +395,37 @@ dag_usage_report() {
     local defbody default_cap
     defbody=$(_dag_usage_fetch "${base}/v3beta1/enterprise/users/consumption/acu-limits" "$hdr" 1) || return 1
     default_cap=$(jq -c '.local_agent.cycle_acu_limit // null' <<<"$defbody")
+
+    if (( user_mode )); then
+      local generated_at after_d before_d resolved uid encid cbody obody override data
+      generated_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
+      after_d=$(date -r "$after" +%F)
+      before_d=$(date -r "$before" +%F)
+
+      resolved=$(_dag_usage_resolve_user_email "$base" "$hdr" "$user_email" "$work") || return $?
+      uid=$(jq -r '.user_id' <<<"$resolved")
+      encid=$(_dag_uri "$uid")
+
+      cbody=$(_dag_usage_fetch \
+        "${base}/v3/enterprise/consumption/daily/users/${encid}?time_after=${after}&time_before=${before}" \
+        "$hdr" 1) || return 1
+      obody=$(_dag_usage_fetch \
+        "${base}/v3beta1/enterprise/users/${encid}/consumption/acu-limits" \
+        "$hdr" 1) || return 1
+      override=$(jq -c '.local_agent.cycle_acu_limit // null' <<<"$obody")
+      data=$(_dag_usage_user_detail_json "$resolved" "$default_cap" "$override" "$after" "$before" "$generated_at" "$pool" <<<"$cbody") || {
+        print -ru2 -- "dag usage: failed to compute user usage detail"
+        return 1
+      }
+
+      if (( json_only )); then
+        print -r -- "$data"
+        return 0
+      fi
+
+      _dag_usage_render_user_email "$data" "$after_d" "$before_d"
+      return 0
+    fi
 
     # 3. Roster (cursor pagination). In --group mode, the roster comes from the
     # enterprise IDP membership endpoint and is filtered by exact IDP group name.
