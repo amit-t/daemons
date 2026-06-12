@@ -4,7 +4,7 @@ React (Vite + TypeScript + recharts) frontend for `dag dashboard`. Local-only: s
 
 ## How it runs
 
-`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist/` next to the generated `data.json` in the output dir, and serves that dir with `python3 -m http.server` on `127.0.0.1`. The app fetches `./data.json` on load and re-polls it every 60 s with `cache: no-store`; when the `dag dashboard --refresh` backend loop rewrites the file, the UI updates in place — no page reload.
+`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist/` next to the generated `data.json` in the output dir, and serves that dir with `python3 -m http.server` on `127.0.0.1`. The app fetches `./data.json` on load and re-polls it with `cache: no-store` on the backend refresh cadence embedded in `data.json` (falling back to 60 s for static snapshots). The header shows `refreshing` while manual/auto background fetches are in flight and `refreshed` after success; when the `dag dashboard --refresh` backend loop rewrites the file, the UI updates in place — no page reload.
 
 Force a rebuild after changing app source: `dag dashboard --rebuild`.
 
@@ -21,8 +21,8 @@ npm run build      # tsc -b && vite build → dist/
 | Path | Responsibility |
 |---|---|
 | `src/types.ts` | Shape of `data.json` (mirrors `lib/dashboard.jq` output) |
-| `src/useDashboardData.ts` | 60 s background polling hook; keeps last good snapshot on fetch failure |
-| `src/App.tsx` | Layout: header, cycle progress, KPI cards including capped user total, panels |
+| `src/useDashboardData.ts` | Manual + auto background polling hook; uses backend refresh cadence and keeps last good snapshot on fetch failure |
+| `src/App.tsx` | Layout: header with refresh button/status, cycle progress, KPI cards including capped user total, panels |
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
 | `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters |

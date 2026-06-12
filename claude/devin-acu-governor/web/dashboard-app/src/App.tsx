@@ -16,7 +16,7 @@ function useClock() {
 }
 
 export default function App() {
-  const { data, error, stale } = useDashboardData()
+  const { data, error, stale, refreshStatus, refreshNow } = useDashboardData()
   useClock()
 
   if (!data) {
@@ -48,8 +48,12 @@ export default function App() {
         </h1>
         <div className="console-meta">
           <span>
-            <span className={`live-dot ${stale ? 'stale' : ''}`} />
-            {stale ? 'data stale — fetch failing' : `data ${relTime(data.generated_at)}`}
+            <span className={`live-dot ${stale ? 'stale' : refreshStatus === 'refreshing' ? 'refreshing' : ''}`} />
+            {stale
+              ? 'data stale — fetch failing'
+              : refreshStatus === 'refreshing'
+                ? 'data refreshing in background'
+                : `data refreshed ${relTime(data.generated_at)}`}
           </span>
           <span>
             cycle <b>{cycle.start_date} → {cycle.end_date}</b>
@@ -62,6 +66,9 @@ export default function App() {
               ? `backend refresh every ${refresh.interval_minutes}m`
               : 'static snapshot'}
           </span>
+          <button className="refresh-button" type="button" onClick={refreshNow}>
+            {refreshStatus === 'refreshing' ? 'refreshing…' : 'Refresh now'}
+          </button>
         </div>
       </header>
 

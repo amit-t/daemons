@@ -335,13 +335,14 @@ The dashboard shows:
 - interactive daily burn chart (stacked per-product bars, plus a cumulative + forecast view with the pool reference line) and a product-split donut;
 - organization table: sortable columns, status filter chips, per-row cap meters;
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; `Billing org` is the last column, with `Status` shifted left of cap source/org;
+- top-bar `Refresh now` control plus `refreshing` / `refreshed` background status for manual and auto-refresh fetches;
 - warnings for org cap risk and users already over effective cap.
 
 Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that.
 
 **First run builds the app once** (`npm install && npm run build` in `web/dashboard-app/`; requires Node.js). Later runs reuse the build; `--rebuild` forces a fresh one (run after pulling app changes).
 
-`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**; the app polls `data.json` (every 60 s, `cache: no-store`) and updates in place — no page reloads. Without `--refresh` the command still keeps the server running on a static snapshot. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
+`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**; the app polls `data.json` on the same refresh cadence (or every 60 s for static snapshots), marks the header `refreshing` while the background fetch is in flight, and marks it `refreshed` after a successful fetch/update — no page reloads. `Refresh now` triggers the same background fetch path immediately. Without `--refresh` the command still keeps the server running on a static snapshot. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
 
 Port: default `8642`; pin with `--port <n>` or `DAG_DASHBOARD_PORT`. If the default port is busy, a free one is picked automatically (warned on stderr).
 

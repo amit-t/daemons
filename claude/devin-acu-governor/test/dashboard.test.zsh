@@ -300,6 +300,15 @@ fi
 app_src=$(<"${script_dir}/../web/dashboard-app/src/App.tsx")
 assert_contains "top card labels capped user total" "$app_src" "Capped user total"
 assert_contains "top card renders capped total field" "$app_src" "cap_totals.effective_user_cycle_acu_limit"
+assert_contains "refresh button label" "$app_src" "Refresh now"
+assert_contains "refreshing status text" "$app_src" "refreshing"
+assert_contains "refreshed status text" "$app_src" "refreshed"
+assert_contains "manual refresh handler wired" "$app_src" "refreshNow"
+hook_src=$(<"${script_dir}/../web/dashboard-app/src/useDashboardData.ts")
+assert_contains "hook exposes manual refresh" "$hook_src" "refreshNow"
+assert_contains "hook marks refreshing" "$hook_src" "refreshStatus: 'refreshing'"
+assert_contains "hook marks refreshed" "$hook_src" "refreshStatus: 'refreshed'"
+assert_contains "hook schedules by dashboard refresh window" "$hook_src" "data.refresh.interval_ms"
 
 # 7c. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
 out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \

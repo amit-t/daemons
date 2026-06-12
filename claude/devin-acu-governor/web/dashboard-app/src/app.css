@@ -116,6 +116,29 @@ body::before {
   animation: none;
 }
 
+.live-dot.refreshing {
+  background: var(--amber);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.refresh-button {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--amber);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.refresh-button:hover {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
