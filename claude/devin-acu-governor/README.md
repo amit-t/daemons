@@ -31,8 +31,8 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 
 | Command | Mutates | Purpose |
 |---|---:|---|
-| `dag set-limits` | ✅ user limits + ledger | Discover engineers/user IDs, compute remaining-pool prorated caps, PATCH every user's Local Agent override, live-GET verify each write |
-| `dag set-limits-new` | ✅ user limits + ledger | Cap only users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming capped users; PATCH recipients + donors; live-GET verify; Σ caps unchanged |
+| `dag set-limits` | ✅ user limits + ledger | Discover active current-member engineers/user IDs, compute remaining-pool prorated caps, PATCH each active user's Local Agent override, live-GET verify each write |
+| `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
@@ -55,7 +55,7 @@ Every agent-driven API write is gated: the agent shows endpoint, old value, new 
 
 ## `dag set-limits`
 
-Goal: distribute `DAG_MONTHLY_ACU_POOL` (default 24,000 ACUs) across confirmed engineers, prorated by current cycle burn.
+Goal: distribute `DAG_MONTHLY_ACU_POOL` (default 24,000 ACUs) across confirmed active current-member engineers, prorated by current cycle burn. Former users, non-current members, and inactive users are excluded by default so `dag` does not reserve ACUs for people who are not active members. If an excluded user still has a known stale explicit override, the default write plan clears it with `{"local_agent":null}` after confirmation.
 
 Flow:
 1. GET current cycle from `/v3/enterprise/consumption/cycles`.
@@ -63,17 +63,18 @@ Flow:
 3. Fetch per-user cycle consumption:
    - Windsurf key: one `server.codeium.com/api/v2alpha/analytics/consumption?product=agent&group_by=user` request.
    - No Windsurf key: loop `/v3/enterprise/consumption/daily/users/{user_id}`.
-4. Cross-check summed users against enterprise total.
-5. Confirm engineer set.
-6. Run `lib/compute-caps.jq` on `{pool, users:[{user_id,email,consumed}]}`.
-7. Read current user overrides with `GET /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
-8. Preview email, user_id, consumed, old override, new cap, delta, Σ caps vs pool, UI instruction.
-9. On confirmation, PATCH every user: `{"local_agent":{"cycle_acu_limit":<cap>}}`.
-10. GET each changed user limit after PATCH and confirm exact cap.
-11. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data.
-12. List users near/over cap; point to `dag boost`.
+4. With Windsurf analytics, join `/api/v1/UserPageAnalytics` by email and default eligibility to rows whose `teamStatus` is active. Without that key, use current roster membership as the fallback, label active evidence unavailable, and ask the user to remove inactive users before any write.
+5. Cross-check summed users against enterprise total.
+6. Confirm active engineer set and show excluded inactive/former users separately.
+7. Run `lib/compute-caps.jq` on `{pool, users:[{user_id,email,consumed,member,active}]}`; the jq program filters out `member:false` and `active:false`.
+8. Read current user overrides with `GET /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
+9. Preview email, user_id, consumed, old override, new cap, delta, Σ caps vs pool, excluded users, stale excluded-cap cleanup rows, UI instruction.
+10. On confirmation, PATCH every active target user: `{"local_agent":{"cycle_acu_limit":<cap>}}`; clear stale explicit overrides for excluded users with `{"local_agent":null}` when their `user_id` is known.
+11. GET each changed user limit after PATCH and confirm exact cap or cleared override.
+12. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data.
+13. List active users near/over cap; point to `dag boost`.
 
-Proration math: `cap_i = floor(consumed_i) + floor((pool − total_consumed) / N)`. If nothing has been consumed, everyone gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print.
+Proration math for eligible active members: `cap_i = floor(consumed_i) + floor((pool − eligible_total_consumed) / N)`. If nothing has been consumed, everyone active gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print. Excluded inactive/former users receive no cap row and no pool reservation.
 
 ```zsh
 dag set-limits
@@ -81,20 +82,22 @@ dag set-limits
 
 ## `dag set-limits-new` — Seed caps for the uncapped, by Borrowing
 
-Goal: give an enforceable Local Agent cap to engineers who currently have **no explicit override** (they ride the inherited org/default limit) — e.g. newly-added hires — **without** disturbing existing capped users beyond a zero-sum Borrow. Total Σ explicit caps is unchanged, so the team never tips into overage. Use this instead of `dag set-limits` when you only want to onboard the uncapped, not re-prorate everyone.
+Goal: give an enforceable Local Agent cap to active current-member engineers who currently have **no explicit override** (they ride the inherited org/default limit) — e.g. newly-added hires — **without** disturbing existing active capped users beyond a zero-sum Borrow. Inactive/former users are excluded by default and receive no new reservation; known stale explicit overrides on excluded users are cleared after confirmation. Total Σ explicit caps for the active eligible set is unchanged, so the team never tips into overage. Use this instead of `dag set-limits` when you only want to onboard the uncapped, not re-prorate everyone.
 
 Roles:
-- **Recipients** = users whose live `local_agent.cycle_acu_limit` is **unset**. They get new caps.
-- **Donors** = users whose cap **is** set, ranked lowest consumer first. They lend cap headroom. Recipients are never donors; no donor is cut below its consumed ACUs + 10% buffer.
+- **Recipients** = active current-member users whose live `local_agent.cycle_acu_limit` is **unset**. They get new caps.
+- **Donors** = active current-member users whose cap **is** set, ranked lowest consumer first. They lend cap headroom. Recipients are never donors; no donor is cut below its consumed ACUs + 10% buffer.
+- **Excluded** = inactive users or users not in the current roster. They are shown for audit but do not get new caps and do not inflate active-member donor headroom.
 
 Flow:
 1. GET current cycle, roster, and per-user consumption (Windsurf one-shot or `daily/users/{user_id}` loop).
-2. GET every user's live override and partition into recipients (unset) vs donors (set).
-3. Confirm the recipient set (drop service accounts / non-engineers). If none, report "all users already capped" and stop.
-4. Run `lib/borrow-caps.jq` on `{donor_buffer, recipients:[{user_id,email,consumed}], donors:[{user_id,email,cap,consumed}]}`.
-5. Preview the recipient caps and donor Borrow table; the output proves `sum_before == sum_after` (`zero_sum: true`).
-6. On confirmation, PATCH every recipient and tapped donor via `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`; GET each to verify.
-7. Update the ledger; report newly-capped users, donors + given, and any left uncapped.
+2. With Windsurf analytics, join `/api/v1/UserPageAnalytics` by email and default eligibility to active current members.
+3. GET every user's live override and partition active users into recipients (unset) vs donors (set); put inactive/former users in the excluded audit list.
+4. Confirm the recipient set (drop service accounts / non-engineers). If none, report "all active users already capped" and stop.
+5. Run `lib/borrow-caps.jq` on `{donor_buffer, recipients:[{user_id,email,consumed,member,active}], donors:[{user_id,email,cap,consumed,member,active}]}`; the jq program filters out `member:false` and `active:false`.
+6. Preview the recipient caps, donor Borrow table, excluded inactive/former users, and stale excluded-cap cleanup rows; the output proves `sum_before == sum_after` (`zero_sum: true`) for the active eligible set.
+7. On confirmation, PATCH every active recipient and tapped active donor via `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`; clear stale explicit overrides for excluded users with `{"local_agent":null}` when their `user_id` is known; GET each to verify.
+8. Update the ledger; report newly-capped active users, donors + given, excluded inactive/former users, cleared stale caps, and any active users left uncapped.
 
 Borrow math (`lib/borrow-caps.jq`), zero-sum in every mode:
 - `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + share`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Remaining budget is prorated evenly.
@@ -475,7 +478,7 @@ DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 

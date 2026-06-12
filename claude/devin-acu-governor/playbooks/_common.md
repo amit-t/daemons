@@ -35,6 +35,7 @@ curl -sS -H "Authorization: Bearer $DEVIN_COG_KEY" \
 - Organization-level `local_agent.cycle_acu_limit` caps combined Local Agent usage attributed to that org.
 - All limits reset monthly. `cycle_acu_limit: 0` blocks usage for that scope; `local_agent: null` clears that scope.
 - Billing organization attribution is resolved by explicit `billing_org_id` on user settings first, then automatic first accessible org.
+- Default per-user reservation scope is active current members only. Former users, non-current members, and inactive users receive no new cap reservation unless the user explicitly overrides that default after seeing the excluded list. If an excluded user has a known `user_id` and stale explicit override, default to clearing that override with `{"local_agent":null}` after confirmation.
 - UI: Local Agent limits are API-managed. Current-cycle Local Agent usage is viewable at `app.devin.ai > Enterprise Settings > Consumption` by product or user. Always print this UI instruction after any limit-write preview/result.
 
 ## Windsurf analytics (secondary — optional)

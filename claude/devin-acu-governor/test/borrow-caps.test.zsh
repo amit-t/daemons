@@ -92,4 +92,35 @@ assert_contains "H d1 drained" "$out" '{"email":"d1@x","cap_before":500,"cap_aft
 assert_contains "H d2 buffered" "$out" '{"email":"d2@x","cap_before":500,"cap_after":221,"given":279}'
 assert_contains "H zero_sum" "$out" '"zero_sum":true'
 
+# I. Default reservation set excludes inactive or non-current-member users.
+#    Only active current-member recipients get seeded, and inactive/former donors
+#    do not inflate active-member cap reservations.
+out=$(run_jq '{"recipients":[
+    {"email":"r-active@x","user_id":"email|r-active","consumed":100,"member":true,"active":true},
+    {"email":"r-inactive@x","user_id":"email|r-inactive","consumed":50,"member":true,"active":false},
+    {"email":"r-former@x","user_id":"email|r-former","consumed":1,"member":false,"active":false}
+  ],
+  "donors":[
+    {"email":"d-active@x","user_id":"email|d-active","cap":500,"consumed":0,"member":true,"active":true},
+    {"email":"d-inactive@x","user_id":"email|d-inactive","cap":10000,"consumed":0,"member":true,"active":false},
+    {"email":"d-inactive-string@x","user_id":"email|d-inactive-string","cap":10000,"consumed":0,"member":true,"active":"inactive"}
+  ]}')
+assert_contains "I active recipient capped" "$out" '{"email":"r-active@x","consumed":100,"cap":500,"user_id":"email|r-active"}'
+if [[ "$out" == *'"email":"r-inactive@x","consumed":50,"cap"'* ]]; then
+  _fail "inactive recipient received cap"
+else
+  _ok
+fi
+if [[ "$out" == *'"email":"r-former@x","consumed":1,"cap"'* ]]; then
+  _fail "former recipient received cap"
+else
+  _ok
+fi
+assert_contains "I inactive recipient audit" "$out" '{"email":"r-inactive@x","user_id":"email|r-inactive","consumed":50,"member":true,"active":false,"reasons":["inactive"]}'
+assert_contains "I former recipient audit" "$out" '{"email":"r-former@x","user_id":"email|r-former","consumed":1,"member":false,"active":false,"reasons":["not_current_member","inactive"]}'
+assert_contains "I inactive donor audit" "$out" '{"email":"d-inactive@x","user_id":"email|d-inactive","consumed":0,"cap":10000,"member":true,"active":false,"reasons":["inactive"]}'
+assert_contains "I inactive string donor audit" "$out" '{"email":"d-inactive-string@x","user_id":"email|d-inactive-string","consumed":0,"cap":10000,"member":true,"active":false,"reasons":["inactive"]}'
+assert_contains "I borrowed only active donor" "$out" '"borrowed":500'
+assert_contains "I active donor take" "$out" '{"email":"d-active@x","cap_before":500,"cap_after":0,"given":500,"user_id":"email|d-active"}'
+
 report

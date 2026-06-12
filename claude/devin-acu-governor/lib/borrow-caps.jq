@@ -7,8 +7,10 @@
 # Input:
 # {
 #   "donor_buffer": <number=0.10>,                          # keep each donor this fraction above its consumed
-#   "recipients": [{"email","user_id"?,"consumed"}, ...],   # uncapped users (no explicit cap today)
-#   "donors":     [{"email","user_id"?,"cap","consumed"}, ...]  # capped users = candidate donors
+#   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
+#                                                            # uncapped users (no explicit cap today)
+#   "donors":     [{"email","user_id"?,"cap","consumed","member"?,"active"?}, ...]
+#                                                            # capped users = candidate donors
 # }
 #
 # Output:
@@ -19,8 +21,10 @@
 #   recipients_capped: [{email,user_id?,consumed,cap}],
 #   recipients_skipped: [{email,user_id?,consumed}],   # could not be funded zero-sum
 #   donor_takes: [{email,user_id?,cap_before,cap_after,given}],   # lowest consumer first
-#   sum_donor_before, sum_donor_after, sum_before, sum_after, zero_sum, warnings
-# }  or  {error} on empty recipient set.
+#   recipients_excluded, donors_excluded, eligible_recipient_count,
+#   eligible_donor_count, sum_donor_before, sum_donor_after, sum_before,
+#   sum_after, zero_sum, warnings
+# }  or  {error} on empty/fully-ineligible recipient set.
 #
 # Modes:
 #   even_share  donors can fund floor(consumed)+share for every recipient (share>=1).
@@ -31,11 +35,68 @@
 
 def uid: if has("user_id") then {user_id} else {} end;
 
+def boolish($v; $default):
+  if $v == null then $default
+  elif ($v | type) == "boolean" then $v
+  elif ($v | type) == "number" then ($v != 0)
+  elif ($v | type) == "string" then
+    ($v | ascii_downcase) as $s
+    | ($s == "active" or $s == "true" or $s == "yes" or $s == "enabled" or $s == "current" or $s == "member")
+  else $default
+  end;
+
+def current_member:
+  if has("member") then boolish(.member; true)
+  elif has("current_member") then boolish(.current_member; true)
+  elif has("is_current_member") then boolish(.is_current_member; true)
+  else true
+  end;
+
+def active_member:
+  if has("active") then boolish(.active; true)
+  elif has("is_active") then boolish(.is_active; true)
+  elif has("teamStatus") then boolish(.teamStatus; false)
+  elif has("team_status") then boolish(.team_status; false)
+  else true
+  end;
+
+def exclusion_reasons:
+  []
+  + (if current_member then [] else ["not_current_member"] end)
+  + (if active_member then [] else ["inactive"] end);
+
+def eligible: current_member and active_member;
+
+def excluded_recipient_row:
+  {email}
+  + uid
+  + {consumed, member: current_member, active: active_member, reasons: exclusion_reasons};
+
+def excluded_donor_row:
+  {email}
+  + uid
+  + {consumed, cap, member: current_member, active: active_member, reasons: exclusion_reasons};
+
 (.donor_buffer // 0.10) as $dbuf
-| (.recipients // []) as $recips
-| (.donors // [])     as $donors
+| (.recipients // []) as $all_recips
+| (.donors // [])     as $all_donors
+| ([ $all_recips[] | select(eligible) ]) as $recips
+| ([ $all_donors[] | select(eligible) ]) as $donors
+| ([ $all_recips[] | select(eligible | not) | excluded_recipient_row ]) as $recips_excluded
+| ([ $all_donors[] | select(eligible | not) | excluded_donor_row ]) as $donors_excluded
 | ($recips | length)  as $n
-| if $n == 0 then {error: "no uncapped users to seed"}
+| if ($all_recips | length) == 0 then
+    {error: "no uncapped users to seed",
+     eligible_recipient_count: 0,
+     eligible_donor_count: ($donors | length),
+     recipients_excluded: [],
+     donors_excluded: $donors_excluded}
+  elif $n == 0 then
+    {error: "no active current-member uncapped users to seed",
+     eligible_recipient_count: 0,
+     eligible_donor_count: ($donors | length),
+     recipients_excluded: $recips_excluded,
+     donors_excluded: $donors_excluded}
   else
     # Donor headroom above a buffer over consumption, lowest consumer first.
     ([ $donors[]
@@ -82,10 +143,14 @@ def uid: if has("user_id") then {user_id} else {} end;
         donor_buffer: $dbuf,
         total_available: $total_available,
         recipients_total: $n,
+        eligible_recipient_count: $n,
+        eligible_donor_count: ($donors | length),
         borrowed: $borrowed,
         recipients_capped: $plan.capped,
         recipients_skipped: $plan.skipped,
+        recipients_excluded: $recips_excluded,
         donor_takes: $draw.takes,
+        donors_excluded: $donors_excluded,
         sum_donor_before: $sum_donor_before,
         sum_donor_after: $sum_donor_after,
         sum_before: $sum_donor_before,

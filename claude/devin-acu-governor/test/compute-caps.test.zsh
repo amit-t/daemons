@@ -50,4 +50,34 @@ assert_contains "tiny warn" "$out" 'smaller than team size'
 out=$(run_jq '{"pool":1000,"users":[]}')
 assert_contains "empty" "$out" '"error"'
 
+# 8. Default reservation set excludes inactive or non-current-member users.
+#    Only active current members consume/reserve pool share. Former/inactive users
+#    are surfaced for audit, but receive no cap row.
+out=$(run_jq '{"pool":1000,"users":[
+  {"user_id":"email|active","email":"active@x","consumed":100,"member":true,"active":true},
+  {"user_id":"email|inactive","email":"inactive@x","consumed":300,"member":true,"active":false},
+  {"user_id":"email|inactive-string","email":"inactive-string@x","consumed":50,"member":true,"active":"inactive"},
+  {"user_id":"email|former","email":"former@x","consumed":400,"member":false,"active":false}
+]}')
+assert_contains "active-only count" "$out" '"eligible_user_count":1'
+assert_contains "active-only cap" "$out" '{"email":"active@x","consumed":100,"user_id":"email|active","cap":1000}'
+if [[ "$out" == *'"email":"inactive@x","consumed":300,"user_id":"email|inactive","cap"'* ]]; then
+  _fail "inactive user received cap"
+else
+  _ok
+fi
+if [[ "$out" == *'"email":"former@x","consumed":400,"user_id":"email|former","cap"'* ]]; then
+  _fail "former user received cap"
+else
+  _ok
+fi
+if [[ "$out" == *'"email":"inactive-string@x","consumed":50,"user_id":"email|inactive-string","cap"'* ]]; then
+  _fail "inactive status string user received cap"
+else
+  _ok
+fi
+assert_contains "inactive excluded audit" "$out" '{"email":"inactive@x","user_id":"email|inactive","consumed":300,"member":true,"active":false,"reasons":["inactive"]}'
+assert_contains "inactive string excluded audit" "$out" '{"email":"inactive-string@x","user_id":"email|inactive-string","consumed":50,"member":true,"active":false,"reasons":["inactive"]}'
+assert_contains "former excluded audit" "$out" '{"email":"former@x","user_id":"email|former","consumed":400,"member":false,"active":false,"reasons":["not_current_member","inactive"]}'
+
 report

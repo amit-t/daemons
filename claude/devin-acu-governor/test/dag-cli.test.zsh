@@ -52,6 +52,9 @@ assert_contains "ws key note" "$out" "exported as DEVIN_SERVICE_KEY"
 assert_contains "local agent user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
 assert_contains "set-limits live verify" "$out" "GET each changed user limit after PATCH"
 assert_contains "set-limits ui instructions" "$out" "Enterprise Settings > Consumption"
+assert_contains "set-limits active default" "$out" "Default eligible set = current roster members whose activity status is active"
+assert_contains "set-limits inactive no reserve" "$out" "Do not reserve ACUs for users who are not current members or are inactive"
+assert_contains "set-limits stale cleanup" "$out" "clear stale explicit overrides for excluded users"
 
 # 5b. set-limits-new prompt assembly: own playbook + borrow_caps.jq path in context.
 out=$(run_dag set-limits-new); rc=$?
@@ -63,6 +66,9 @@ assert_contains "set-limits-new borrow wording" "$out" "Borrowing"
 assert_contains "set-limits-new user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
 assert_contains "set-limits-new live verify" "$out" "GET each changed user limit after PATCH"
 assert_contains "set-limits-new zero sum" "$out" "zero-sum"
+assert_contains "set-limits-new active default" "$out" "Default eligible set = current roster members whose activity status is active"
+assert_contains "set-limits-new inactive no reserve" "$out" "Do not seed caps for inactive or former users"
+assert_contains "set-limits-new stale cleanup" "$out" "clear stale explicit overrides for excluded users"
 # usage help lists the new mode.
 out=$(run_dag 2>&1)
 assert_contains "usage lists set-limits-new" "$out" "dag set-limits-new"
