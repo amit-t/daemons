@@ -61,8 +61,10 @@ Usage:
   dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
   dag all-commands [task...]  Alias for: dag all commands
   dag doctor                  Probe both API keys and report which capabilities they hold
-  dag dashboard [--no-open] [--json-only] [--out <dir>] [--refresh <5|10|15|30>]
-                              Local ACU burn-rate + forecast dashboard (read-only, no agent)
+  dag dashboard [--no-open] [--json-only] [--rebuild] [--out <dir>] [--port <n>] [--refresh <5|10|15|30>]
+                              Local React ACU burn-rate + forecast dashboard served on
+                              127.0.0.1 (read-only, no agent); --refresh refetches data
+                              in the background, page updates without reloading
   dag setup-extract           Print pasteable target-machine keychain setup commands
                               with the currently configured DAG keys (secret output)
   dag help                    Show this help

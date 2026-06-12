@@ -2,13 +2,18 @@
 # dag dashboard — local, read-only ACU burn-rate + forecast dashboard.
 # Fetches Devin v3 consumption (cycles, enterprise daily, orgs, per-org daily,
 # users, per-user daily, per-user Local Agent limits), computes burn-rate +
-# forecast via lib/dashboard.jq, writes data.json + dashboard-data.js and a
-# static HTML/CSS/JS app, and optionally opens it.
+# forecast via lib/dashboard.jq into data.json, then serves the React app in
+# web/dashboard-app (built once, on first run) over a localhost HTTP server.
+# With --refresh, a background loop refetches data.json on the cadence; the
+# app polls it silently — no page reloads. Local-only: the server binds
+# 127.0.0.1 and nothing here is ever deployed.
 # Read-only: GET requests only, no API writes. The cog_ key travels only as a
 # curl Authorization header — never printed, logged, or written to a file.
 #
 # Requires: $daemon_dir set and lib/key-resolve.zsh sourced (bin/dag does both).
 # DAG_NOW_EPOCH overrides "now" for deterministic tests.
+# Test hooks: DAG_DASHBOARD_REFRESH_ONCE=1 (one refresh iteration),
+# DAG_DASHBOARD_SERVE_ONCE=1 (start server, verify, stop, return).
 
 # Gateway/overload HTTP classes that typically clear on retry. A 504 Gateway
 # Time-out from Devin's edge (HTML body, not JSON) is the canonical case.
@@ -105,8 +110,10 @@ _dag_dash_fetch_members() {  # $1=base $2=auth-header-file $3=output-file
   }' "$pages" > "$out"
 }
 
-_dag_dashboard_write_once() {  # $1=open_after $2=json_only $3=out_dir $4=refresh_minutes-or-empty
-  local open_after=$1 json_only=$2 out_dir=$3 refresh_minutes=${4:-}
+# Fetch everything and write ${out_dir}/data.json atomically.
+# $1=out_dir $2=refresh_minutes-or-empty (recorded as metadata for the UI).
+_dag_dashboard_write_data() {
+  local out_dir=$1 refresh_minutes=${2:-}
   local key
   if ! key=$(dag_resolve_cog_key); then
     print -ru2 -- "dag dashboard: no Devin API v3 service-user key (cog_...) found."
@@ -207,45 +214,117 @@ _dag_dashboard_write_once() {  # $1=open_after $2=json_only $3=out_dir $4=refres
       return 1
     fi
     mv "${out_dir}/data.json.tmp" "${out_dir}/data.json" || return 1
-
-    {
-      print -rn -- "window.DAG_DASHBOARD_DATA = "
-      cat "${out_dir}/data.json"
-      print -r -- ";"
-    } > "${out_dir}/dashboard-data.js.tmp"
-    mv "${out_dir}/dashboard-data.js.tmp" "${out_dir}/dashboard-data.js" || return 1
-
-    if (( ! json_only )); then
-      cp "${daemon_dir}/web/dashboard/dashboard.html" \
-         "${daemon_dir}/web/dashboard/dashboard.css" \
-         "${daemon_dir}/web/dashboard/dashboard.js" \
-         "${out_dir}/" || return 1
-    fi
-
-    print -r -- "Dashboard written:"
-    (( ! json_only )) && print -r -- "  ${out_dir}/dashboard.html"
-    print -r -- "  ${out_dir}/dashboard-data.js"
-    print -r -- "  ${out_dir}/data.json"
-    if [[ -n "$refresh_minutes" ]]; then
-      print -r -- "Refresh: every ${refresh_minutes} minute(s). Keep this command running; press Ctrl-C to stop."
-    fi
-    if (( ! json_only )); then
-      print -r -- "Open:"
-      print -r -- "  file://${out_dir}/dashboard.html"
-      (( open_after )) && open "${out_dir}/dashboard.html"
-    fi
+    print -r -- "Data written: ${out_dir}/data.json"
     return 0
   } always {
     rm -rf "$work"
   }
 }
 
+# Ensure the React app is built; one-time npm install + build on first run.
+# $1=1 forces a rebuild. Echoes nothing; dist lives at ${app_dir}/dist.
+_dag_dash_ensure_app() {
+  local force=${1:-0}
+  local app_dir="${DAG_DASHBOARD_APP_DIR:-${daemon_dir}/web/dashboard-app}"
+  local npm_cmd="${DAG_DASHBOARD_NPM:-npm}"
+  if [[ ! -f "${app_dir}/package.json" ]]; then
+    print -ru2 -- "dag dashboard: app source missing: ${app_dir}/package.json"
+    return 1
+  fi
+  if (( ! force )) && [[ -f "${app_dir}/dist/index.html" ]]; then
+    return 0
+  fi
+  if ! (( $+commands[$npm_cmd] )) && [[ ! -x "$npm_cmd" ]]; then
+    print -ru2 -- "dag dashboard: '${npm_cmd}' not found — install Node.js (https://nodejs.org) to build the dashboard app (one-time)."
+    return 1
+  fi
+  print -r -- "Building dashboard app (one-time): ${app_dir}"
+  if [[ ! -d "${app_dir}/node_modules" ]]; then
+    "$npm_cmd" --prefix "$app_dir" install --no-fund --no-audit || {
+      print -ru2 -- "dag dashboard: npm install failed in ${app_dir}"
+      return 1
+    }
+  fi
+  "$npm_cmd" --prefix "$app_dir" run build || {
+    print -ru2 -- "dag dashboard: npm run build failed in ${app_dir}"
+    return 1
+  }
+  [[ -f "${app_dir}/dist/index.html" ]] || {
+    print -ru2 -- "dag dashboard: build produced no dist/index.html in ${app_dir}"
+    return 1
+  }
+}
+
+# Copy the built app into out_dir next to data.json. Old hashed assets are
+# cleared so the served dir never accumulates stale bundles.
+_dag_dash_stage_app() {  # $1=out_dir
+  local out_dir=$1
+  local app_dir="${DAG_DASHBOARD_APP_DIR:-${daemon_dir}/web/dashboard-app}"
+  mkdir -p "$out_dir" || return 1
+  rm -rf "${out_dir}/assets"
+  cp -R "${app_dir}/dist/." "$out_dir/" || {
+    print -ru2 -- "dag dashboard: failed to stage app from ${app_dir}/dist into ${out_dir}"
+    return 1
+  }
+}
+
+_dag_dash_python() { print -r -- "${DAG_DASHBOARD_PYTHON:-python3}" }
+
+_dag_dash_port_free() {  # $1=port -> 0 iff bindable on 127.0.0.1
+  "$(_dag_dash_python)" -c '
+import socket, sys
+s = socket.socket()
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+' "$1" 2>/dev/null
+}
+
+_dag_dash_free_port() {  # -> an OS-assigned free port on stdout
+  "$(_dag_dash_python)" -c '
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+' 2>/dev/null
+}
+
+# Start the localhost static server in the background; sets the caller-scoped
+# _dag_dash_server_pid. $1=out_dir $2=port.
+_dag_dash_serve_start() {
+  local out_dir=$1 port=$2 py
+  py=$(_dag_dash_python)
+  if ! (( $+commands[$py] )) && [[ ! -x "$py" ]]; then
+    print -ru2 -- "dag dashboard: '${py}' not found — needed to serve the dashboard locally."
+    return 1
+  fi
+  "$py" -m http.server "$port" --bind 127.0.0.1 --directory "$out_dir" >/dev/null 2>&1 &
+  _dag_dash_server_pid=$!
+  sleep "${DAG_DASHBOARD_SERVE_GRACE:-0.3}"
+  if ! kill -0 "$_dag_dash_server_pid" 2>/dev/null; then
+    print -ru2 -- "dag dashboard: local server failed to start on 127.0.0.1:${port}"
+    _dag_dash_server_pid=""
+    return 1
+  fi
+}
+
+_dag_dash_serve_stop() {
+  if [[ -n "${_dag_dash_server_pid:-}" ]]; then
+    kill "$_dag_dash_server_pid" 2>/dev/null
+    wait "$_dag_dash_server_pid" 2>/dev/null
+    _dag_dash_server_pid=""
+  fi
+}
+
 dag_dashboard() {
   local open_after=1 json_only=0 out_dir="" refresh_minutes="" refresh_seconds=0
+  local port="${DAG_DASHBOARD_PORT:-}" rebuild=0
   while (( $# )); do
     case "$1" in
       --no-open)   open_after=0 ;;
       --json-only) json_only=1 ;;
+      --rebuild)   rebuild=1 ;;
       --out)
         shift
         if [[ -z "${1:-}" || "$1" == -* ]]; then
@@ -253,6 +332,14 @@ dag_dashboard() {
           return 2
         fi
         out_dir="$1"
+        ;;
+      --port)
+        shift
+        if [[ -z "${1:-}" || "$1" != <1-65535> ]]; then
+          print -ru2 -- "dag dashboard: --port requires a port number (1-65535)"
+          return 2
+        fi
+        port="$1"
         ;;
       --refresh)
         shift
@@ -269,7 +356,7 @@ dag_dashboard() {
         esac
         ;;
       *)
-        print -ru2 -- "dag dashboard: unknown flag '$1' (expected --no-open, --json-only, --out <dir>, --refresh <5|10|15|30>)"
+        print -ru2 -- "dag dashboard: unknown flag '$1' (expected --no-open, --json-only, --rebuild, --out <dir>, --port <n>, --refresh <5|10|15|30>)"
         return 2
         ;;
     esac
@@ -278,16 +365,75 @@ dag_dashboard() {
   : ${out_dir:=${DAG_STATE_DIR}/dashboard/latest}
   out_dir=${out_dir:A}
 
-  if [[ -z "$refresh_minutes" ]]; then
-    _dag_dashboard_write_once "$open_after" "$json_only" "$out_dir" ""
-    return $?
+  # --json-only: data artifact only — no app build, no server, no browser.
+  if (( json_only )); then
+    if [[ -z "$refresh_minutes" ]]; then
+      _dag_dashboard_write_data "$out_dir" ""
+      return $?
+    fi
+    refresh_seconds=$(( refresh_minutes * 60 ))
+    while true; do
+      _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
+      print -r -- "Refresh: every ${refresh_minutes} minute(s). Keep this command running; press Ctrl-C to stop."
+      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && return 0
+      sleep "$refresh_seconds"
+    done
   fi
 
-  refresh_seconds=$(( refresh_minutes * 60 ))
-  while true; do
-    _dag_dashboard_write_once "$open_after" "$json_only" "$out_dir" "$refresh_minutes" || return $?
-    [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && return 0
-    sleep "$refresh_seconds"
-    open_after=0
-  done
+  _dag_dash_ensure_app "$rebuild" || return 1
+  _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return 1
+  _dag_dash_stage_app "$out_dir" || return 1
+
+  if [[ -z "$port" ]]; then
+    port="${DAG_DASHBOARD_DEFAULT_PORT:-8642}"
+    if ! _dag_dash_port_free "$port"; then
+      local fallback
+      fallback=$(_dag_dash_free_port)
+      if [[ -z "$fallback" ]]; then
+        print -ru2 -- "dag dashboard: port ${port} busy and no free port found"
+        return 1
+      fi
+      print -ru2 -- "dag dashboard: port ${port} busy; using ${fallback} (pin with --port or DAG_DASHBOARD_PORT)"
+      port="$fallback"
+    fi
+  fi
+
+  local _dag_dash_server_pid=""
+  # `always` does not run when the shell dies on a signal — without these traps
+  # a TERM/HUP to dag would orphan the python server on the port forever.
+  trap '_dag_dash_serve_stop; trap - INT TERM HUP; return 130' INT TERM HUP
+  {
+    _dag_dash_serve_start "$out_dir" "$port" || return 1
+    local url="http://127.0.0.1:${port}/"
+    print -r -- "Dashboard serving:"
+    print -r -- "  ${url}"
+    print -r -- "  data: ${out_dir}/data.json"
+    if [[ -n "$refresh_minutes" ]]; then
+      print -r -- "Refresh: data refetched every ${refresh_minutes} minute(s) in the background; the page updates itself without reloading."
+    else
+      print -r -- "Refresh: static snapshot — rerun with --refresh <5|10|15|30> for live data."
+    fi
+    print -r -- "Press Ctrl-C to stop the server."
+    (( open_after )) && open "$url"
+
+    [[ "${DAG_DASHBOARD_SERVE_ONCE:-}" == "1" ]] && return 0
+
+    if [[ -z "$refresh_minutes" ]]; then
+      wait "$_dag_dash_server_pid"
+      return 0
+    fi
+
+    refresh_seconds=$(( refresh_minutes * 60 ))
+    while true; do
+      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && return 0
+      sleep "$refresh_seconds"
+      if ! kill -0 "$_dag_dash_server_pid" 2>/dev/null; then
+        print -ru2 -- "dag dashboard: local server exited; stopping refresh loop"
+        return 1
+      fi
+      _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
+    done
+  } always {
+    _dag_dash_serve_stop
+  }
 }

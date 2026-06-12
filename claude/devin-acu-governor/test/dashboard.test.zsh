@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# dag dashboard — local read-only ACU burn dashboard.
+# dag dashboard — local read-only ACU burn dashboard (React app + local server).
 # Fixture cycle: 2026-05-16 → 2026-06-16 (31 days), DAG_NOW_EPOCH pinned at day 30.
 # Enterprise: 1500 ACUs consumed → run rate 50/day, projected 1550, pool 24000 → UNDER.
 set -u
@@ -89,13 +89,71 @@ print -r -- "$@" >> "${OPEN_LOG}"
 EOF
 chmod +x "${tmpdir}/bin/open"
 
+# Fake python3: deterministic stand-in for the port check (-c with a port arg →
+# always free), the free-port pick (-c without args → 8999), and the static
+# server (-m http.server → log argv, then idle until killed).
+cat > "${tmpdir}/bin/python3" <<'EOF'
+#!/usr/bin/env zsh
+if [[ "${1:-}" == "-c" ]]; then
+  if (( $# >= 3 )); then exit 0; else print -r -- 8999; exit 0; fi
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "http.server" ]]; then
+  print -r -- "$@" >> "${SERVE_LOG}"
+  while true; do sleep 1; done
+fi
+exit 0
+EOF
+chmod +x "${tmpdir}/bin/python3"
+
+# Fake python3 whose http.server dies instantly (server-start failure path).
+mkdir -p "${tmpdir}/deadpy"
+cat > "${tmpdir}/deadpy/python3" <<'EOF'
+#!/usr/bin/env zsh
+if [[ "${1:-}" == "-c" ]]; then exit 0; fi
+exit 1
+EOF
+chmod +x "${tmpdir}/deadpy/python3"
+
+# Fixture React app: package.json + a prebuilt dist, so no npm is needed.
+appdir="${tmpdir}/app"
+mkdir -p "${appdir}/dist/assets"
+print -r -- '{"name":"fixture-app"}' > "${appdir}/package.json"
+cat > "${appdir}/dist/index.html" <<'EOF'
+<!doctype html><html><head><script type="module" src="./assets/app.js"></script></head><body><div id="root"></div></body></html>
+EOF
+print -r -- 'fetch("./data.json")' > "${appdir}/dist/assets/app.js"
+
+# Fake npm: logs each invocation; "run build" materializes a dist.
+cat > "${tmpdir}/bin/npm" <<'EOF'
+#!/usr/bin/env zsh
+print -r -- "$@" >> "${NPM_LOG}"
+prefix=""
+for ((i = 1; i <= $#; i++)); do
+  [[ "${argv[i]}" == "--prefix" ]] && prefix="${argv[i+1]}"
+done
+if [[ "$*" == *"run build"* && -n "$prefix" ]]; then
+  mkdir -p "${prefix}/dist/assets"
+  print -r -- "<!doctype html><html></html>" > "${prefix}/dist/index.html"
+  print -r -- "built" > "${prefix}/dist/assets/app.js"
+fi
+exit 0
+EOF
+chmod +x "${tmpdir}/bin/npm"
+
 now_epoch=1781510400   # 2026-06-15T08:00:00Z — day 30 of the 31-day fixture cycle
 
 run_dash() {
   PATH="${tmpdir}/bin:$PATH" FIXTURES="$fixdir" OPEN_LOG="${tmpdir}/open.log" \
   WRITE_LOG="${tmpdir}/write.log" CURL_URL_LOG="${tmpdir}/curl-urls.log" \
+  SERVE_LOG="${SERVE_LOG:-${tmpdir}/serve.log}" NPM_LOG="${NPM_LOG:-${tmpdir}/npm.log}" \
   DEVIN_COG_KEY=test-cog-key-SECRET DAG_NOW_EPOCH=$now_epoch \
   DAG_STATE_DIR="${tmpdir}/state" \
+  DAG_DASHBOARD_APP_DIR="${DAG_DASHBOARD_APP_DIR:-$appdir}" \
+  DAG_DASHBOARD_PYTHON="${DAG_DASHBOARD_PYTHON:-python3}" \
+  DAG_DASHBOARD_NPM="${DAG_DASHBOARD_NPM:-npm}" \
+  DAG_DASHBOARD_SERVE_ONCE="${DAG_DASHBOARD_SERVE_ONCE:-1}" \
+  DAG_DASHBOARD_SERVE_GRACE=0.25 \
+  DAG_DASHBOARD_REFRESH_ONCE="${DAG_DASHBOARD_REFRESH_ONCE:-}" \
   DAG_MONTHLY_ACU_POOL="${DAG_MONTHLY_ACU_POOL:-24000}" DAG_PRINT_PROMPT="${DAG_PRINT_PROMPT:-}" \
   FAKE_CURL_RC="${FAKE_CURL_RC:-0}" \
   FAKE_CYCLES_CODE="${FAKE_CYCLES_CODE:-200}" FAKE_CYCLES_BODY="${FAKE_CYCLES_BODY:-}" \
@@ -114,20 +172,25 @@ run_dash() {
 
 out_dir="${tmpdir}/dash1"
 
-# 1. Happy path exits 0; prints paths + file:// URL.
+# 1. Happy path exits 0; prints the local server URL + data path.
 out=$(run_dash --no-open --out "$out_dir" 2>&1); rc=$?
 assert_exit "dash rc" 0 $rc
-assert_contains "paths printed" "$out" "dashboard.html"
-assert_contains "open url printed" "$out" "file://"
+assert_contains "serving printed" "$out" "Dashboard serving:"
+assert_contains "local url printed" "$out" "http://127.0.0.1:8642/"
+assert_contains "data path printed" "$out" "${out_dir}/data.json"
 
-# 2. All artifacts written.
-for f in dashboard.html dashboard-data.js dashboard.css dashboard.js data.json; do
+# 2. All artifacts staged: data + the built React app.
+for f in data.json index.html assets/app.js; do
   if [[ -f "${out_dir}/${f}" ]]; then _ok; else _fail "missing artifact ${f}"; fi
 done
-
-# 3. dashboard-data.js carries the injection marker; data.json is valid JSON.
-assert_contains "data marker" "$(cat "${out_dir}/dashboard-data.js")" "window.DAG_DASHBOARD_DATA ="
 if jq -e . "${out_dir}/data.json" >/dev/null 2>&1; then _ok; else _fail "data.json not valid JSON"; fi
+
+# 3. Server invoked local-only: bound to 127.0.0.1 and the staged out_dir.
+serve_line=$(tail -1 "${tmpdir}/serve.log" 2>/dev/null)
+assert_contains "server module" "$serve_line" "http.server"
+assert_contains "server port" "$serve_line" "8642"
+assert_contains "server local bind" "$serve_line" "--bind 127.0.0.1"
+assert_contains "server directory" "$serve_line" "--directory ${out_dir:A}"
 
 # 4. Key never leaks into stdout or any generated file.
 if [[ "$out" == *test-cog-key-SECRET* ]]; then _fail "key leaked to stdout"; else _ok; fi
@@ -195,34 +258,32 @@ assert_eq "bob cap source" "default" "$(user_field bob@example.com .cap_source)"
 assert_eq "chandra status over" "over" "$(user_field chandra@example.com .status)"
 assert_eq "chandra headroom" "-10" "$(user_field chandra@example.com .headroom)"
 assert_contains "user warning over" "$(jqd '.warnings | join("|")')" "chandra@example.com"
-assert_contains "html has users table" "$(cat "${out_dir}/dashboard.html")" 'id="user-table"'
-assert_contains "js renders cap source" "$(cat "${out_dir}/dashboard.js")" "cap_source"
 
 # 7a. User IDs with reserved characters are URL-encoded in read endpoints.
 curl_log="${tmpdir}/curl-urls.log"
 if grep -F "email%7Calice" "$curl_log" >/dev/null 2>&1; then _ok; else _fail "encoded alice user_id not requested"; fi
 if grep -F "okta%7CTeam%7Cchandra" "$curl_log" >/dev/null 2>&1; then _ok; else _fail "encoded okta user_id not requested"; fi
 
-# 7b. --refresh writes refresh metadata and generated app can reload itself.
-out=$(DAG_DASHBOARD_REFRESH_ONCE=1 run_dash --refresh 30 --no-open --out "${tmpdir}/dash-refresh" 2>&1); rc=$?
+# 7b. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
+out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \
+  run_dash --refresh 30 --no-open --out "${tmpdir}/dash-refresh" 2>&1); rc=$?
 assert_exit "refresh rc" 0 $rc
-assert_contains "refresh stdout" "$out" "Refresh: every 30 minute(s)"
+assert_contains "refresh stdout" "$out" "data refetched every 30 minute(s) in the background"
 assert_eq "refresh enabled" "true" "$(jq -r '.refresh.enabled' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh minutes" "30" "$(jq -r '.refresh.interval_minutes' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh ms" "1800000" "$(jq -r '.refresh.interval_ms' "${tmpdir}/dash-refresh/data.json")"
-assert_contains "refresh html meta" "$(cat "${tmpdir}/dash-refresh/dashboard.js")" "window.location.reload"
 
 # 7c. --refresh only accepts the supported 5/10/15/30 minute intervals.
 out=$(run_dash --refresh 7 --no-open --out "${tmpdir}/dash-refresh-bad" 2>&1); rc=$?
 assert_exit "bad refresh rc" 2 $rc
 assert_contains "bad refresh hint" "$out" "5, 10, 15, or 30"
 
-# 8. Failed required read: non-zero exit, exact response body quoted, no files.
+# 8. Failed required read: non-zero exit, exact response body quoted, no app staged.
 out=$(FAKE_CYCLES_CODE=500 FAKE_CYCLES_BODY='{"detail":"cycles exploded"}' \
   run_dash --no-open --out "${tmpdir}/dash-err" 2>&1); rc=$?
 if (( rc != 0 )); then _ok; else _fail "API failure must exit non-zero"; fi
 assert_contains "error body quoted" "$out" '{"detail":"cycles exploded"}'
-if [[ -f "${tmpdir}/dash-err/dashboard.html" ]]; then _fail "wrote dashboard despite API failure"; else _ok; fi
+if [[ -f "${tmpdir}/dash-err/index.html" || -f "${tmpdir}/dash-err/data.json" ]]; then _fail "wrote dashboard despite API failure"; else _ok; fi
 
 # 8b. Every other required read failure path also quotes the exact body.
 out=$(FAKE_DAILY_CODE=500 FAKE_DAILY_BODY='{"detail":"daily down"}' \
@@ -284,7 +345,7 @@ assert_contains "504 degrade warned" "$out" "using default cap"
 udg() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-degrade/data.json" }
 assert_eq "504 degrade alice cap" "100" "$(udg alice@example.com .effective_cycle_acu_limit)"
 assert_eq "504 degrade alice source" "default" "$(udg alice@example.com .cap_source)"
-if [[ -f "${tmpdir}/dash-504-degrade/dashboard.html" ]]; then _ok; else _fail "degraded run wrote no dashboard"; fi
+if [[ -f "${tmpdir}/dash-504-degrade/index.html" ]]; then _ok; else _fail "degraded run staged no app"; fi
 
 # 8g. Persistent 504 on the default ACU-limit endpoint degrades: users without an
 #     explicit cap show uncapped; the dashboard still renders.
@@ -305,31 +366,46 @@ out=$(FAKE_USER_LIMIT_CODE=500 FAKE_USER_LIMIT_BODY='{"detail":"hard 500"}' \
 if (( rc != 0 )); then _ok; else _fail "hard 500 on user limit must stay fatal"; fi
 if [[ "$out" == *"transient; retry"* ]]; then _fail "500 was retried as transient"; else _ok; fi
 
-# 9. dag help lists the dashboard command.
+# 9. dag help lists the dashboard command and its flags.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=k zsh "$dag" help 2>&1); rc=$?
 assert_exit "help rc" 0 $rc
 assert_contains "help lists dashboard" "$out" "dashboard"
 assert_contains "help lists refresh" "$out" "--refresh"
+assert_contains "help lists port" "$out" "--port"
 
 # 10. DAG_PRINT_PROMPT=1 still runs the local path — no playbook prompt, no agent.
 out=$(DAG_PRINT_PROMPT=1 run_dash --no-open --out "${tmpdir}/dash-pp" 2>&1); rc=$?
 assert_exit "print-prompt rc" 0 $rc
 if [[ "$out" == *"# Playbook"* ]]; then _fail "dashboard assembled a playbook prompt"; else _ok; fi
-if [[ -f "${tmpdir}/dash-pp/dashboard.html" ]]; then _ok; else _fail "print-prompt run wrote no dashboard"; fi
+if [[ -f "${tmpdir}/dash-pp/index.html" ]]; then _ok; else _fail "print-prompt run staged no app"; fi
 
-# 11. --json-only writes only the data artifacts; never opens.
-: > "${tmpdir}/open.log"
+# 11. --json-only writes only data.json; never opens, never serves, never builds.
+: > "${tmpdir}/open.log"; : > "${tmpdir}/serve.log"
 out=$(run_dash --json-only --out "${tmpdir}/dash-json" 2>&1); rc=$?
 assert_exit "json-only rc" 0 $rc
-if [[ -f "${tmpdir}/dash-json/data.json" && -f "${tmpdir}/dash-json/dashboard-data.js" ]]; then _ok; else _fail "json-only data artifacts missing"; fi
-if [[ -f "${tmpdir}/dash-json/dashboard.html" ]]; then _fail "json-only wrote app files"; else _ok; fi
+if [[ -f "${tmpdir}/dash-json/data.json" ]]; then _ok; else _fail "json-only data.json missing"; fi
+if [[ -f "${tmpdir}/dash-json/index.html" ]]; then _fail "json-only staged app files"; else _ok; fi
 if [[ -s "${tmpdir}/open.log" ]]; then _fail "json-only invoked open"; else _ok; fi
+if [[ -s "${tmpdir}/serve.log" ]]; then _fail "json-only started a server"; else _ok; fi
 
-# 12. Default (no --no-open) invokes open on the html.
+# 12. Default (no --no-open) opens the local server URL, not a file://.
 : > "${tmpdir}/open.log"
 out=$(run_dash --out "${tmpdir}/dash-open" 2>&1); rc=$?
 assert_exit "open rc" 0 $rc
-assert_contains "open called with html" "$(cat "${tmpdir}/open.log" 2>/dev/null)" "dash-open/dashboard.html"
+assert_contains "open called with url" "$(cat "${tmpdir}/open.log" 2>/dev/null)" "http://127.0.0.1:8642/"
+
+# 12b. --port pins the server port; the opened URL follows.
+: > "${tmpdir}/open.log"; : > "${tmpdir}/serve.log"
+out=$(run_dash --port 9001 --out "${tmpdir}/dash-port" 2>&1); rc=$?
+assert_exit "port rc" 0 $rc
+assert_contains "port url opened" "$(cat "${tmpdir}/open.log" 2>/dev/null)" "http://127.0.0.1:9001/"
+assert_contains "server got port" "$(tail -1 "${tmpdir}/serve.log")" "9001"
+
+# 12c. Server that dies on startup fails loudly.
+out=$(DAG_DASHBOARD_PYTHON="${tmpdir}/deadpy/python3" \
+  run_dash --no-open --out "${tmpdir}/dash-deadsrv" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "dead server must exit non-zero"; fi
+assert_contains "dead server message" "$out" "failed to start"
 
 # 13. Pool smaller than projection flips verdict to OVER.
 out=$(DAG_MONTHLY_ACU_POOL=1000 run_dash --no-open --out "${tmpdir}/dash-over" 2>&1); rc=$?
@@ -337,11 +413,13 @@ assert_exit "over rc" 0 $rc
 assert_eq "verdict OVER" "OVER" "$(jq -r .enterprise.verdict "${tmpdir}/dash-over/data.json")"
 assert_eq "over delta" "-550" "$(jq -r .enterprise.projected_over_under "${tmpdir}/dash-over/data.json")"
 
-# 14. Unknown flag -> exit 2; --out followed by a flag -> exit 2 (not a junk dir).
+# 14. Unknown flag -> exit 2; --out followed by a flag -> exit 2; bad --port -> exit 2.
 out=$(run_dash --bogus 2>&1); rc=$?
 assert_exit "bogus flag rc" 2 $rc
 out=$(run_dash --out --no-open 2>&1); rc=$?
 assert_exit "out-eats-flag rc" 2 $rc
+out=$(run_dash --port nope 2>&1); rc=$?
+assert_exit "bad port rc" 2 $rc
 
 # 15. No cog key -> exit 1 with setup hint.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DAG_STATE_DIR="${tmpdir}/state" \
@@ -352,13 +430,42 @@ assert_contains "nokey hint" "$out" "devin-cog-key"
 # 16. Default output dir is $DAG_STATE_DIR/dashboard/latest.
 out=$(run_dash --no-open 2>&1); rc=$?
 assert_exit "default out rc" 0 $rc
-if [[ -f "${tmpdir}/state/dashboard/latest/dashboard.html" ]]; then _ok; else _fail "default out dir missing dashboard.html"; fi
+if [[ -f "${tmpdir}/state/dashboard/latest/index.html" ]]; then _ok; else _fail "default out dir missing index.html"; fi
 
-# 17. The copied dashboard.html actually wires the css/data/app assets (file:// load).
-html=$(cat "${out_dir}/dashboard.html")
-assert_contains "html links css" "$html" 'href="dashboard.css"'
-assert_contains "html loads data" "$html" 'src="dashboard-data.js"'
-assert_contains "html loads app" "$html" 'src="dashboard.js"'
+# 17. First run with no dist builds the app once (npm install + build); the
+#     second run reuses the dist without invoking npm again.
+freshapp="${tmpdir}/freshapp"
+mkdir -p "$freshapp"
+print -r -- '{"name":"fresh"}' > "${freshapp}/package.json"
+NPM_LOG="${tmpdir}/npm-fresh.log"; : > "$NPM_LOG"
+out=$(DAG_DASHBOARD_APP_DIR="$freshapp" NPM_LOG="$NPM_LOG" \
+  run_dash --no-open --out "${tmpdir}/dash-build" 2>&1); rc=$?
+assert_exit "build rc" 0 $rc
+assert_contains "build announced" "$out" "Building dashboard app (one-time)"
+assert_contains "npm install ran" "$(cat "$NPM_LOG")" "install"
+assert_contains "npm build ran" "$(cat "$NPM_LOG")" "run build"
+if [[ -f "${freshapp}/dist/index.html" ]]; then _ok; else _fail "build produced no dist"; fi
+: > "$NPM_LOG"
+out=$(DAG_DASHBOARD_APP_DIR="$freshapp" NPM_LOG="$NPM_LOG" \
+  run_dash --no-open --out "${tmpdir}/dash-build2" 2>&1); rc=$?
+assert_exit "rebuild-skip rc" 0 $rc
+if [[ -s "$NPM_LOG" ]]; then _fail "second run re-invoked npm"; else _ok; fi
+unset NPM_LOG
+
+# 17b. Missing npm with no dist fails with a Node.js hint.
+nodist="${tmpdir}/nodist-app"
+mkdir -p "$nodist"
+print -r -- '{"name":"nodist"}' > "${nodist}/package.json"
+out=$(DAG_DASHBOARD_APP_DIR="$nodist" DAG_DASHBOARD_NPM="/nonexistent-npm" \
+  run_dash --no-open --out "${tmpdir}/dash-nonpm" 2>&1); rc=$?
+assert_exit "no-npm rc" 1 $rc
+assert_contains "no-npm hint" "$out" "install Node.js"
+
+# 17c. Missing app source fails loudly.
+out=$(DAG_DASHBOARD_APP_DIR="${tmpdir}/no-such-app" \
+  run_dash --no-open --out "${tmpdir}/dash-noapp" 2>&1); rc=$?
+assert_exit "no-app rc" 1 $rc
+assert_contains "no-app message" "$out" "app source missing"
 
 # 18. String "YYYY-MM-DD" dates (docs shape) handled alongside live epoch dates.
 out=$(FAKE_DAILY_BODY='{"total_acus":100,"consumption_by_date":[{"date":"2026-05-20","acus":100,"acus_by_product":{"devin":100,"cascade":0,"terminal":0,"review":0}}]}' \
