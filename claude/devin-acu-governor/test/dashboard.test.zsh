@@ -217,6 +217,10 @@ assert_eq "daily_run_rate" "50" "$(jqd .enterprise.daily_run_rate)"
 assert_eq "projected_cycle_total" "1550" "$(jqd .enterprise.projected_cycle_total)"
 assert_eq "projected_over_under" "22450" "$(jqd .enterprise.projected_over_under)"
 assert_eq "verdict" "UNDER" "$(jqd .enterprise.verdict)"
+assert_eq "capped user total" "550" "$(jqd '.cap_totals.effective_user_cycle_acu_limit')"
+assert_eq "capped user count" "4" "$(jqd '.cap_totals.capped_users')"
+assert_eq "uncapped user count" "0" "$(jqd '.cap_totals.uncapped_users')"
+assert_eq "zero user cap count" "1" "$(jqd '.cap_totals.zero_cap_users')"
 assert_eq "split devin" "300" "$(jqd '.product_split[] | select(.product=="devin").acus')"
 assert_eq "split cascade" "900" "$(jqd '.product_split[] | select(.product=="cascade").acus')"
 assert_eq "split terminal" "240" "$(jqd '.product_split[] | select(.product=="terminal").acus')"
@@ -283,7 +287,21 @@ curl_log="${tmpdir}/curl-urls.log"
 if grep -F "email%7Calice" "$curl_log" >/dev/null 2>&1; then _ok; else _fail "encoded alice user_id not requested"; fi
 if grep -F "okta%7CTeam%7Cchandra" "$curl_log" >/dev/null 2>&1; then _ok; else _fail "encoded okta user_id not requested"; fi
 
-# 7b. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
+# 7b. User table keeps Billing org as the last visible column, with Status shifted left.
+user_table_src="${script_dir}/../web/dashboard-app/src/components/UserTable.tsx"
+status_line=$(grep -n "label: 'Status'" "$user_table_src" | cut -d: -f1)
+source_line=$(grep -n "label: 'Cap source'" "$user_table_src" | cut -d: -f1)
+org_line=$(grep -n "label: 'Billing org'" "$user_table_src" | cut -d: -f1)
+if (( status_line < source_line && source_line < org_line )); then
+  _ok
+else
+  _fail "user table column order should be Status, Cap source, Billing org at the right edge"
+fi
+app_src=$(<"${script_dir}/../web/dashboard-app/src/App.tsx")
+assert_contains "top card labels capped user total" "$app_src" "Capped user total"
+assert_contains "top card renders capped total field" "$app_src" "cap_totals.effective_user_cycle_acu_limit"
+
+# 7c. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
 out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \
   run_dash --refresh 30 --no-open --out "${tmpdir}/dash-refresh" 2>&1); rc=$?
 assert_exit "refresh rc" 0 $rc
@@ -292,7 +310,7 @@ assert_eq "refresh enabled" "true" "$(jq -r '.refresh.enabled' "${tmpdir}/dash-r
 assert_eq "refresh minutes" "30" "$(jq -r '.refresh.interval_minutes' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh ms" "1800000" "$(jq -r '.refresh.interval_ms' "${tmpdir}/dash-refresh/data.json")"
 
-# 7c. --refresh only accepts the supported 5/10/15/30 minute intervals.
+# 7d. --refresh only accepts the supported 5/10/15/30 minute intervals.
 out=$(run_dash --refresh 7 --no-open --out "${tmpdir}/dash-refresh-bad" 2>&1); rc=$?
 assert_exit "bad refresh rc" 2 $rc
 assert_contains "bad refresh hint" "$out" "5, 10, 15, or 30"

@@ -331,10 +331,10 @@ dag dashboard --rebuild
 
 The dashboard shows:
 
-- enterprise consumed/remaining/run-rate/projection/verdict cards with cycle progress;
+- enterprise consumed/remaining/run-rate/projection/verdict cards with cycle progress, plus a capped-user-total card showing the sum of finite effective user caps (the ACUs consumed if capped users all use their full caps);
 - interactive daily burn chart (stacked per-product bars, plus a cumulative + forecast view with the pool reference line) and a product-split donut;
 - organization table: sortable columns, status filter chips, per-row cap meters;
-- user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap;
+- user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; `Billing org` is the last column, with `Status` shifted left of cap source/org;
 - warnings for org cap risk and users already over effective cap.
 
 Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that.

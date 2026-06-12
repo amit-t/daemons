@@ -22,11 +22,11 @@ npm run build      # tsc -b && vite build → dist/
 |---|---|
 | `src/types.ts` | Shape of `data.json` (mirrors `lib/dashboard.jq` output) |
 | `src/useDashboardData.ts` | 60 s background polling hook; keeps last good snapshot on fetch failure |
-| `src/App.tsx` | Layout: header, cycle progress, KPI cards, panels |
+| `src/App.tsx` | Layout: header, cycle progress, KPI cards including capped user total, panels |
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
 | `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters |
-| `src/components/UserTable.tsx` | User cap table: text search, status + cap-source filters, sortable columns |
+| `src/components/UserTable.tsx` | User cap table: text search, status + cap-source filters, sortable columns, billing org last |
 | `src/components/SortableTable.tsx` | Generic sortable table (nulls always sink to bottom) |
 | `src/app.css` | Phosphor ops theme (dark graphite, amber accent, IBM Plex Mono / Chakra Petch) |
 

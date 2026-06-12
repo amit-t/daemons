@@ -38,6 +38,7 @@ export default function App() {
   const { enterprise: ent, cycle, refresh } = data
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
+  const capTotals = data.cap_totals
 
   return (
     <>
@@ -88,6 +89,14 @@ export default function App() {
           <div className="card-label">Daily run rate</div>
           <div className="card-value">{fmt(ent.daily_run_rate)}</div>
           <div className="card-sub">ACUs / day</div>
+        </div>
+        <div className="card accent">
+          <div className="card-label">Capped user total</div>
+          <div className="card-value">{fmt(data.cap_totals.effective_user_cycle_acu_limit)}</div>
+          <div className="card-sub">
+            if {capTotals.capped_users} capped user{capTotals.capped_users === 1 ? '' : 's'} use full cap
+            {capTotals.uncapped_users > 0 ? ` · ${capTotals.uncapped_users} uncapped` : ''}
+          </div>
         </div>
         <div className="card">
           <div className="card-label">Projected cycle-end</div>

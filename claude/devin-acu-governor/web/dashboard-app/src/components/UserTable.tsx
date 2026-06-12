@@ -25,9 +25,9 @@ const columns: Column<UserRow>[] = [
       </>
     ),
   },
+  { key: 'status', label: 'Status', sortValue: (u) => STATUSES.indexOf(u.status), render: (u) => <StatusBadge status={u.status} /> },
   { key: 'cap_source', label: 'Cap source', sortValue: (u) => u.cap_source, render: (u) => <span className="dim">{u.cap_source}</span> },
   { key: 'org', label: 'Billing org', sortValue: (u) => u.billing_org_id, render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span> },
-  { key: 'status', label: 'Status', sortValue: (u) => STATUSES.indexOf(u.status), render: (u) => <StatusBadge status={u.status} /> },
 ]
 
 export function UserTable({ users }: { users: UserRow[] }) {

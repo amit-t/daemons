@@ -28,6 +28,13 @@ export interface ProductSplit {
   acus: number
 }
 
+export interface CapTotals {
+  effective_user_cycle_acu_limit: number
+  capped_users: number
+  uncapped_users: number
+  zero_cap_users: number
+}
+
 export interface DailyPoint {
   date: string
   epoch: number
@@ -77,6 +84,7 @@ export interface DashboardData {
   cycle: CycleInfo
   pool: number
   enterprise: EnterpriseInfo
+  cap_totals: CapTotals
   product_split: ProductSplit[]
   daily: DailyPoint[]
   orgs: OrgRow[]

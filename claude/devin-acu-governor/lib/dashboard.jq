@@ -125,6 +125,12 @@ def user_status($consumed; $limit):
       projected_over_under: (($pool - $projected) | r2),
       verdict: (if $projected > $pool then "OVER" else "UNDER" end)
     },
+    cap_totals: {
+      effective_user_cycle_acu_limit: (([$user_rows[] | select(.effective_cycle_acu_limit != null) | .effective_cycle_acu_limit] | add // 0) | r2),
+      capped_users: ([$user_rows[] | select(.effective_cycle_acu_limit != null)] | length),
+      uncapped_users: ([$user_rows[] | select(.effective_cycle_acu_limit == null)] | length),
+      zero_cap_users: ([$user_rows[] | select(.effective_cycle_acu_limit == 0)] | length)
+    },
     product_split: (["devin", "cascade", "terminal", "review"] | map(
       . as $p
       | {product: $p,
