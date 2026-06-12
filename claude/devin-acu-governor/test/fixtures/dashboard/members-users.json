@@ -17,9 +17,15 @@
       "email": "chandra@example.com",
       "name": "Chandra C",
       "role_assignments": [{"org_id": "ml", "role": {"role_id": "r1", "role_name": "Engineer"}}]
+    },
+    {
+      "user_id": "email|zero",
+      "email": "zero@example.com",
+      "name": "Zero Z",
+      "role_assignments": [{"org_id": "platform", "role": {"role_id": "r1", "role_name": "Engineer"}}]
     }
   ],
   "end_cursor": null,
   "has_next_page": false,
-  "total": 3
+  "total": 4
 }

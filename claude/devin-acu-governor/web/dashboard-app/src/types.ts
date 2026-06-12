@@ -1,7 +1,7 @@
 // Shape of data.json as produced by lib/dashboard.jq.
 
-export type OrgStatus = 'ok' | 'warning' | 'critical' | 'forecast_over' | 'over' | 'uncapped'
-export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'uncapped'
+export type OrgStatus = 'ok' | 'warning' | 'critical' | 'forecast_over' | 'over' | 'blocked' | 'uncapped'
+export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'blocked' | 'uncapped'
 export type CapSource = 'explicit' | 'default' | 'uncapped'
 
 export interface CycleInfo {

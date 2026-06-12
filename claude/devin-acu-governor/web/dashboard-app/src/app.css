@@ -349,6 +349,7 @@ td.dim { color: var(--text-dim); }
 .badge-critical { color: var(--orange); background: var(--orange-soft); }
 .badge-over { color: var(--red); background: var(--red-soft); }
 .badge-forecast_over { color: var(--red); background: var(--red-soft); outline: 1px dashed rgba(248, 113, 113, 0.4); }
+.badge-blocked { color: var(--text-dim); background: rgba(111, 132, 121, 0.12); }
 .badge-uncapped { color: var(--text-dim); background: rgba(111, 132, 121, 0.12); }
 
 /* consumption meter inside tables */

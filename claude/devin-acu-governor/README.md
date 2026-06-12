@@ -337,6 +337,8 @@ The dashboard shows:
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap;
 - warnings for org cap risk and users already over effective cap.
 
+Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that.
+
 **First run builds the app once** (`npm install && npm run build` in `web/dashboard-app/`; requires Node.js). Later runs reuse the build; `--rebuild` forces a fresh one (run after pulling app changes).
 
 `--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**; the app polls `data.json` (every 60 s, `cache: no-store`) and updates in place — no page reloads. Without `--refresh` the command still keeps the server running on a static snapshot. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).

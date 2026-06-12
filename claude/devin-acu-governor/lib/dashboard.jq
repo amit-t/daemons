@@ -26,6 +26,7 @@ def day_forms:
 # projection already crosses the cap is in worse shape than one merely close.
 def org_status($consumed; $limit; $projected):
   if $limit == null then "uncapped"
+  elif $limit == 0 then (if $consumed > 0 then "over" else "blocked" end)
   elif $consumed >= $limit then "over"
   elif $projected > $limit then "forecast_over"
   elif ($consumed / $limit) >= 0.95 then "critical"
@@ -35,6 +36,7 @@ def org_status($consumed; $limit; $projected):
 
 def user_status($consumed; $limit):
   if $limit == null then "uncapped"
+  elif $limit == 0 then (if $consumed > 0 then "over" else "blocked" end)
   elif $consumed >= $limit then "over"
   elif ($consumed / $limit) >= 0.95 then "critical"
   elif ($consumed / $limit) >= 0.85 then "warning"

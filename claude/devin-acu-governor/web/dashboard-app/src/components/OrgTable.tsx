@@ -4,7 +4,7 @@ import { fmt, fmtPct } from '../format'
 import { SortableTable, type Column } from './SortableTable'
 import { Meter, StatusBadge } from './StatusBadge'
 
-const STATUSES: OrgStatus[] = ['ok', 'warning', 'critical', 'forecast_over', 'over', 'uncapped']
+const STATUSES: OrgStatus[] = ['ok', 'warning', 'critical', 'forecast_over', 'over', 'blocked', 'uncapped']
 
 const columns: Column<OrgRow>[] = [
   { key: 'name', label: 'Org', sortValue: (o) => o.name.toLowerCase(), render: (o) => o.name },

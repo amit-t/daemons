@@ -4,7 +4,7 @@ import { fmt, fmtPct } from '../format'
 import { SortableTable, type Column } from './SortableTable'
 import { Meter, StatusBadge } from './StatusBadge'
 
-const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'uncapped']
+const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'blocked', 'uncapped']
 const CAP_SOURCES: CapSource[] = ['explicit', 'default', 'uncapped']
 
 const columns: Column<UserRow>[] = [

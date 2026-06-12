@@ -62,12 +62,16 @@ case "$url" in
     emit "${FIXTURES}/user-email-alice-limit.json" "${FAKE_USER_LIMIT_CODE:-200}" "${FAKE_USER_LIMIT_BODY:-}" ;;
   *v3beta1/enterprise/users/email%7Cbob/consumption/acu-limits*)
     emit "${FIXTURES}/user-email-bob-limit.json" "${FAKE_USER_LIMIT_CODE:-200}" "${FAKE_USER_LIMIT_BODY:-}" ;;
+  *v3beta1/enterprise/users/email%7Czero/consumption/acu-limits*)
+    emit "${FIXTURES}/user-email-zero-limit.json" "${FAKE_USER_LIMIT_CODE:-200}" "${FAKE_USER_LIMIT_BODY:-}" ;;
   *v3beta1/enterprise/users/okta%7CTeam%7Cchandra/consumption/acu-limits*)
     emit "${FIXTURES}/user-okta-team-chandra-limit.json" "${FAKE_USER_LIMIT_CODE:-200}" "${FAKE_USER_LIMIT_BODY:-}" ;;
   *consumption/daily/users/email%7Calice*)
     emit "${FIXTURES}/user-email-alice-daily.json" "${FAKE_USER_DAILY_CODE:-200}" "${FAKE_USER_DAILY_BODY:-}" ;;
   *consumption/daily/users/email%7Cbob*)
     emit "${FIXTURES}/user-email-bob-daily.json" "${FAKE_USER_DAILY_CODE:-200}" "${FAKE_USER_DAILY_BODY:-}" ;;
+  *consumption/daily/users/email%7Czero*)
+    emit "${FIXTURES}/user-email-zero-daily.json" "${FAKE_USER_DAILY_CODE:-200}" "${FAKE_USER_DAILY_BODY:-}" ;;
   *consumption/daily/users/okta%7CTeam%7Cchandra*)
     emit "${FIXTURES}/user-okta-team-chandra-daily.json" "${FAKE_USER_DAILY_CODE:-200}" "${FAKE_USER_DAILY_BODY:-}" ;;
   *consumption/daily/organizations/*)
@@ -239,13 +243,19 @@ assert_eq "org run rate" "29" "$(org_field research .daily_run_rate)"
 assert_eq "org session cap" "100" "$(org_field platform .max_session_acu_limit)"
 assert_eq "org warning boundary (== 0.85)" "warning" "$(org_field edge-warn .status)"
 assert_eq "org over boundary (consumed == limit)" "over" "$(org_field edge-over .status)"
+assert_eq "org zero cap unused blocked" "blocked" "$(org_field blocked .status)"
 assert_eq "warnings count" "5" "$(jqd '.warnings | length')"
 assert_contains "warning forecast_over org" "$(jqd '.warnings | join("|")')" "ML"
 assert_contains "warning over org" "$(jqd '.warnings | join("|")')" "Sandbox"
 assert_contains "warning uncapped org" "$(jqd '.warnings | join("|")')" "Labs"
+if [[ "$(jqd '.warnings | join("|")')" == *Blocked* ]]; then
+  _fail "zero-usage blocked org should not be over-warning"
+else
+  _ok
+fi
 
 # 7. User section includes each user's consumed ACUs and effective cap.
-assert_eq "user count" "3" "$(jqd '.users | length')"
+assert_eq "user count" "4" "$(jqd '.users | length')"
 user_field() { jq -r --arg email "$1" ".users[] | select(.email==\$email)$2" "${out_dir}/data.json" }
 assert_eq "alice user id preserved" "email|alice" "$(user_field alice@example.com .user_id)"
 assert_eq "alice consumed" "120.25" "$(user_field alice@example.com .consumed)"
@@ -258,6 +268,15 @@ assert_eq "bob cap source" "default" "$(user_field bob@example.com .cap_source)"
 assert_eq "chandra status over" "over" "$(user_field chandra@example.com .status)"
 assert_eq "chandra headroom" "-10" "$(user_field chandra@example.com .headroom)"
 assert_contains "user warning over" "$(jqd '.warnings | join("|")')" "chandra@example.com"
+assert_eq "zero explicit cap" "0" "$(user_field zero@example.com .effective_cycle_acu_limit)"
+assert_eq "zero cap source" "explicit" "$(user_field zero@example.com .cap_source)"
+assert_eq "zero consumed" "0" "$(user_field zero@example.com .consumed)"
+assert_eq "zero status blocked" "blocked" "$(user_field zero@example.com .status)"
+if [[ "$(jqd '.warnings | join("|")')" == *zero@example.com* ]]; then
+  _fail "zero-usage blocked user should not be over-warning"
+else
+  _ok
+fi
 
 # 7a. User IDs with reserved characters are URL-encoded in read endpoints.
 curl_log="${tmpdir}/curl-urls.log"
