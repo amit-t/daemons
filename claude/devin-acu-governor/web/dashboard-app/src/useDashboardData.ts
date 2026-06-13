@@ -1,106 +1,124 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DashboardData } from './types'
+import type { DashboardData, RefreshStatusFile } from './types'
 
-const FALLBACK_POLL_MS = 60_000
-
-export type RefreshStatus = 'refreshing' | 'refreshed' | 'stale'
+// The live refresh channel (status.json) is tiny and local, so poll it often:
+// it drives the countdown and the "Refreshing N%" progress, and advertises a
+// fresh generated_at the moment the backend finishes rewriting data.json.
+const STATUS_POLL_MS = 1000
 
 export interface DataState {
   data: DashboardData | null
   error: string | null
-  lastChecked: Date | null
   lastRefreshed: Date | null
-  refreshStatus: RefreshStatus
-  refreshNow: () => void
   stale: boolean
+  status: RefreshStatusFile | null
+  refreshNow: () => void
 }
 
-type InternalDataState = Omit<DataState, 'refreshNow'>
+function sameStatus(a: RefreshStatusFile | null, b: RefreshStatusFile | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.state === b.state &&
+    a.pct === b.pct &&
+    a.phase === b.phase &&
+    a.detail === b.detail &&
+    a.next_refresh_epoch === b.next_refresh_epoch &&
+    a.generated_at === b.generated_at
+  )
+}
 
-// Background polling: silently refetch data.json (rewritten by the
-// `dag dashboard --refresh` loop) and swap state only when the snapshot
-// actually changed. No page reload, no UI flicker.
+// Two channels, decoupled by cost: the heavy data.json snapshot (fetched on
+// mount, on manual refresh, and whenever status.json advertises a newer
+// generated_at) and the light status.json (polled every second to drive the
+// countdown + progress without page reloads or UI flicker).
 export function useDashboardData(): DataState {
-  const [state, setState] = useState<InternalDataState>({
-    data: null,
-    error: null,
-    lastChecked: null,
-    lastRefreshed: null,
-    refreshStatus: 'refreshing',
-    stale: false,
-  })
-  const generatedAt = useRef<string | null>(null)
-  const latestData = useRef<DashboardData | null>(null)
-  const mounted = useRef(true)
-  const inFlight = useRef(false)
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+  const [stale, setStale] = useState(false)
+  const [status, setStatus] = useState<RefreshStatusFile | null>(null)
 
-  const poll = useCallback(async () => {
-    if (inFlight.current) return
-    inFlight.current = true
-    if (mounted.current) {
-      setState((prev) => ({ ...prev, refreshStatus: 'refreshing' }))
-    }
+  const generatedAt = useRef<string | null>(null)
+  const hasData = useRef(false)
+  const statusRef = useRef<RefreshStatusFile | null>(null)
+  const mounted = useRef(true)
+  const dataInFlight = useRef(false)
+
+  const fetchData = useCallback(async () => {
+    if (dataInFlight.current) return
+    dataInFlight.current = true
     try {
       const res = await fetch('./data.json', { cache: 'no-store' })
       if (!res.ok) throw new Error(`data.json HTTP ${res.status}`)
       const next = (await res.json()) as DashboardData
       if (!mounted.current) return
-      const changed = next.generated_at !== generatedAt.current
       generatedAt.current = next.generated_at
-      const now = new Date()
-      setState((prev) => {
-        const data = changed || !prev.data ? next : prev.data
-        latestData.current = data
-        return {
-          ...prev,
-          data,
-          error: null,
-          lastChecked: now,
-          lastRefreshed: now,
-          refreshStatus: 'refreshed',
-          stale: false,
-        }
-      })
+      hasData.current = true
+      setData(next)
+      setError(null)
+      setStale(false)
+      setLastRefreshed(new Date())
     } catch (e) {
       if (!mounted.current) return
-      setState((prev) => ({
-        ...prev,
-        error: e instanceof Error ? e.message : String(e),
-        lastChecked: new Date(),
-        refreshStatus: 'stale',
-        stale: prev.data !== null,
-      }))
+      setError(e instanceof Error ? e.message : String(e))
+      setStale(hasData.current)
     } finally {
-      inFlight.current = false
+      dataInFlight.current = false
     }
   }, [])
 
+  // Manual refresh re-pulls the snapshot now; the backend owns the heavy fetch
+  // cadence, so this surfaces the latest written data.json immediately.
   const refreshNow = useCallback(() => {
-    void poll()
-  }, [poll])
+    void fetchData()
+  }, [fetchData])
 
   useEffect(() => {
     mounted.current = true
     let cancelled = false
     let timer: number | null = null
 
-    async function loop() {
-      await poll()
-      if (cancelled) return
-      const data = latestData.current
-      const nextDelay = data?.refresh.enabled
-        ? (data.refresh.interval_ms ?? FALLBACK_POLL_MS)
-        : FALLBACK_POLL_MS
-      timer = window.setTimeout(loop, nextDelay)
+    async function pollStatus() {
+      try {
+        const res = await fetch('./status.json', { cache: 'no-store' })
+        if (res.ok) {
+          const s = (await res.json()) as RefreshStatusFile
+          if (!cancelled && mounted.current) {
+            // Dedup: only re-render when something the UI shows actually moved,
+            // so the per-second poll does not thrash the chart subtree.
+            if (!sameStatus(statusRef.current, s)) {
+              statusRef.current = s
+              setStatus(s)
+            }
+            // A new snapshot is ready — pull the heavy data.json once.
+            if (s.generated_at && s.generated_at !== generatedAt.current) {
+              void fetchData()
+            }
+          }
+        } else if (res.status === 404) {
+          // No backend refresh loop (static snapshot) — clear any stale state.
+          if (!cancelled && statusRef.current !== null) {
+            statusRef.current = null
+            setStatus(null)
+          }
+        }
+      } catch {
+        // status is best-effort; ignore transient read errors and keep polling.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(pollStatus, STATUS_POLL_MS)
+      }
     }
 
-    void loop()
+    void fetchData()
+    void pollStatus()
+
     return () => {
       cancelled = true
       mounted.current = false
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [poll])
+  }, [fetchData])
 
-  return { ...state, refreshNow }
+  return { data, error, lastRefreshed, stale, status, refreshNow }
 }

@@ -123,6 +123,19 @@ export interface RefreshInfo {
   interval_ms: number | null
 }
 
+// status.json — the live refresh channel written by lib/dashboard.zsh next to
+// data.json. Polled ~1s by the app to drive the countdown + progress bar.
+export interface RefreshStatusFile {
+  state: 'counting_down' | 'refreshing' | 'static'
+  pct: number
+  phase: string
+  detail: string
+  interval_seconds: number
+  next_refresh_epoch: number | null
+  updated_at_epoch: number
+  generated_at: string | null
+}
+
 export interface DashboardData {
   generated_at: string
   refresh: RefreshInfo

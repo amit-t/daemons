@@ -139,6 +139,40 @@ body::before {
   background: var(--amber-soft);
 }
 
+/* Refreshing pill: replaces the Refresh-now button while the backend refetches,
+   showing live percentage + a mini progress bar. */
+.refresh-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.refresh-progress-bar {
+  position: relative;
+  width: 72px;
+  height: 6px;
+  background: var(--line-soft);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.refresh-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(255, 178, 36, 0.5), var(--amber));
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.refresh-progress-label {
+  white-space: nowrap;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

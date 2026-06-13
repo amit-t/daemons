@@ -356,15 +356,20 @@ fi
 app_src=$(<"${script_dir}/../web/dashboard-app/src/App.tsx")
 assert_contains "top card labels capped user total" "$app_src" "Capped user total"
 assert_contains "top card renders capped total field" "$app_src" "cap_totals.effective_user_cycle_acu_limit"
-assert_contains "refresh button label" "$app_src" "Refresh now"
-assert_contains "refreshing status text" "$app_src" "refreshing"
-assert_contains "refreshed status text" "$app_src" "refreshed"
-assert_contains "manual refresh handler wired" "$app_src" "refreshNow"
+assert_contains "app wires refresh controls" "$app_src" "RefreshControls"
+assert_contains "app passes manual refresh handler" "$app_src" "refreshNow"
+assert_contains "app passes refresh status" "$app_src" "status={status}"
+controls_src=$(<"${script_dir}/../web/dashboard-app/src/components/RefreshControls.tsx")
+assert_contains "controls refresh button" "$controls_src" "Refresh now"
+assert_contains "controls refreshing percentage" "$controls_src" "Refreshing "
+assert_contains "controls countdown label" "$controls_src" "next refresh in"
+assert_contains "controls countdown source" "$controls_src" "next_refresh_epoch"
+assert_contains "controls progress bar" "$controls_src" "refresh-progress"
 hook_src=$(<"${script_dir}/../web/dashboard-app/src/useDashboardData.ts")
 assert_contains "hook exposes manual refresh" "$hook_src" "refreshNow"
-assert_contains "hook marks refreshing" "$hook_src" "refreshStatus: 'refreshing'"
-assert_contains "hook marks refreshed" "$hook_src" "refreshStatus: 'refreshed'"
-assert_contains "hook schedules by dashboard refresh window" "$hook_src" "data.refresh.interval_ms"
+assert_contains "hook polls status channel" "$hook_src" "status.json"
+assert_contains "hook exposes refresh status" "$hook_src" "status:"
+assert_contains "hook refetches on new snapshot" "$hook_src" "generated_at !== generatedAt.current"
 
 # 7h. Per-user detail view wired into the app: clickable user rows open a
 #     drawer with the daily line chart, model/IDE split, and session stats.
@@ -391,6 +396,13 @@ assert_contains "refresh stdout" "$out" "data refetched every 30 minute(s) in th
 assert_eq "refresh enabled" "true" "$(jq -r '.refresh.enabled' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh minutes" "30" "$(jq -r '.refresh.interval_minutes' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh ms" "1800000" "$(jq -r '.refresh.interval_ms' "${tmpdir}/dash-refresh/data.json")"
+# status.json refresh channel: a one-shot refresh settles on the static state,
+# carrying the snapshot timestamp the browser uses to detect a fresh data.json.
+if [[ -f "${tmpdir}/dash-refresh/status.json" ]]; then _ok; else _fail "refresh run wrote no status.json"; fi
+assert_eq "refresh status state" "static" "$(jq -r '.state' "${tmpdir}/dash-refresh/status.json")"
+assert_eq "refresh status gen matches data" \
+  "$(jq -r '.generated_at' "${tmpdir}/dash-refresh/data.json")" \
+  "$(jq -r '.generated_at' "${tmpdir}/dash-refresh/status.json")"
 
 # 7d. --refresh only accepts the supported 5/10/15/30 minute intervals.
 out=$(run_dash --refresh 7 --no-open --out "${tmpdir}/dash-refresh-bad" 2>&1); rc=$?
@@ -660,5 +672,40 @@ if [[ -s "${tmpdir}/write.log" ]]; then
 else
   _ok
 fi
+
+# 20. Refresh-status channel helpers (unit): status.json schema + state machine
+#     and the human-friendly duration the terminal countdown / browser share.
+daemon_dir="${script_dir:A}/.."
+source "${daemon_dir}/lib/dashboard.zsh"
+sdir=$(mktemp -d)
+print -r -- '{"generated_at":"2026-06-15T08:00:00Z"}' > "${sdir}/data.json"
+
+_dag_dash_status_write "$sdir" refreshing 42 "user dailies" "3/40" 0 0 "2026-06-15T08:00:00Z"
+if jq -e . "${sdir}/status.json" >/dev/null 2>&1; then _ok; else _fail "status.json not valid JSON"; fi
+assert_eq "status state refreshing" "refreshing" "$(jq -r '.state' "${sdir}/status.json")"
+assert_eq "status pct" "42" "$(jq -r '.pct' "${sdir}/status.json")"
+assert_eq "status phase" "user dailies" "$(jq -r '.phase' "${sdir}/status.json")"
+assert_eq "status detail" "3/40" "$(jq -r '.detail' "${sdir}/status.json")"
+assert_eq "status generated_at carried" "2026-06-15T08:00:00Z" "$(jq -r '.generated_at' "${sdir}/status.json")"
+assert_eq "status no countdown while refreshing" "null" "$(jq -r '.next_refresh_epoch' "${sdir}/status.json")"
+
+_dag_dash_status_write "$sdir" counting_down 0 "" "" 300 1781510700 "2026-06-15T08:00:00Z"
+assert_eq "status counting_down state" "counting_down" "$(jq -r '.state' "${sdir}/status.json")"
+assert_eq "status next refresh epoch" "1781510700" "$(jq -r '.next_refresh_epoch' "${sdir}/status.json")"
+assert_eq "status interval seconds" "300" "$(jq -r '.interval_seconds' "${sdir}/status.json")"
+
+_dag_dash_status_static "$sdir"
+assert_eq "status static state" "static" "$(jq -r '.state' "${sdir}/status.json")"
+assert_eq "status static reads generated_at from data" "2026-06-15T08:00:00Z" "$(jq -r '.generated_at' "${sdir}/status.json")"
+
+# Missing out_dir is a no-op (never errors mid-refresh on an unwritten dir).
+_dag_dash_status_write "${sdir}/nope" refreshing 10 "x" "" 0 0 ""
+if [[ -f "${sdir}/nope/status.json" ]]; then _fail "status written into nonexistent dir"; else _ok; fi
+
+assert_eq "fmt_dur seconds" "45s" "$(_dag_dash_fmt_dur 45)"
+assert_eq "fmt_dur minutes" "4m 32s" "$(_dag_dash_fmt_dur 272)"
+assert_eq "fmt_dur hours" "1h 5m" "$(_dag_dash_fmt_dur 3900)"
+assert_eq "fmt_dur clamps negative" "0s" "$(_dag_dash_fmt_dur -3)"
+rm -rf "$sdir"
 
 report

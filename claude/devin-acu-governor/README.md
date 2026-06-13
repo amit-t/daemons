@@ -335,7 +335,7 @@ The dashboard shows:
 - interactive daily burn chart (stacked per-product bars, plus a cumulative + forecast view with the pool reference line) and a product-split donut;
 - organization table: sortable columns, status filter chips, per-row cap meters;
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; `Billing org` is the last column, with `Status` shifted left of cap source/org;
-- top-bar `Refresh now` control plus `refreshing` / `refreshed` background status for manual and auto-refresh fetches;
+- top-bar refresh status: a live **`next refresh in 4m 32s`** countdown to the next backend refetch, a **`Refreshing N%`** progress bar (with the current phase, e.g. `user dailies (19/40)`) that replaces the `Refresh now` button while the backend is fetching, and a `data refreshed X ago` resting state with a `Refresh now` button for static snapshots;
 - warnings for org cap risk and users already over effective cap;
 - **per-user detail view**: click any user row to open a drawer with that user's daily ACU line chart over the cycle (with a dashed "cap pace" reference line), Devin Cloud session stats (sessions initiated this cycle + their summed ACUs, from `/v3/enterprise/sessions`), the user's product split (devin/cascade/terminal/review), and — when the optional Windsurf service key is configured — the model split and surface split (Devin Desktop / Windsurf / JetBrains / Devin CLI) of their Devin Desktop & Local usage, with billed ACUs and message counts per row. Close with `Esc`, the `✕` button, or a click outside.
 
@@ -343,11 +343,16 @@ Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap 
 
 **First run builds the app once** (`npm install && npm run build` in `web/dashboard-app/`; requires Node.js). Later runs reuse the build; `--rebuild` forces a fresh one (run after pulling app changes).
 
-`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**; the app polls `data.json` on the same refresh cadence (or every 60 s for static snapshots), marks the header `refreshing` while the background fetch is in flight, and marks it `refreshed` after a successful fetch/update — no page reloads. `Refresh now` triggers the same background fetch path immediately. Without `--refresh` the command still keeps the server running on a static snapshot. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
+`--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**. Both the terminal and the browser get live feedback through a small `status.json` written next to `data.json`:
+
+- **Terminal.** Between refreshes a single self-rewriting line counts down — `⟳ next refresh in 4m 32s · Ctrl-C to stop`. During a refresh it shows phase progress — `⟳ refreshing 47% · user dailies (19/40)` — across the cycle/daily/org/user fetches, so the long first fetch (before the browser even opens) is no longer a silent wait.
+- **Browser.** The app polls `status.json` every second and turns `next_refresh_epoch` into the same `next refresh in …` countdown. When the backend starts fetching, the `Refresh now` button is replaced by a `Refreshing N%` progress bar (with the current phase); when the new snapshot lands, the app pulls the fresh `data.json` (detected via a changed `generated_at`) and returns to `data refreshed X ago` — no page reloads.
+
+`Refresh now` re-pulls the latest written `data.json` immediately (the backend owns the heavy fetch cadence). Without `--refresh` the command keeps the server running on a static snapshot (`status.json` state `static`, no countdown). Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
 
 Port: default `8642`; pin with `--port <n>` or `DAG_DASHBOARD_PORT`. If the default port is busy, a free one is picked automatically (warned on stderr).
 
-Generated files in the output dir: `data.json` plus the staged app build (`index.html`, `assets/`). `--json-only` writes only `data.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
+Generated files in the output dir: `data.json` (the snapshot), `status.json` (the live refresh/countdown channel), plus the staged app build (`index.html`, `assets/`). `--json-only` writes `data.json` + `status.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
 
 **Transient-failure resilience.** Every GET retries gateway/overload classes — HTTP `429`, `502`, `503`, `504` (e.g. a `504 Gateway Time-out` with an HTML body), and curl transport errors — with bounded linear backoff (`DAG_FETCH_RETRIES`, default 3; `DAG_FETCH_RETRY_SLEEP` seconds × attempt, default 2). If the two per-user ACU-limit endpoints still fail transiently after retries, the dashboard **degrades instead of aborting**: a failed per-user override falls back to the default cap (`cap_source: default`), and a failed default-cap endpoint leaves uncapped users marked `uncapped`. Each degradation prints a warning to stderr. Hard errors (`4xx`/`500`) and any other endpoint remain fatal and quote the exact response body — a single flaky user-limit call no longer takes down the whole dashboard.
 

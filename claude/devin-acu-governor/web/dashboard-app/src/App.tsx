@@ -1,24 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useDashboardData } from './useDashboardData'
-import { fmt, relTime } from './format'
+import { fmt } from './format'
 import { BurnChart } from './components/BurnChart'
 import { ProductSplitPanel } from './components/ProductSplit'
 import { OrgTable } from './components/OrgTable'
 import { UserTable } from './components/UserTable'
 import { UserDetail } from './components/UserDetail'
-
-// Re-render the "x ago" labels every 30s without refetching.
-function useClock() {
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((t) => t + 1), 30_000)
-    return () => window.clearInterval(id)
-  }, [])
-}
+import { RefreshControls } from './components/RefreshControls'
 
 export default function App() {
-  const { data, error, stale, refreshStatus, refreshNow } = useDashboardData()
-  useClock()
+  const { data, error, stale, status, refreshNow } = useDashboardData()
   // Selection is by id, not row object, so a background refresh swaps in the
   // freshly fetched row while the drawer stays open.
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
@@ -53,30 +44,14 @@ export default function App() {
         <h1 className="console-title">
           DAG <span className="dim">// ACU BURN CONSOLE</span>
         </h1>
-        <div className="console-meta">
-          <span>
-            <span className={`live-dot ${stale ? 'stale' : refreshStatus === 'refreshing' ? 'refreshing' : ''}`} />
-            {stale
-              ? 'data stale — fetch failing'
-              : refreshStatus === 'refreshing'
-                ? 'data refreshing in background'
-                : `data refreshed ${relTime(data.generated_at)}`}
-          </span>
-          <span>
-            cycle <b>{cycle.start_date} → {cycle.end_date}</b>
-          </span>
-          <span>
-            day <b>{cycle.elapsed_days}/{cycle.cycle_days}</b> · {cycle.left_days} left
-          </span>
-          <span>
-            {refresh.enabled
-              ? `backend refresh every ${refresh.interval_minutes}m`
-              : 'static snapshot'}
-          </span>
-          <button className="refresh-button" type="button" onClick={refreshNow}>
-            {refreshStatus === 'refreshing' ? 'refreshing…' : 'Refresh now'}
-          </button>
-        </div>
+        <RefreshControls
+          status={status}
+          stale={stale}
+          generatedAt={data.generated_at}
+          cycle={cycle}
+          refresh={refresh}
+          onRefresh={refreshNow}
+        />
       </header>
 
       <div className="cycle-bar" title={`cycle ${cyclePct.toFixed(0)}% elapsed`}>

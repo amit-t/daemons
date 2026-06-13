@@ -32,6 +32,96 @@ _dag_dash_last_transient() {  # true iff the last fetch failed transiently
   [[ "$(<"${DAG_FETCH_FLAG_FILE}" 2>/dev/null)" == 1 ]]
 }
 
+# ---- Refresh status channel ------------------------------------------------
+# status.json sits next to data.json and is rewritten far more often than the
+# heavy data.json: the countdown writes it once per cycle, a refresh writes it
+# at every phase. The browser polls it (tiny, ~1s) to drive a live "next
+# refresh in …" countdown and a "Refreshing N%" progress bar; the terminal
+# prints the same to a single rewritten line. Written tmp+mv so a poll never
+# reads a half-written file.
+# $1=out_dir $2=state(counting_down|refreshing|static) $3=pct $4=phase
+#   $5=detail $6=interval_seconds $7=next_refresh_epoch(0=none)
+#   $8=generated_at('' = none)
+_dag_dash_status_write() {
+  local out_dir=$1 state=$2 pct=${3:-0} phase=${4:-} detail=${5:-}
+  local interval=${6:-0} next=${7:-0} gen=${8:-} now
+  [[ -d "$out_dir" ]] || return 0
+  now="${DAG_NOW_EPOCH:-$(date +%s)}"
+  jq -n \
+    --arg state "$state" --argjson pct "$pct" \
+    --arg phase "$phase" --arg detail "$detail" \
+    --argjson interval "$interval" --argjson next "$next" \
+    --argjson now "$now" --arg gen "$gen" \
+    '{
+      state: $state, pct: $pct, phase: $phase, detail: $detail,
+      interval_seconds: $interval,
+      next_refresh_epoch: (if $next == 0 then null else $next end),
+      updated_at_epoch: $now,
+      generated_at: (if $gen == "" then null else $gen end)
+    }' > "${out_dir}/status.json.tmp" 2>/dev/null \
+    && mv "${out_dir}/status.json.tmp" "${out_dir}/status.json" 2>/dev/null
+  return 0
+}
+
+# Emit one refresh-progress step: persist a refreshing status.json (for the
+# browser) and overwrite a single terminal line (for the operator). Carries the
+# PREVIOUS generated_at so a polling browser does not pull the half-written
+# data.json mid-refresh; the countdown/static write that follows carries the new
+# one and is the single signal to refetch data.json.
+# $1=out_dir $2=pct $3=phase $4=detail $5=prev_generated_at
+_dag_dash_emit() {
+  local out_dir=$1 pct=$2 phase=$3 detail=${4:-} gen=${5:-}
+  _dag_dash_status_write "$out_dir" refreshing "$pct" "$phase" "$detail" 0 0 "$gen"
+  [[ -t 1 ]] && print -n -- $'\r\033[K'"⟳ refreshing ${pct}%  ·  ${phase}${detail:+ (${detail})}"
+}
+
+# Terminal "snapshot ready" state — no live loop, so no countdown. The browser
+# falls back to "data refreshed X ago" + an enabled Refresh-now button.
+# $1=out_dir
+_dag_dash_status_static() {
+  local out_dir=$1 gen
+  gen=$(jq -r '.generated_at // empty' "${out_dir}/data.json" 2>/dev/null)
+  _dag_dash_status_write "$out_dir" static 100 "" "" 0 0 "$gen"
+}
+
+_dag_dash_fmt_dur() {  # $1=seconds -> "45s" | "4m 32s" | "1h 5m"
+  local s=${1:-0}
+  (( s < 0 )) && s=0
+  if (( s < 60 )); then
+    print -r -- "${s}s"
+  elif (( s < 3600 )); then
+    print -r -- "$(( s / 60 ))m $(( s % 60 ))s"
+  else
+    print -r -- "$(( s / 3600 ))h $(( (s % 3600) / 60 ))m"
+  fi
+}
+
+# Live countdown to the next refresh. Sleeps in 1-second steps, overwriting a
+# single terminal line ("next refresh in 4m 32s"), and writes one counting_down
+# status.json (with next_refresh_epoch) the browser turns into the same
+# countdown without re-reading the file each second. $1=out_dir $2=seconds
+# $3=watch_pid('' skips the liveness check). Returns 1 only if the watched
+# server died mid-countdown.
+_dag_dash_countdown() {
+  local out_dir=$1 secs=$2 watch_pid=${3:-} now next gen remain
+  now="$(date +%s)"
+  next=$(( now + secs ))
+  gen=$(jq -r '.generated_at // empty' "${out_dir}/data.json" 2>/dev/null)
+  _dag_dash_status_write "$out_dir" counting_down 0 "" "" "$secs" "$next" "$gen"
+  while :; do
+    remain=$(( next - $(date +%s) ))
+    (( remain <= 0 )) && break
+    if [[ -n "$watch_pid" ]] && ! kill -0 "$watch_pid" 2>/dev/null; then
+      print -ru2 -- "dag dashboard: local server exited; stopping refresh loop"
+      return 1
+    fi
+    [[ -t 1 ]] && print -n -- $'\r\033[K'"⟳ next refresh in $(_dag_dash_fmt_dur "$remain")  ·  Ctrl-C to stop"
+    sleep 1
+  done
+  [[ -t 1 ]] && print -n -- $'\r\033[K'
+  return 0
+}
+
 # $1=url $2=auth-header-file -> body on stdout; any failure quotes the exact
 # diagnostics on stderr and returns 1. Transient failures (curl transport error,
 # or HTTP 429/502/503/504) are retried with bounded linear backoff before giving
@@ -231,6 +321,13 @@ _dag_dashboard_write_data() {
   local now="${DAG_NOW_EPOCH:-$(date +%s)}"
   local pool="${DAG_MONTHLY_ACU_POOL:-24000}"
 
+  # Previous snapshot timestamp, carried on every refreshing status so a polling
+  # browser does not pull the not-yet-rewritten data.json mid-refresh. Create
+  # out_dir up front so the status channel works from the very first run too.
+  local prev_gen
+  prev_gen=$(jq -r '.generated_at // empty' "${out_dir}/data.json" 2>/dev/null)
+  mkdir -p "$out_dir" || return 1
+
   local work hdr DAG_FETCH_FLAG_FILE
   work=$(mktemp -d) || return 1
   {
@@ -251,12 +348,16 @@ _dag_dashboard_write_data() {
       print -ru2 -- "dag dashboard: no current billing cycle (now=${now}) in response: ${cycles}"
       return 1
     fi
+    _dag_dash_emit "$out_dir" 5 "billing cycle" "" "$prev_gen"
 
     _dag_dash_fetch "${base}/v3/enterprise/consumption/daily?time_after=${after}&time_before=${before}" "$hdr" \
       > "${work}/enterprise-daily.json" || return 1
+    _dag_dash_emit "$out_dir" 10 "enterprise daily" "" "$prev_gen"
     _dag_dash_fetch "${base}/v3/enterprise/organizations" "$hdr" \
       > "${work}/organizations.json" || return 1
+    _dag_dash_emit "$out_dir" 14 "organizations" "" "$prev_gen"
     _dag_dash_fetch_members "$base" "$hdr" "${work}/members-users.json" || return 1
+    _dag_dash_emit "$out_dir" 18 "members" "" "$prev_gen"
     # Default per-user ACU cap. A persistent transient failure here must not nuke
     # the whole dashboard: fall back to "no default" (uncapped) and warn loudly.
     local default_limit_json
@@ -266,6 +367,7 @@ _dag_dashboard_write_data() {
       default_limit_json='{}'
     fi
     print -r -- "$default_limit_json" > "${work}/user-default-limit.json" || return 1
+    _dag_dash_emit "$out_dir" 22 "default caps" "" "$prev_gen"
 
     # Devin Cloud sessions: enrichment for the per-user detail view. Any
     # failure (including a missing ViewOrgSessions permission) degrades to
@@ -274,21 +376,27 @@ _dag_dashboard_write_data() {
       print -ru2 -- "dag dashboard: enterprise sessions endpoint unavailable; user detail views will omit Devin Cloud session stats"
       print -r -- '{"available": false, "items": []}' > "${work}/sessions.json" || return 1
     fi
+    _dag_dash_emit "$out_dir" 26 "cloud sessions" "" "$prev_gen"
 
     # Windsurf model/IDE analytics: optional second key; degrades internally.
     _dag_dash_fetch_model_analytics "$out_dir" "$work" "$now" "$after" "$before" || return 1
+    _dag_dash_emit "$out_dir" 30 "model analytics" "" "$prev_gen"
 
     : > "${work}/org-dailies.json"
-    local oid od
+    local oid od n_orgs i_org=0
+    n_orgs=$(jq '[.items[]?.org_id] | length' "${work}/organizations.json")
     for oid in $(jq -r '.items[]?.org_id' "${work}/organizations.json"); do
       od=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/organizations/${oid}?time_after=${after}&time_before=${before}" "$hdr") || return 1
       jq -n --arg org_id "$oid" --argjson daily "$od" \
         '{org_id: $org_id, daily: $daily}' >> "${work}/org-dailies.json" || return 1
+      (( i_org++ ))
+      (( n_orgs > 0 )) && _dag_dash_emit "$out_dir" $(( 30 + i_org * 8 / n_orgs )) "org dailies" "${i_org}/${n_orgs}" "$prev_gen"
     done
 
     : > "${work}/user-dailies.json"
     : > "${work}/user-limits.json"
-    local uid uid_q ud ul
+    local uid uid_q ud ul n_users i_user=0
+    n_users=$(jq '[.items[]?.user_id] | length' "${work}/members-users.json")
     while IFS= read -r uid; do
       [[ -z "$uid" ]] && continue
       uid_q=$(_dag_dash_urlencode "$uid") || return 1
@@ -306,12 +414,14 @@ _dag_dashboard_write_data() {
       fi
       jq -n --arg user_id "$uid" --argjson limits "$ul" \
         '{user_id: $user_id, limits: $limits}' >> "${work}/user-limits.json" || return 1
+      (( i_user++ ))
+      (( n_users > 0 )) && _dag_dash_emit "$out_dir" $(( 40 + i_user * 52 / n_users )) "user dailies" "${i_user}/${n_users}" "$prev_gen"
     done < <(jq -r '.items[]?.user_id' "${work}/members-users.json")
 
+    _dag_dash_emit "$out_dir" 94 "computing forecast" "" "$prev_gen"
     local generated_at
     generated_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
 
-    mkdir -p "$out_dir"
     if ! jq -n \
       --argjson now "$now" --argjson pool "$pool" \
       --argjson after "$after" --argjson before "$before" \
@@ -332,6 +442,8 @@ _dag_dashboard_write_data() {
       return 1
     fi
     mv "${out_dir}/data.json.tmp" "${out_dir}/data.json" || return 1
+    _dag_dash_emit "$out_dir" 100 "snapshot ready" "" "$prev_gen"
+    [[ -t 1 ]] && print -n -- $'\r\033[K'
     print -r -- "Data written: ${out_dir}/data.json"
     return 0
   } always {
@@ -486,15 +598,16 @@ dag_dashboard() {
   # --json-only: data artifact only — no app build, no server, no browser.
   if (( json_only )); then
     if [[ -z "$refresh_minutes" ]]; then
-      _dag_dashboard_write_data "$out_dir" ""
-      return $?
+      _dag_dashboard_write_data "$out_dir" "" || return $?
+      _dag_dash_status_static "$out_dir"
+      return 0
     fi
     refresh_seconds=$(( refresh_minutes * 60 ))
     while true; do
       _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
       print -r -- "Refresh: every ${refresh_minutes} minute(s). Keep this command running; press Ctrl-C to stop."
-      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && return 0
-      sleep "$refresh_seconds"
+      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
+      _dag_dash_countdown "$out_dir" "$refresh_seconds" ""
     done
   fi
 
@@ -534,21 +647,19 @@ dag_dashboard() {
     print -r -- "Press Ctrl-C to stop the server."
     (( open_after )) && open "$url"
 
-    [[ "${DAG_DASHBOARD_SERVE_ONCE:-}" == "1" ]] && return 0
+    [[ "${DAG_DASHBOARD_SERVE_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
 
     if [[ -z "$refresh_minutes" ]]; then
+      _dag_dash_status_static "$out_dir"
       wait "$_dag_dash_server_pid"
       return 0
     fi
 
     refresh_seconds=$(( refresh_minutes * 60 ))
     while true; do
-      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && return 0
-      sleep "$refresh_seconds"
-      if ! kill -0 "$_dag_dash_server_pid" 2>/dev/null; then
-        print -ru2 -- "dag dashboard: local server exited; stopping refresh loop"
-        return 1
-      fi
+      [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
+      # Live countdown (terminal + browser); returns 1 if the server died.
+      _dag_dash_countdown "$out_dir" "$refresh_seconds" "$_dag_dash_server_pid" || return 1
       _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
     done
   } always {

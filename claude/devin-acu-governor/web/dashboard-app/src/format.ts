@@ -17,6 +17,15 @@ export function relTime(iso: string): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`
 }
 
+// Coarse human duration for the refresh countdown: "45s" / "4m 32s" / "1h 5m".
+// Mirrors lib/dashboard.zsh _dag_dash_fmt_dur so terminal and browser read alike.
+export function fmtDur(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+
 export function shortDay(date: string): string {
   // "2026-05-16" -> "May 16"
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
