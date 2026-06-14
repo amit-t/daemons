@@ -83,6 +83,28 @@ assert_contains "boost borrow wording" "$out" "Borrow"
 assert_contains "boost user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
 assert_contains "boost live verify" "$out" "GET every changed user limit after PATCH"
 
+# 6a. boost over: no email required, discovers the over set at run time.
+out=$(run_dag boost over); rc=$?
+assert_exit "boost over rc" 0 $rc
+assert_contains "boost over playbook" "$out" "# Playbook: boost over"
+assert_contains "boost over command" "$out" "command: over"
+assert_contains "boost over scope" "$out" "scope: all users currently over budget"
+assert_contains "boost over no target" "$out" "no explicit target — discover the over set live"
+assert_contains "boost over plan jq" "$out" "boost-plan.jq"
+assert_contains "boost over user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+# Alias: dag over (without the boost prefix).
+out=$(run_dag over); rc=$?
+assert_exit "over alias rc" 0 $rc
+assert_contains "over alias playbook" "$out" "# Playbook: boost over"
+# boost over takes no positional args.
+out=$(run_dag boost over alice@corp.com 2>&1); rc=$?; assert_exit "boost over extra arg" 2 $rc
+# usage help lists boost over.
+out=$(run_dag 2>&1)
+assert_contains "usage lists boost over" "$out" "dag boost over"
+# all-commands surfaces the over playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands over available" "$out" "# Playbook: boost over"
+
 # 6b. user command dispatch + validation.
 out=$(run_dag user 2>&1); rc=$?; assert_exit "user noargs" 2 $rc
 out=$(run_dag user not-an-email 2>&1); rc=$?; assert_exit "user bad email" 2 $rc

@@ -37,6 +37,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
+| `dag boost over` / `dag over` | ✅ user limits + ledger | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
 | `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
 | `dag usage --group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Local exact-IDP-group report; prompts when name is omitted; adds last-3-days per-user usage/product/status detail |
@@ -73,7 +74,7 @@ Flow:
 10. On confirmation, PATCH every active target user: `{"local_agent":{"cycle_acu_limit":<cap>}}`; clear stale explicit overrides for excluded users with `{"local_agent":null}` when their `user_id` is known.
 11. GET each changed user limit after PATCH and confirm exact cap or cleared override.
 12. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data.
-13. List active users near/over cap; point to `dag boost`.
+13. List active users near/over cap; point to `dag boost` (or `dag boost over` to clear the whole over set at once).
 
 Proration math for eligible active members: `cap_i = floor(consumed_i) + floor((pool − eligible_total_consumed) / N)`. If nothing has been consumed, everyone active gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print. Excluded inactive/former users receive no cap row and no pool reservation.
 
@@ -158,6 +159,29 @@ dag boost alice@corp.com 50      # boost alice by exactly 50 ACUs, funded from l
 Argument rules:
 - `<email>` must look like an email (`*@*.*`) — else exit 2.
 - `[acus]`, if given, must be a positive integer — else exit 2. Omit it to use the recommendation.
+
+## `dag boost over` — Boost everyone over budget at once
+
+Goal: do exactly what `dag boost` does, but for *every* user currently over their Local Agent cap — without naming anyone. The over set is discovered live each run, so you never enumerate the heavy users yourself.
+
+Over set = state `OVER` from `dag usage`: a user with a finite effective cap (explicit override, else org default) whose `consumed >= cap` (a `cap == 0` blocked user with `consumed > 0` counts too). Unlimited/None caps are never over.
+
+Flow:
+1. Fetch roster, per-user consumption, and live current user limits.
+2. Select the over set (`consumed >= effective cap`). If empty, report "no users over budget" and stop.
+3. Report the over set first — email, consumed, cap, ratio, over-by — sorted most-over first, with the count.
+4. Rank lowest consumers as a single shared Borrow donor pool; track each donor's remaining headroom as it is spent across recipients.
+5. Run `lib/boost-plan.jq` per recipient (most-over first), carrying donor `cap_after` forward so the batch stays zero-sum (`Σ caps before == Σ caps after`).
+6. Show one combined Boost/Borrow preview. Per-recipient `shortfall > 0` offers the same choices as `boost` (partial, more donors, or pool-headroom overage).
+7. On one confirmation covering the whole batch, PATCH every recipient and donor, GET-verify each, update the ledger, print the UI instruction.
+
+```zsh
+dag boost over    # boost whoever is over budget right now, each funded zero-sum
+dag over          # same thing, shorter
+```
+
+Argument rules:
+- Takes no positional arguments — `dag boost over alice@corp.com` exits 2. The recipients are whoever is over at run time.
 
 ## `dag user <email>`
 
@@ -277,7 +301,7 @@ Model enable/disable is still Admin Portal UI work unless Devin ships an API. Th
 
 Generic Devin API/DAG command lab. It launches a Claude-agent session with:
 - the common `dag` API contract and write-safety rules;
-- the complete current DAG playbooks (`set-limits`, `set-limits-new`, `boost`, `user`, `status`, `models`);
+- the complete current DAG playbooks (`set-limits`, `set-limits-new`, `boost`, `over`, `user`, `status`, `models`);
 - startup instructions to fetch `https://docs.devin.ai/llms.txt` before making API claims;
 - pinned documentation seeds for ACU limits, API overview/auth/pagination, and UsageConfig;
 - a "spin it up" contract for promoting useful ad hoc work into either an exact existing `dag ...` command or a ready-to-implement new command spec.
@@ -488,7 +512,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,boost,user,status,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,boost,over,user,status,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
