@@ -392,6 +392,64 @@ td.dim { color: var(--text-dim); }
   margin-top: 8px;
 }
 
+/* email copy affordances — table cell + detail drawer */
+
+.email-link {
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline dotted var(--text-faint);
+  text-underline-offset: 2px;
+}
+
+.email-link:hover {
+  color: var(--amber);
+  text-decoration-color: var(--amber);
+}
+
+.copy-email {
+  position: relative;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted var(--text-faint);
+  text-underline-offset: 2px;
+}
+
+.copy-email:hover {
+  color: var(--amber);
+  text-decoration-color: var(--amber);
+}
+
+.copy-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--green);
+  border: 1px solid var(--green-soft);
+  background: var(--green-soft);
+  border-radius: 3px;
+  padding: 1px 5px;
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.copy-tag.show { opacity: 1; }
+.copy-tag.failed {
+  color: var(--red);
+  border-color: var(--red-soft);
+  background: var(--red-soft);
+}
+
 /* status badges */
 
 .badge {

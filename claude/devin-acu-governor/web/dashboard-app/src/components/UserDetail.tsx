@@ -12,6 +12,7 @@ import {
 import type { CycleInfo, ModelAnalyticsInfo, UserRow } from '../types'
 import { fmt, fmtPct, shortDay } from '../format'
 import { StatusBadge } from './StatusBadge'
+import { CopyEmail } from './CopyEmail'
 
 const PRODUCT_COLORS: Record<string, string> = {
   devin: '#ffb224',
@@ -146,7 +147,7 @@ export function UserDetail({ user, cycle, modelAnalytics, onClose }: Props) {
           <div>
             <h2 className="detail-name">{user.name || user.email || user.user_id}</h2>
             <div className="detail-sub">
-              {user.email && <span>{user.email}</span>}
+              {user.email && <CopyEmail email={user.email} />}
               <span className="dim">{user.user_id}</span>
               {user.billing_org_id && <span className="dim">org: {user.billing_org_id}</span>}
             </div>

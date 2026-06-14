@@ -1,15 +1,47 @@
 import { useMemo, useState } from 'react'
 import type { CapSource, UserRow, UserStatus } from '../types'
 import { fmt, fmtPct } from '../format'
+import { copyToClipboard } from '../clipboard'
 import { SortableTable, type Column } from './SortableTable'
 import { Meter, StatusBadge } from './StatusBadge'
 
 const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'blocked', 'uncapped']
 const CAP_SOURCES: CapSource[] = ['explicit', 'default', 'uncapped']
 
-const columns: Column<UserRow>[] = [
+// Email cell: hovering or clicking it copies the address AND opens the detail
+// drawer. Hover fires once per pointer-enter; the drawer it opens then covers
+// the table, so the clipboard isn't spammed while the mouse drifts across rows.
+function EmailCell({ user, onSelect }: { user: UserRow; onSelect: (u: UserRow) => void }) {
+  if (!user.email) return <>—</>
+  function trigger() {
+    void copyToClipboard(user.email)
+    onSelect(user)
+  }
+  return (
+    <button
+      type="button"
+      className="email-link"
+      title="hover or click: copy email + open detail"
+      onClick={(e) => {
+        e.stopPropagation()
+        trigger()
+      }}
+      onMouseEnter={trigger}
+    >
+      {user.email}
+    </button>
+  )
+}
+
+function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
+  return [
   { key: 'name', label: 'Name', sortValue: (u) => (u.name || '').toLowerCase(), render: (u) => u.name || '—' },
-  { key: 'email', label: 'Email', sortValue: (u) => u.email.toLowerCase(), render: (u) => u.email || '—' },
+  {
+    key: 'email',
+    label: 'Email',
+    sortValue: (u) => u.email.toLowerCase(),
+    render: (u) => <EmailCell user={u} onSelect={onSelect} />,
+  },
   { key: 'consumed', label: 'Consumed', numeric: true, sortValue: (u) => u.consumed, render: (u) => fmt(u.consumed) },
   { key: 'cap', label: 'Effective cap', numeric: true, sortValue: (u) => u.effective_cycle_acu_limit, render: (u) => fmt(u.effective_cycle_acu_limit) },
   { key: 'headroom', label: 'Headroom', numeric: true, sortValue: (u) => u.headroom, render: (u) => fmt(u.headroom) },
@@ -28,12 +60,14 @@ const columns: Column<UserRow>[] = [
   { key: 'status', label: 'Status', sortValue: (u) => STATUSES.indexOf(u.status), render: (u) => <StatusBadge status={u.status} /> },
   { key: 'cap_source', label: 'Cap source', sortValue: (u) => u.cap_source, render: (u) => <span className="dim">{u.cap_source}</span> },
   { key: 'org', label: 'Billing org', sortValue: (u) => u.billing_org_id, render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span> },
-]
+  ]
+}
 
 export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u: UserRow) => void }) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Set<UserStatus>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<CapSource>>(new Set())
+  const columns = useMemo(() => makeColumns(onSelect), [onSelect])
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -96,7 +130,7 @@ export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u:
         onRowClick={onSelect}
       />
       <div className="row-count">
-        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view · click a row for the per-user detail view
+        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view · click a row for detail · hover/click an email to copy it + open detail
       </div>
     </section>
   )
