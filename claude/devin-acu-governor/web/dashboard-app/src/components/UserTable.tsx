@@ -8,58 +8,117 @@ import { Meter, StatusBadge } from './StatusBadge'
 const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'blocked', 'uncapped']
 const CAP_SOURCES: CapSource[] = ['explicit', 'default', 'uncapped']
 
-// Email cell: hovering or clicking it copies the address AND opens the detail
-// drawer. Hover fires once per pointer-enter; the drawer it opens then covers
-// the table, so the clipboard isn't spammed while the mouse drifts across rows.
-function EmailCell({ user, onSelect }: { user: UserRow; onSelect: (u: UserRow) => void }) {
+// Email cell: static address plus explicit copy action. Copy never opens
+// the detail drawer; only the Details button does that.
+function EmailCell({ user }: { user: UserRow }) {
   if (!user.email) return <>—</>
-  function trigger() {
-    void copyToClipboard(user.email)
-    onSelect(user)
-  }
+
+  return (
+    <span className="email-cell">
+      <span className="email-text">{user.email}</span>
+      <button
+        type="button"
+        className="inline-action copy-email-button"
+        aria-label={`Copy ${user.email}`}
+        title="copy email to clipboard"
+        onClick={(e) => {
+          e.stopPropagation()
+          void copyToClipboard(user.email)
+        }}
+      >
+        Copy
+      </button>
+    </span>
+  )
+}
+
+function DetailsButton({ user, onSelect }: { user: UserRow; onSelect: (u: UserRow) => void }) {
   return (
     <button
       type="button"
-      className="email-link"
-      title="hover or click: copy email + open detail"
+      className="inline-action details-button"
+      aria-label={`Open details for ${user.email || user.name || user.user_id}`}
+      title="open user detail"
       onClick={(e) => {
         e.stopPropagation()
-        trigger()
+        onSelect(user)
       }}
-      onMouseEnter={trigger}
     >
-      {user.email}
+      Details
     </button>
   )
 }
 
 function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
   return [
-  { key: 'name', label: 'Name', sortValue: (u) => (u.name || '').toLowerCase(), render: (u) => u.name || '—' },
-  {
-    key: 'email',
-    label: 'Email',
-    sortValue: (u) => u.email.toLowerCase(),
-    render: (u) => <EmailCell user={u} onSelect={onSelect} />,
-  },
-  { key: 'consumed', label: 'Consumed', numeric: true, sortValue: (u) => u.consumed, render: (u) => fmt(u.consumed) },
-  { key: 'cap', label: 'Effective cap', numeric: true, sortValue: (u) => u.effective_cycle_acu_limit, render: (u) => fmt(u.effective_cycle_acu_limit) },
-  { key: 'headroom', label: 'Headroom', numeric: true, sortValue: (u) => u.headroom, render: (u) => fmt(u.headroom) },
-  {
-    key: 'pct',
-    label: '% of cap',
-    numeric: true,
-    sortValue: (u) => u.pct_limit,
-    render: (u) => (
-      <>
-        <Meter pct={u.pct_limit} status={u.status} />
-        {fmtPct(u.pct_limit)}
-      </>
-    ),
-  },
-  { key: 'status', label: 'Status', sortValue: (u) => STATUSES.indexOf(u.status), render: (u) => <StatusBadge status={u.status} /> },
-  { key: 'cap_source', label: 'Cap source', sortValue: (u) => u.cap_source, render: (u) => <span className="dim">{u.cap_source}</span> },
-  { key: 'org', label: 'Billing org', sortValue: (u) => u.billing_org_id, render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span> },
+    {
+      key: 'name',
+      label: 'Name',
+      sortValue: (u) => (u.name || '').toLowerCase(),
+      render: (u) => u.name || '—',
+    },
+    {
+      key: 'email',
+      label: 'Email',
+      sortValue: (u) => u.email.toLowerCase(),
+      render: (u) => <EmailCell user={u} />,
+    },
+    {
+      key: 'consumed',
+      label: 'Consumed',
+      numeric: true,
+      sortValue: (u) => u.consumed,
+      render: (u) => fmt(u.consumed),
+    },
+    {
+      key: 'cap',
+      label: 'Effective cap',
+      numeric: true,
+      sortValue: (u) => u.effective_cycle_acu_limit,
+      render: (u) => fmt(u.effective_cycle_acu_limit),
+    },
+    {
+      key: 'headroom',
+      label: 'Headroom',
+      numeric: true,
+      sortValue: (u) => u.headroom,
+      render: (u) => fmt(u.headroom),
+    },
+    {
+      key: 'pct',
+      label: '% of cap',
+      numeric: true,
+      sortValue: (u) => u.pct_limit,
+      render: (u) => (
+        <>
+          <Meter pct={u.pct_limit} status={u.status} />
+          {fmtPct(u.pct_limit)}
+        </>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      sortValue: (u) => STATUSES.indexOf(u.status),
+      render: (u) => <StatusBadge status={u.status} />,
+    },
+    {
+      key: 'cap_source',
+      label: 'Cap source',
+      sortValue: (u) => u.cap_source,
+      render: (u) => <span className="dim">{u.cap_source}</span>,
+    },
+    {
+      key: 'org',
+      label: 'Billing org',
+      sortValue: (u) => u.billing_org_id,
+      render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span>,
+    },
+    {
+      key: 'details',
+      label: 'Details',
+      render: (u) => <DetailsButton user={u} onSelect={onSelect} />,
+    },
   ]
 }
 
@@ -74,7 +133,12 @@ export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u:
     return users.filter((u) => {
       if (statusFilter.size && !statusFilter.has(u.status)) return false
       if (sourceFilter.size && !sourceFilter.has(u.cap_source)) return false
-      if (q && !u.email.toLowerCase().includes(q) && !(u.name || '').toLowerCase().includes(q) && !(u.billing_org_id || '').toLowerCase().includes(q))
+      if (
+        q &&
+        !u.email.toLowerCase().includes(q) &&
+        !(u.name || '').toLowerCase().includes(q) &&
+        !(u.billing_org_id || '').toLowerCase().includes(q)
+      )
         return false
       return true
     })
@@ -127,10 +191,9 @@ export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u:
         rows={rows}
         rowKey={(u) => u.user_id}
         initialSort={{ key: 'consumed', dir: 'desc' }}
-        onRowClick={onSelect}
       />
       <div className="row-count">
-        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view · click a row for detail · hover/click an email to copy it + open detail
+        {rows.length} of {users.length} users · consumed {fmt(rows.reduce((s, u) => s + u.consumed, 0))} ACUs in view · use Copy beside an email to copy it · use Details to open the per-user drawer
       </div>
     </section>
   )

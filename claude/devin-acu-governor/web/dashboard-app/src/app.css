@@ -394,22 +394,34 @@ td.dim { color: var(--text-dim); }
 
 /* email copy affordances — table cell + detail drawer */
 
-.email-link {
-  font: inherit;
-  color: var(--text);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-  text-decoration: underline dotted var(--text-faint);
-  text-underline-offset: 2px;
+.email-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.email-link:hover {
+.email-text { color: var(--text); }
+
+.inline-action {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--amber);
-  text-decoration-color: var(--amber);
+  background: rgba(255, 178, 36, 0.08);
+  border: 1px solid rgba(255, 178, 36, 0.28);
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
 }
+
+.inline-action:hover {
+  color: var(--bg);
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.details-button { min-width: 60px; }
 
 .copy-email {
   position: relative;

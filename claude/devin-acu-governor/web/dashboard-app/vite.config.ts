@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // base './' — the build is copied into $DAG_STATE_DIR/dashboard/latest and
@@ -9,5 +9,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 900,
+  },
+  test: {
+    environment: 'jsdom',
   },
 })

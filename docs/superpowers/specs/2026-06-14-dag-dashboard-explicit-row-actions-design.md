@@ -43,15 +43,16 @@ Update:
 
 - `claude/devin-acu-governor/README.md` dashboard feature list;
 - `claude/devin-acu-governor/web/dashboard-app/README.md` component descriptions and dev loop;
-- rebuilt `web/dashboard-app/dist/` assets, because `dag dashboard` stages the checked-in build unless `--rebuild` is used.
+- run a production build to verify the generated `web/dashboard-app/dist/` assets; `dist/` remains gitignored and is not committed.
 
 ## Verification
 
-Run from `claude/devin-acu-governor/web/dashboard-app`:
+Run from `claude/devin-acu-governor/web/dashboard-app` (test dependencies also upgrade Vite/plugin tooling as needed so `npm audit --audit-level high` is clean):
 
 ```zsh
 npm test -- --run
 npm run build
+npm audit --audit-level high
 ```
 
 Run from `claude/devin-acu-governor`:
@@ -60,4 +61,4 @@ Run from `claude/devin-acu-governor`:
 zsh test/run.zsh
 ```
 
-Then audit source text for removed hover/copy-open wording and run `git status --short` before committing only scoped files.
+Then audit source text for removed hover/copy-open wording and run `git status --short` before committing only scoped tracked files.

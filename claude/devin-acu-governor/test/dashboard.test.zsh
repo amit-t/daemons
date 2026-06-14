@@ -371,8 +371,8 @@ assert_contains "hook polls status channel" "$hook_src" "status.json"
 assert_contains "hook exposes refresh status" "$hook_src" "status:"
 assert_contains "hook refetches on new snapshot" "$hook_src" "generated_at !== generatedAt.current"
 
-# 7h. Per-user detail view wired into the app: clickable user rows open a
-#     drawer with the daily line chart, model/IDE split, and session stats.
+# 7h. Per-user detail view wired into the app: explicit Details buttons open
+#     the drawer; email copy has its own button and does not select rows.
 detail_src=$(<"${script_dir}/../web/dashboard-app/src/components/UserDetail.tsx")
 assert_contains "detail daily chart" "$detail_src" "Daily ACU usage"
 assert_contains "detail models panel" "$detail_src" "Models"
@@ -382,11 +382,19 @@ assert_contains "detail session acus card" "$detail_src" "Cloud session ACUs"
 assert_contains "detail devin desktop label" "$detail_src" "Devin Desktop"
 assert_contains "detail esc to close" "$detail_src" "Escape"
 sortable_src=$(<"${script_dir}/../web/dashboard-app/src/components/SortableTable.tsx")
-assert_contains "table supports row click" "$sortable_src" "onRowClick"
+assert_contains "table supports optional row click" "$sortable_src" "onRowClick"
 assert_contains "app renders user detail" "$app_src" "UserDetail"
 assert_contains "app tracks selected user" "$app_src" "selectedUserId"
 user_table_src_body=$(<"$user_table_src")
-assert_contains "user table forwards selection" "$user_table_src_body" "onRowClick={onSelect}"
+assert_contains "user table copy button label" "$user_table_src_body" 'aria-label={`Copy ${user.email}`}'
+assert_contains "user table copy uses clipboard" "$user_table_src_body" "copyToClipboard(user.email)"
+assert_contains "user table details button label" "$user_table_src_body" 'aria-label={`Open details for ${user.email || user.name || user.user_id}`}'
+assert_contains "user table details selects user" "$user_table_src_body" "onSelect(user)"
+if [[ "$user_table_src_body" == *"onRowClick={onSelect}"* ]]; then
+  _fail "user table does not forward row click: unexpected onRowClick={onSelect}"
+else
+  _ok
+fi
 
 # 7c. --refresh records backend cadence metadata; loop honors REFRESH_ONCE.
 out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \

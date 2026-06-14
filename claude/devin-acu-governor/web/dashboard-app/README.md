@@ -14,6 +14,7 @@ Force a rebuild after changing app source: `dag dashboard --rebuild`.
 npm install
 npm run dev        # vite dev server; put a data.json in public/ or the served dir
 npm run build      # tsc -b && vite build → dist/
+npm test -- --run  # Vitest + React Testing Library interaction tests
 ```
 
 ## Structure
@@ -27,9 +28,9 @@ npm run build      # tsc -b && vite build → dist/
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
 | `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters |
-| `src/components/UserTable.tsx` | User cap table: text search, status + cap-source filters, sortable columns, billing org last; rows click through to the detail drawer; the email cell copies the address + opens the drawer on hover or click |
+| `src/components/UserTable.tsx` | User cap table: text search, status + cap-source filters, sortable columns, billing org, explicit Copy button beside each email, and a Details action button that opens the detail drawer without row-hover/click side effects |
 | `src/components/UserDetail.tsx` | Per-user drawer: daily ACU line chart over the cycle (cap-pace reference line), Devin Cloud session stats, model + surface (IDE) bar lists from Windsurf analytics, product split; the header email is a click-to-copy token; closes on Esc/✕/backdrop |
-| `src/components/CopyEmail.tsx` | Click-to-copy email token with a transient `copied` / `copy failed` tag (used in the detail drawer) |
+| `src/components/CopyEmail.tsx` | Click-to-copy email token with a transient `copied` / `copy failed` tag (used in the detail drawer; the table has its own compact Copy action) |
 | `src/components/SortableTable.tsx` | Generic sortable table (nulls always sink to bottom; optional `onRowClick`) |
 | `src/clipboard.ts` | `copyToClipboard(text)` — async Clipboard API with a hidden-textarea `execCommand` fallback |
 | `src/app.css` | Phosphor ops theme (dark graphite, amber accent, IBM Plex Mono / Chakra Petch) |

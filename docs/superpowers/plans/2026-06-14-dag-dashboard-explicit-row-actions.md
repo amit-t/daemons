@@ -12,7 +12,7 @@
 
 ## File Structure
 
-- Modify `claude/devin-acu-governor/web/dashboard-app/package.json`: add `test` script and UI test dev dependencies.
+- Modify `claude/devin-acu-governor/web/dashboard-app/package.json`: add `test` script and UI test dev dependencies; upgrade Vite/plugin dev tooling as needed for a clean high-severity audit.
 - Modify `claude/devin-acu-governor/web/dashboard-app/package-lock.json`: dependency lock updates from `npm install`.
 - Modify `claude/devin-acu-governor/web/dashboard-app/vite.config.ts`: add Vitest `environment: 'jsdom'` config.
 - Create `claude/devin-acu-governor/web/dashboard-app/src/components/UserTable.test.tsx`: regression tests for explicit controls.
@@ -20,7 +20,7 @@
 - Modify `claude/devin-acu-governor/web/dashboard-app/src/app.css`: add inline action styling.
 - Modify `claude/devin-acu-governor/web/dashboard-app/README.md`: update dev loop and UserTable description.
 - Modify `claude/devin-acu-governor/README.md`: update dashboard behavior wording.
-- Modify `claude/devin-acu-governor/web/dashboard-app/dist/**`: rebuild dashboard assets.
+- Verify `claude/devin-acu-governor/web/dashboard-app/dist/**` with a production build; `dist/` is gitignored and not committed.
 
 ### Task 1: Baseline and test harness
 
@@ -45,7 +45,7 @@ cd claude/devin-acu-governor/web/dashboard-app
 npm install --save-dev vitest jsdom @testing-library/react @testing-library/user-event @testing-library/jest-dom
 ```
 
-Expected: `package.json` and `package-lock.json` update.
+Expected: `package.json` and `package-lock.json` update. If npm reports high-severity Vite/esbuild audit findings, run `npm audit fix --force` and re-run the app tests/build afterward.
 
 - [ ] **Step 3: Add test script**
 
@@ -62,9 +62,12 @@ In `package.json`, change scripts to:
 
 - [ ] **Step 4: Configure jsdom**
 
-In `vite.config.ts`, add Vitest test config:
+In `vite.config.ts`, import `defineConfig` from `vitest/config` so TypeScript accepts the `test` key, then add Vitest test config:
 
 ```ts
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+
 export default defineConfig({
   plugins: [react()],
   base: './',
@@ -320,7 +323,7 @@ Expected: all UserTable tests pass.
 **Files:**
 - Modify: `claude/devin-acu-governor/web/dashboard-app/README.md`
 - Modify: `claude/devin-acu-governor/README.md`
-- Modify: `claude/devin-acu-governor/web/dashboard-app/dist/**`
+- Verify: `claude/devin-acu-governor/web/dashboard-app/dist/**`
 
 - [ ] **Step 1: Update dashboard app README**
 
@@ -374,7 +377,16 @@ npm run build
 
 Expected: TypeScript and Vite build pass.
 
-- [ ] **Step 3: Run daemon test suite**
+- [ ] **Step 3: Run high-severity npm audit**
+
+```zsh
+cd claude/devin-acu-governor/web/dashboard-app
+npm audit --audit-level high
+```
+
+Expected: `found 0 vulnerabilities`.
+
+- [ ] **Step 4: Run daemon test suite**
 
 ```zsh
 cd claude/devin-acu-governor
@@ -383,7 +395,7 @@ zsh test/run.zsh
 
 Expected: all zsh/jq daemon tests pass.
 
-- [ ] **Step 4: Audit no stale copy-open wording remains**
+- [ ] **Step 5: Audit no stale copy-open wording remains**
 
 ```zsh
 rg -n "hover/click an email|copy it \+ open detail|hover or click: copy|rows click through|click any user row" claude/devin-acu-governor/README.md claude/devin-acu-governor/web/dashboard-app/README.md claude/devin-acu-governor/web/dashboard-app/src
@@ -391,11 +403,11 @@ rg -n "hover/click an email|copy it \+ open detail|hover or click: copy|rows cli
 
 Expected: no matches.
 
-- [ ] **Step 5: Commit and push**
+- [ ] **Step 6: Commit and push**
 
 ```zsh
 git status --short
-git add docs/superpowers/specs/2026-06-14-dag-dashboard-explicit-row-actions-design.md docs/superpowers/plans/2026-06-14-dag-dashboard-explicit-row-actions.md claude/devin-acu-governor/README.md claude/devin-acu-governor/web/dashboard-app/package.json claude/devin-acu-governor/web/dashboard-app/package-lock.json claude/devin-acu-governor/web/dashboard-app/vite.config.ts claude/devin-acu-governor/web/dashboard-app/src/components/UserTable.test.tsx claude/devin-acu-governor/web/dashboard-app/src/components/UserTable.tsx claude/devin-acu-governor/web/dashboard-app/src/app.css claude/devin-acu-governor/web/dashboard-app/README.md claude/devin-acu-governor/web/dashboard-app/dist
+git add docs/superpowers/specs/2026-06-14-dag-dashboard-explicit-row-actions-design.md docs/superpowers/plans/2026-06-14-dag-dashboard-explicit-row-actions.md claude/devin-acu-governor/README.md claude/devin-acu-governor/web/dashboard-app/package.json claude/devin-acu-governor/web/dashboard-app/package-lock.json claude/devin-acu-governor/web/dashboard-app/vite.config.ts claude/devin-acu-governor/web/dashboard-app/src/components/UserTable.test.tsx claude/devin-acu-governor/web/dashboard-app/src/components/UserTable.tsx claude/devin-acu-governor/web/dashboard-app/src/app.css claude/devin-acu-governor/web/dashboard-app/README.md
 git commit -m "fix(dag-dashboard): split email copy and detail actions"
 git push -u origin HEAD
 ```
