@@ -21,6 +21,7 @@ out=$(run_dag 2>&1); rc=$?
 assert_exit "noargs rc" 2 $rc
 assert_contains "noargs usage" "$out" "Usage:"
 assert_contains "usage global command" "$out" "dag set limit global <acus>"
+assert_contains "usage targeted set-limits command" "$out" "dag set-limits <email>"
 assert_contains "usage all commands" "$out" "dag all commands [task...]"
 assert_contains "usage group command" "$out" "dag usage --group"
 assert_contains "status group command" "$out" "dag status --group"
@@ -55,6 +56,24 @@ assert_contains "set-limits ui instructions" "$out" "Enterprise Settings > Consu
 assert_contains "set-limits active default" "$out" "Default eligible set = current roster members whose activity status is active"
 assert_contains "set-limits inactive no reserve" "$out" "Do not reserve ACUs for users who are not current members or are inactive"
 assert_contains "set-limits stale cleanup" "$out" "clear stale explicit overrides for excluded users"
+
+# 5a. set-limits targeted user mode: cap exactly one uncapped user by Borrowing.
+out=$(run_dag set-limits alice@corp.com); rc=$?
+assert_exit "setlimits target rc" 0 $rc
+assert_contains "setlimits target command" "$out" "requested shell command: dag set-limits alice@corp.com"
+assert_contains "setlimits target email" "$out" "target email: alice@corp.com"
+assert_contains "setlimits target scope" "$out" "scope: cap only this target user"
+assert_contains "setlimits target borrow" "$out" "Borrow from active capped donors"
+assert_contains "setlimits target only target" "$out" "do not cap any other uncapped users"
+assert_contains "setlimits target already capped guard" "$out" "If the target already has an explicit cap, stop"
+assert_contains "setlimits target jq" "$out" "borrow-caps.jq"
+
+out=$(run_dag set-limits not-an-email 2>&1); rc=$?
+assert_exit "setlimits target bad email" 2 $rc
+assert_contains "setlimits target bad email msg" "$out" "dag set-limits: argument must be a user email"
+out=$(run_dag set-limits alice@corp.com extra 2>&1); rc=$?
+assert_exit "setlimits target extra args" 2 $rc
+assert_contains "setlimits target extra args msg" "$out" "dag set-limits: takes at most one target email"
 
 # 5b. set-limits-new prompt assembly: own playbook + borrow_caps.jq path in context.
 out=$(run_dag set-limits-new); rc=$?

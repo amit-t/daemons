@@ -34,6 +34,8 @@ Usage:
                               (default claude via clscb); shorthands --claude/--codex/--devin;
                               agent flags go before the command
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
+  dag set-limits <email>      Cap only one uncapped active user, funded zero-sum by Borrowing
+                              headroom from active capped users
   dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
                               by Borrowing headroom from the lowest-consuming capped users
   dag set limit global <acus> [org_id|org_name]
@@ -79,6 +81,7 @@ Examples:
   dag usage --group "Platform Eng" --top 5
   dag --agent codex status
   dag --devin boost alice@corp.com
+  dag set-limits alice@corp.com
   dag boost over
 
 Config (environment.env; shell env vars override):
@@ -312,7 +315,27 @@ main() {
       dag_set_limit_global "$@"
       exit $?
       ;;
-    set-limits|set-limits-new) ;;
+    set-limits)
+      if (( $# > 0 )); then
+        local target_email="${1:-}"
+        if [[ "$target_email" != *@*.* ]]; then
+          print -ru2 -- "dag set-limits: argument must be a user email (got: ${target_email:-<missing>})"
+          exit 2
+        fi
+        if (( $# > 1 )); then
+          print -ru2 -- "dag set-limits: takes at most one target email (got: $*)"
+          exit 2
+        fi
+        context_lines=(
+          "requested shell command: dag set-limits ${target_email}"
+          "target email: ${target_email}"
+          "scope: cap only this target user; do not cap any other uncapped users"
+          "Borrow from active capped donors using borrow-caps.jq; recipient list must contain exactly the target user"
+          "If the target already has an explicit cap, stop and suggest dag boost ${target_email} [acus] for increases or dag user ${target_email} for inspection"
+        )
+      fi
+      ;;
+    set-limits-new) ;;
     status)
       if (( $# > 0 )); then
         if [[ "${1:-}" == --group* ]]; then

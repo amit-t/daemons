@@ -49,7 +49,7 @@ Base URL: `https://server.codeium.com`. Only call when Run context says the Wind
 
 ## Hard rules
 
-1. **No mental arithmetic.** Every cap or headroom number comes from running the jq programs named in Run context (`compute_caps_jq`, `boost_check_jq`, `boost_plan_jq`) on JSON you assemble from API responses. Show the jq command you ran and its output.
+1. **No mental arithmetic.** Every cap or headroom number comes from running the jq programs named in Run context (`compute_caps_jq`, `boost_check_jq`, `boost_plan_jq`, `borrow_caps_jq`) on JSON you assemble from API responses. Show the jq command you ran and its output.
 2. **No API write without confirmation.** Before any PATCH/DELETE: present the complete plan (endpoint, target email/org, old value from GET, new value, body) and wait for explicit confirmation in this session. `dag set limit global` is a separate explicit local command and performs its own live verification.
 3. **Read failures stop writes.** If any read call fails, quote the exact response body and stop; do not proceed to writes.
 4. **Live verify every write.** After each successful PATCH, GET the same ACU-limit resource and confirm the configured `local_agent.cycle_acu_limit` matches. GET each changed user limit after PATCH; GET every changed user limit after PATCH for boost/borrow. For org writes, GET the org ACU-limit resource.

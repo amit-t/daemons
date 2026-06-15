@@ -33,6 +33,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | Command | Mutates | Purpose |
 |---|---:|---|
 | `dag set-limits` | ✅ user limits + ledger | Discover active current-member engineers/user IDs, compute remaining-pool prorated caps, PATCH each active user's Local Agent override, live-GET verify each write |
+| `dag set-limits <email>` | ✅ target user + donor limits + ledger | Cap only one active current-member user who has no explicit cap yet, funded zero-sum by Borrowing headroom from active capped users; no other uncapped users are capped |
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
@@ -80,6 +81,23 @@ Proration math for eligible active members: `cap_i = floor(consumed_i) + floor((
 
 ```zsh
 dag set-limits
+```
+
+### `dag set-limits <email>` — Cap one uncapped user by Borrowing
+
+Targeted mode is for adding an enforceable cap to exactly one active current-member user — for example, one new hire — without re-prorating everyone and without capping other uncapped users.
+
+Behavior:
+1. Resolve `<email>` to one current-member `user_id`.
+2. Fetch the target's current-cycle consumption and live explicit Local Agent override.
+3. If the target already has an explicit cap, stop and report it; use `dag boost <email> [acus]` to raise an existing cap.
+4. If the target is uncapped, run `lib/borrow-caps.jq` with `recipients` containing only that target and `donors` containing active capped users. Donors are ranked lowest-consumer-first and keep their consumed ACUs plus the donor buffer.
+5. Preview one target cap plus donor reductions, proving `zero_sum: true` and `sum_before == sum_after`.
+6. After explicit confirmation, PATCH only the target and tapped donors, then GET-verify each changed user.
+7. Update the ledger and print the Enterprise Settings > Consumption UI instruction.
+
+```zsh
+dag set-limits alice@corp.com
 ```
 
 ## `dag set-limits-new` — Seed caps for the uncapped, by Borrowing
@@ -510,7 +528,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
-| `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` (uncapped users funded by Borrowing from lowest consumers) |
+| `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
 | `playbooks/{set-limits,set-limits-new,boost,over,user,status,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
@@ -532,10 +550,11 @@ zsh claude/devin-acu-governor/test/run.zsh
 zsh -n claude/devin-acu-governor/bin/dag
 zsh -n claude/devin-acu-governor/lib/*.zsh
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits alice@corp.com
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new`), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 

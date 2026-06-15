@@ -2,6 +2,20 @@
 
 Distribute the monthly ACU pool (`DAG_MONTHLY_ACU_POOL` in Run context) across active current-member enterprise engineers as enforceable **per-user Local Agent limits**. The calculation prorates the remaining ACUs after current cycle burn, then PATCHes each target user's `local_agent.cycle_acu_limit` through the Cognizant-provided V3 beta API.
 
+## Targeted mode: `dag set-limits <email>`
+
+If Run context includes `target email`, do **not** run the full-team proration flow. Cap only this target user by using the one-recipient version of the `set-limits-new` Borrow flow:
+
+- Resolve the target email to exactly one active current-member `user_id`.
+- Read the target's live `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` setting before planning.
+- If the target already has an explicit cap, stop and report that cap; suggest `dag boost <email> [acus]` for raising an existing cap or `dag user <email>` for inspection. Do not borrow or PATCH by default.
+- If the target has no explicit cap, build `borrow_caps_jq` input with `recipients` containing **only** the target user and `donors` containing active current-member users with explicit caps. Borrow from active capped donors, lowest consumers first. The target is never a donor.
+- Do not cap any other uncapped users, even if they appear in the roster. List them only as "left uncapped by targeted mode" if helpful for audit.
+- Preview the one target cap plus donor Borrow table. Prove `zero_sum: true`, `sum_before == sum_after`, and that no donor falls below its consumed ACUs + buffer.
+- After explicit confirmation, PATCH only the target and tapped donors, then GET each changed user limit after PATCH and verify exact planned values.
+
+After completing targeted mode, skip the full-team steps below except for shared data-gathering, confirmation, live verification, ledger, and UI-instruction requirements that apply to the target/donor participant set.
+
 ## Steps
 
 1. **Cycle dates.** GET `/v3/enterprise/consumption/cycles`. Current cycle = item with `after <= now < before`. Convert epochs to dates for display.
