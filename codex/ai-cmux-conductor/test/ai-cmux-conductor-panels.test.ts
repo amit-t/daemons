@@ -366,6 +366,30 @@ describe("buildOrchestratorPrompt panel routing", () => {
     expect(prompt).toContain("ONLY when the user has NOT addressed a kid pane");
   });
 
+
+  test("tells the orchestrator to decompose ordinary tasks across enabled kid panels and require goal marking", () => {
+    const prompt = buildOrchestratorPrompt({
+      cwd: "/repo",
+      workspaceId: "workspace:1",
+      workspaceName: "Repo",
+      orchestratorSurfaceId: "surface:base",
+      claudeSurfaceId: "surface:claude",
+      codexPanelSurfaceId: "surface:codex-panel",
+      devinSurfaceId: "surface:devin",
+      claudePanelEnabled: true,
+      codexPanelEnabled: true,
+      devinPanelEnabled: true,
+      reusedClaude: false,
+      reusedCodexPanel: false,
+      reusedDevin: false,
+    });
+
+    expect(prompt).toContain("Default orchestration for ordinary tasks");
+    expect(prompt).toContain("For every non-trivial Amit task, first attempt to decompose it into independent chunks for enabled kid panels");
+    expect(prompt).toContain("mark that assigned work as a goal before doing it");
+    expect(prompt).toContain("Goal instruction: tell the kid agent to create or mark a goal for its assignment before it starts work");
+    expect(prompt).toContain("The base orchestrator owns decomposition, routing, progress checks, integration, and final response");
+  });
   test("omits kid-pane routing and background sections when no side agents are enabled", () => {
     const prompt = buildOrchestratorPrompt({
       cwd: "/work/project-x",
@@ -382,6 +406,8 @@ describe("buildOrchestratorPrompt panel routing", () => {
 
     expect(prompt).not.toContain("## Kid-pane routing (non-negotiable)");
     expect(prompt).not.toContain("## Background work");
+    expect(prompt).not.toContain("Default orchestration for ordinary tasks");
+    expect(prompt).not.toContain("mark that assigned work as a goal before doing it");
     expect(prompt).toContain("No managed side-agent routing panes are enabled.");
   });
 });

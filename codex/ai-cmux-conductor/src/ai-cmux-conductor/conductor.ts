@@ -558,6 +558,30 @@ export function buildOrchestratorPrompt(context: ConductorContext, baseAgent: Or
 5. AICC daemon sitrep is available with: aicc --status.
 6. Use concise status updates: blockers and recommended next action.`;
 
+  const defaultOrchestrationSection = enabledAgents.length
+    ? `
+## Default orchestration for ordinary tasks
+For every non-trivial Amit task, first attempt to decompose it into independent chunks for enabled kid panels: ${kidList}. Do this even when Amit does not explicitly say "distribute", "orchestrate", or name a kid pane.
+
+Default flow:
+1. Quickly classify the request: what can run independently, what must stay with the base orchestrator, and what needs Amit clarification before any work starts.
+2. Send suitable independent chunks to enabled kid panels with the matching Send <Agent> commands. Use more than one kid panel when parallel work helps.
+3. In every delegated kid prompt, mark that assigned work as a goal before doing it.
+4. The base orchestrator owns decomposition, routing, progress checks, integration, and final response. Do not dump coordination onto a kid pane.
+5. Skip delegation only for trivial single-step replies, sensitive or risky actions needing explicit Amit approval, unclear tasks that need clarification before any useful work, or work where parallelism would create conflicts.
+
+Every default delegation prompt must include:
+- Goal instruction: tell the kid agent to create or mark a goal for its assignment before it starts work.
+- Objective: concrete slice of Amit's task assigned to that kid pane.
+- Context and constraints from Amit's request and this workspace.
+- Acceptance criteria for that slice.
+- Verification commands or evidence required before reporting back.
+- Reporting format: concise findings, changed files if any, verification output, blockers, and handoff notes for integration.
+
+Explicit kid-pane routing still wins: when Amit names a kid pane, route exactly as requested under the Kid-pane routing rules below.
+`
+    : "";
+
   const kidRoutingSection = enabledAgents.length
     ? `
 ## Kid-pane routing (non-negotiable)
@@ -606,7 +630,7 @@ ${workspaceLines.join("\n")}
 
 ## Role
 Stay in this base tab and coordinate the ${agents} ${agentPaneNoun} in the same workspace. The user will mostly talk to you.${roleRouting}
-${enabledAgents.length ? kidRoutingSection : ""}
+${enabledAgents.length ? defaultOrchestrationSection : ""}${enabledAgents.length ? kidRoutingSection : ""}
 ## cMUX commands
 ${commandLines.length ? commandLines.join("\n") : "No managed side-agent panes are enabled."}
 
