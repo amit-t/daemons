@@ -5,6 +5,9 @@ import type { DashboardData, RefreshStatusFile } from './types'
 // it drives the countdown and the "Refreshing N%" progress, and advertises a
 // fresh generated_at the moment the backend finishes rewriting data.json.
 const STATUS_POLL_MS = 1000
+const MANUAL_REFRESH_ENDPOINT = './__dag_refresh_now'
+const MIN_MANUAL_REFRESH_FEEDBACK_MS = 750
+const MAX_MANUAL_REFRESH_FEEDBACK_MS = 10_000
 
 export interface DataState {
   data: DashboardData | null
@@ -12,6 +15,7 @@ export interface DataState {
   lastRefreshed: Date | null
   stale: boolean
   status: RefreshStatusFile | null
+  manualRefreshing: boolean
   refreshNow: () => void
 }
 
@@ -38,12 +42,50 @@ export function useDashboardData(): DataState {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [stale, setStale] = useState(false)
   const [status, setStatus] = useState<RefreshStatusFile | null>(null)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
 
   const generatedAt = useRef<string | null>(null)
   const hasData = useRef(false)
   const statusRef = useRef<RefreshStatusFile | null>(null)
   const mounted = useRef(true)
   const dataInFlight = useRef(false)
+  const manualRefreshStartedAt = useRef(0)
+  const manualRefreshTimer = useRef<number | null>(null)
+  const manualRefreshMaxTimer = useRef<number | null>(null)
+
+  const beginManualRefreshFeedback = useCallback(() => {
+    manualRefreshStartedAt.current = performance.now()
+    if (manualRefreshTimer.current !== null) {
+      window.clearTimeout(manualRefreshTimer.current)
+      manualRefreshTimer.current = null
+    }
+    if (manualRefreshMaxTimer.current !== null) {
+      window.clearTimeout(manualRefreshMaxTimer.current)
+      manualRefreshMaxTimer.current = null
+    }
+    setManualRefreshing(true)
+  }, [])
+
+  const endManualRefreshFeedback = useCallback(() => {
+    const elapsed = performance.now() - manualRefreshStartedAt.current
+    const delay = Math.max(0, MIN_MANUAL_REFRESH_FEEDBACK_MS - elapsed)
+    if (manualRefreshTimer.current !== null) window.clearTimeout(manualRefreshTimer.current)
+    if (manualRefreshMaxTimer.current !== null) {
+      window.clearTimeout(manualRefreshMaxTimer.current)
+      manualRefreshMaxTimer.current = null
+    }
+    manualRefreshTimer.current = window.setTimeout(() => {
+      manualRefreshTimer.current = null
+      if (mounted.current) setManualRefreshing(false)
+    }, delay)
+  }, [])
+
+  const capManualRefreshFeedback = useCallback(() => {
+    if (manualRefreshMaxTimer.current !== null) window.clearTimeout(manualRefreshMaxTimer.current)
+    manualRefreshMaxTimer.current = window.setTimeout(() => {
+      endManualRefreshFeedback()
+    }, MAX_MANUAL_REFRESH_FEEDBACK_MS)
+  }, [endManualRefreshFeedback])
 
   const fetchData = useCallback(async () => {
     if (dataInFlight.current) return
@@ -68,11 +110,32 @@ export function useDashboardData(): DataState {
     }
   }, [])
 
-  // Manual refresh re-pulls the snapshot now; the backend owns the heavy fetch
-  // cadence, so this surfaces the latest written data.json immediately.
+  // Manual refresh asks the local dashboard server to interrupt the backend
+  // countdown and refetch data.json now. Older/static servers do not have that
+  // endpoint, so fall back to re-pulling the latest already-written snapshot.
   const refreshNow = useCallback(() => {
-    void fetchData()
-  }, [fetchData])
+    beginManualRefreshFeedback()
+    void (async () => {
+      let backendAccepted = false
+      try {
+        const res = await fetch(MANUAL_REFRESH_ENDPOINT, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'X-DAG-Refresh': '1' },
+        })
+        if (!res.ok) {
+          await fetchData()
+        } else {
+          backendAccepted = true
+          capManualRefreshFeedback()
+        }
+      } catch {
+        await fetchData()
+      } finally {
+        if (!backendAccepted) endManualRefreshFeedback()
+      }
+    })()
+  }, [beginManualRefreshFeedback, capManualRefreshFeedback, endManualRefreshFeedback, fetchData])
 
   useEffect(() => {
     mounted.current = true
@@ -91,8 +154,10 @@ export function useDashboardData(): DataState {
               statusRef.current = s
               setStatus(s)
             }
+            if (s.state === 'refreshing') endManualRefreshFeedback()
             // A new snapshot is ready — pull the heavy data.json once.
             if (s.generated_at && s.generated_at !== generatedAt.current) {
+              endManualRefreshFeedback()
               void fetchData()
             }
           }
@@ -116,9 +181,11 @@ export function useDashboardData(): DataState {
     return () => {
       cancelled = true
       mounted.current = false
+      if (manualRefreshTimer.current !== null) window.clearTimeout(manualRefreshTimer.current)
+      if (manualRefreshMaxTimer.current !== null) window.clearTimeout(manualRefreshMaxTimer.current)
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [fetchData])
+  }, [endManualRefreshFeedback, fetchData])
 
-  return { data, error, lastRefreshed, stale, status, refreshNow }
+  return { data, error, lastRefreshed, stale, status, manualRefreshing, refreshNow }
 }

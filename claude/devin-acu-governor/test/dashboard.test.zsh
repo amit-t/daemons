@@ -97,17 +97,22 @@ print -r -- "$@" >> "${OPEN_LOG}"
 EOF
 chmod +x "${tmpdir}/bin/open"
 
-# Fake python3: deterministic stand-in for the port check (-c with a port arg →
-# always free), the free-port pick (-c without args → 8999), and the static
-# server (-m http.server → log argv, then idle until killed).
+# Fake python3: deterministic stand-in for the port check (-c with one runtime
+# arg → always free), the free-port pick (-c without runtime args → 8999), and
+# the custom dashboard server (-c with port/out/request-file → log argv, then
+# idle until killed).
 cat > "${tmpdir}/bin/python3" <<'EOF'
 #!/usr/bin/env zsh
 if [[ "${1:-}" == "-c" ]]; then
-  if (( $# >= 3 )); then exit 0; else print -r -- 8999; exit 0; fi
-fi
-if [[ "${1:-}" == "-m" && "${2:-}" == "http.server" ]]; then
-  print -r -- "$@" >> "${SERVE_LOG}"
-  while true; do sleep 1; done
+  if (( $# >= 5 )); then
+    print -r -- "custom http.server port=${3} --bind 127.0.0.1 --directory ${4} __dag_refresh_now request_file=${5}" >> "${SERVE_LOG}"
+    while true; do sleep 1; done
+  elif (( $# >= 3 )); then
+    exit 0
+  else
+    print -r -- 8999
+    exit 0
+  fi
 fi
 exit 0
 EOF
@@ -117,7 +122,7 @@ chmod +x "${tmpdir}/bin/python3"
 mkdir -p "${tmpdir}/deadpy"
 cat > "${tmpdir}/deadpy/python3" <<'EOF'
 #!/usr/bin/env zsh
-if [[ "${1:-}" == "-c" ]]; then exit 0; fi
+if [[ "${1:-}" == "-c" && $# -lt 5 ]]; then exit 0; fi
 exit 1
 EOF
 chmod +x "${tmpdir}/deadpy/python3"
@@ -203,6 +208,9 @@ assert_contains "server module" "$serve_line" "http.server"
 assert_contains "server port" "$serve_line" "8642"
 assert_contains "server local bind" "$serve_line" "--bind 127.0.0.1"
 assert_contains "server directory" "$serve_line" "--directory ${out_dir:A}"
+assert_contains "server manual refresh endpoint" "$serve_line" "__dag_refresh_now"
+dashboard_src=$(<"${script_dir}/../lib/dashboard.zsh")
+assert_contains "server manual refresh header gate" "$dashboard_src" "X-DAG-Refresh"
 
 # 4. Keys never leak into stdout or any generated file (cog_ and Windsurf).
 if [[ "$out" == *test-cog-key-SECRET* ]]; then _fail "cog key leaked to stdout"; else _ok; fi
@@ -358,15 +366,19 @@ assert_contains "top card labels capped user total" "$app_src" "Capped user tota
 assert_contains "top card renders capped total field" "$app_src" "cap_totals.effective_user_cycle_acu_limit"
 assert_contains "app wires refresh controls" "$app_src" "RefreshControls"
 assert_contains "app passes manual refresh handler" "$app_src" "refreshNow"
+assert_contains "app passes manual refresh feedback" "$app_src" "manualRefreshing={manualRefreshing}"
 assert_contains "app passes refresh status" "$app_src" "status={status}"
 controls_src=$(<"${script_dir}/../web/dashboard-app/src/components/RefreshControls.tsx")
 assert_contains "controls refresh button" "$controls_src" "Refresh now"
 assert_contains "controls refreshing percentage" "$controls_src" "Refreshing "
 assert_contains "controls countdown label" "$controls_src" "next refresh in"
 assert_contains "controls countdown source" "$controls_src" "next_refresh_epoch"
+assert_contains "controls manual refreshing state" "$controls_src" "manualRefreshing"
 assert_contains "controls progress bar" "$controls_src" "refresh-progress"
 hook_src=$(<"${script_dir}/../web/dashboard-app/src/useDashboardData.ts")
 assert_contains "hook exposes manual refresh" "$hook_src" "refreshNow"
+assert_contains "hook posts manual refresh endpoint" "$hook_src" "__dag_refresh_now"
+assert_contains "hook exposes manual refresh feedback" "$hook_src" "manualRefreshing"
 assert_contains "hook polls status channel" "$hook_src" "status.json"
 assert_contains "hook exposes refresh status" "$hook_src" "status:"
 assert_contains "hook refetches on new snapshot" "$hook_src" "generated_at !== generatedAt.current"
@@ -468,7 +480,7 @@ out=$(FAKE_TRANSIENT_URL="email%7Calice/consumption/acu-limits" FAKE_TRANSIENT_T
   run_dash --no-open --out "${tmpdir}/dash-504-recover" 2>&1); rc=$?
 assert_exit "504 recover rc" 0 $rc
 assert_contains "504 retry logged" "$out" "transient; retry"
-assert_eq "504 recover attempts" "2" "$(<"$cnt")"
+assert_eq "504 recover attempts" "2" "$(cat "$cnt")"
 ufr() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-recover/data.json" }
 assert_eq "504 recover alice cap" "200" "$(ufr alice@example.com .effective_cycle_acu_limit)"
 assert_eq "504 recover alice source" "explicit" "$(ufr alice@example.com .cap_source)"

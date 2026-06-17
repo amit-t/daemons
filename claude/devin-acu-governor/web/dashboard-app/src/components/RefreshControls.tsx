@@ -8,6 +8,7 @@ interface Props {
   generatedAt: string
   cycle: CycleInfo
   refresh: RefreshInfo
+  manualRefreshing?: boolean
   onRefresh: () => void
 }
 
@@ -15,7 +16,7 @@ interface Props {
 // the "x ago" label stays current — isolated here so the per-second tick never
 // re-renders the charts. The countdown is derived locally from
 // next_refresh_epoch; status.json only needs to be polled, not ticked.
-export function RefreshControls({ status, stale, generatedAt, cycle, refresh, onRefresh }: Props) {
+export function RefreshControls({ status, stale, generatedAt, cycle, refresh, manualRefreshing = false, onRefresh }: Props) {
   const [, setTick] = useState(0)
   useEffect(() => {
     const id = window.setInterval(() => setTick((t) => t + 1), 1000)
@@ -31,7 +32,7 @@ export function RefreshControls({ status, stale, generatedAt, cycle, refresh, on
   }
   // Bridge the ~1s gap between the countdown hitting zero and status.json
   // flipping to "refreshing": treat it as in-refresh so the button hides too.
-  const inRefresh = refreshing || (countdown !== null && countdown <= 0)
+  const inRefresh = manualRefreshing || refreshing || (countdown !== null && countdown <= 0)
 
   let dotClass = ''
   let statusText: string

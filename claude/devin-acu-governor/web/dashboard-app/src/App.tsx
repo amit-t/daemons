@@ -9,7 +9,7 @@ import { UserDetail } from './components/UserDetail'
 import { RefreshControls } from './components/RefreshControls'
 
 export default function App() {
-  const { data, error, stale, status, refreshNow } = useDashboardData()
+  const { data, error, stale, status, manualRefreshing, refreshNow } = useDashboardData()
   // Selection is by id, not row object, so a background refresh swaps in the
   // freshly fetched row while the drawer stays open.
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
@@ -50,6 +50,7 @@ export default function App() {
           generatedAt={data.generated_at}
           cycle={cycle}
           refresh={refresh}
+          manualRefreshing={manualRefreshing}
           onRefresh={refreshNow}
         />
       </header>

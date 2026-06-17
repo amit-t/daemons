@@ -6,8 +6,10 @@
 # forecast via lib/dashboard.jq into data.json, then serves the React app in
 # web/dashboard-app (built once, on first run) over a localhost HTTP server.
 # With --refresh, a background loop refetches data.json on the cadence; the
-# app polls it silently — no page reloads. Local-only: the server binds
-# 127.0.0.1 and nothing here is ever deployed.
+# app polls status.json/data.json silently — no page reloads. The localhost
+# server also accepts POST /__dag_refresh_now, writing a local signal file that
+# interrupts the countdown for an immediate backend refetch. Local-only: the
+# server binds 127.0.0.1 and nothing here is ever deployed.
 # Read-only: GET requests only, no API writes. The cog_ key travels only as a
 # curl Authorization header — never printed, logged, or written to a file.
 #
@@ -100,15 +102,19 @@ _dag_dash_fmt_dur() {  # $1=seconds -> "45s" | "4m 32s" | "1h 5m"
 # single terminal line ("next refresh in 4m 32s"), and writes one counting_down
 # status.json (with next_refresh_epoch) the browser turns into the same
 # countdown without re-reading the file each second. $1=out_dir $2=seconds
-# $3=watch_pid('' skips the liveness check). Returns 1 only if the watched
-# server died mid-countdown.
+# $3=watch_pid('' skips the liveness check) $4=request_file('' skips manual).
+# Returns 1 only if the watched server died mid-countdown.
 _dag_dash_countdown() {
-  local out_dir=$1 secs=$2 watch_pid=${3:-} now next gen remain
+  local out_dir=$1 secs=$2 watch_pid=${3:-} request_file=${4:-} now next gen remain
   now="$(date +%s)"
   next=$(( now + secs ))
   gen=$(jq -r '.generated_at // empty' "${out_dir}/data.json" 2>/dev/null)
   _dag_dash_status_write "$out_dir" counting_down 0 "" "" "$secs" "$next" "$gen"
   while :; do
+    if _dag_dash_take_refresh_request "$request_file"; then
+      [[ -t 1 ]] && print -n -- $'\r\033[K'"⟳ manual refresh requested"
+      break
+    fi
     remain=$(( next - $(date +%s) ))
     (( remain <= 0 )) && break
     if [[ -n "$watch_pid" ]] && ! kill -0 "$watch_pid" 2>/dev/null; then
@@ -520,16 +526,104 @@ print(s.getsockname()[1])
 ' 2>/dev/null
 }
 
-# Start the localhost static server in the background; sets the caller-scoped
-# _dag_dash_server_pid. $1=out_dir $2=port.
+# Consume a pending browser-triggered refresh request, if any. The local server
+# writes this signal file from POST /__dag_refresh_now; the dashboard loop owns
+# the actual API fetch so keys stay in the zsh process, never the browser/server.
+_dag_dash_take_refresh_request() {  # $1=request_file -> 0 iff consumed
+  local request_file=${1:-}
+  [[ -n "$request_file" && -f "$request_file" ]] || return 1
+  rm -f "$request_file"
+  return 0
+}
+
+_dag_dash_wait_manual_refresh() {  # $1=request_file $2=watch_pid
+  local request_file=$1 watch_pid=${2:-}
+  while :; do
+    if _dag_dash_take_refresh_request "$request_file"; then
+      [[ -t 1 ]] && print -n -- $'\r\033[K'"⟳ manual refresh requested"
+      return 0
+    fi
+    if [[ -n "$watch_pid" ]] && ! kill -0 "$watch_pid" 2>/dev/null; then
+      print -ru2 -- "dag dashboard: local server exited; stopping refresh loop"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+# Start the localhost dashboard server in the background; sets the caller-scoped
+# _dag_dash_server_pid. Static files are served from out_dir, and POST
+# /__dag_refresh_now writes a local signal file that the zsh loop consumes.
+# $1=out_dir $2=port $3=refresh-request-file.
 _dag_dash_serve_start() {
-  local out_dir=$1 port=$2 py
+  local out_dir=$1 port=$2 request_file=$3 py
   py=$(_dag_dash_python)
   if ! (( $+commands[$py] )) && [[ ! -x "$py" ]]; then
     print -ru2 -- "dag dashboard: '${py}' not found — needed to serve the dashboard locally."
     return 1
   fi
-  "$py" -m http.server "$port" --bind 127.0.0.1 --directory "$out_dir" >/dev/null 2>&1 &
+  "$py" -c '
+import http.server
+import os
+import pathlib
+import socketserver
+import sys
+import time
+import urllib.parse
+
+PORT = int(sys.argv[1])
+DIRECTORY = sys.argv[2]
+REQUEST_FILE = sys.argv[3]
+ENDPOINT = "/__dag_refresh_now"
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=DIRECTORY, **kwargs)
+
+    def log_message(self, format, *args):
+        return
+
+    def _send_json(self, code, body):
+        payload = (body + "\n").encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path != ENDPOINT:
+            self.send_error(404)
+            return
+        if self.headers.get("X-DAG-Refresh") != "1":
+            self._send_json(403, "{\"ok\":false,\"error\":\"missing refresh header\"}")
+            return
+        try:
+            request_path = pathlib.Path(REQUEST_FILE)
+            request_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = request_path.with_name(f"{request_path.name}.tmp.{os.getpid()}")
+            tmp_path.write_text(f"{time.time_ns()}\n", encoding="utf-8")
+            os.replace(tmp_path, request_path)
+        except OSError:
+            self._send_json(500, "{\"ok\":false,\"error\":\"failed to queue refresh\"}")
+            return
+        self._send_json(202, "{\"ok\":true}")
+
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path == ENDPOINT:
+            self.send_error(405)
+            return
+        super().do_GET()
+
+class ReuseServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+with ReuseServer(("127.0.0.1", PORT), Handler) as httpd:
+    httpd.serve_forever()
+' "$port" "$out_dir" "$request_file" >/dev/null 2>&1 &
   _dag_dash_server_pid=$!
   sleep "${DAG_DASHBOARD_SERVE_GRACE:-0.3}"
   if ! kill -0 "$_dag_dash_server_pid" 2>/dev/null; then
@@ -630,11 +724,13 @@ dag_dashboard() {
   fi
 
   local _dag_dash_server_pid=""
+  local _dag_dash_refresh_request_file="${out_dir}/.dag-refresh-request"
+  rm -f "$_dag_dash_refresh_request_file"
   # `always` does not run when the shell dies on a signal — without these traps
   # a TERM/HUP to dag would orphan the python server on the port forever.
   trap '_dag_dash_serve_stop; trap - INT TERM HUP; return 130' INT TERM HUP
   {
-    _dag_dash_serve_start "$out_dir" "$port" || return 1
+    _dag_dash_serve_start "$out_dir" "$port" "$_dag_dash_refresh_request_file" || return 1
     local url="http://127.0.0.1:${port}/"
     print -r -- "Dashboard serving:"
     print -r -- "  ${url}"
@@ -651,15 +747,18 @@ dag_dashboard() {
 
     if [[ -z "$refresh_minutes" ]]; then
       _dag_dash_status_static "$out_dir"
-      wait "$_dag_dash_server_pid"
-      return 0
+      while true; do
+        _dag_dash_wait_manual_refresh "$_dag_dash_refresh_request_file" "$_dag_dash_server_pid" || return 1
+        _dag_dashboard_write_data "$out_dir" "" || return $?
+        _dag_dash_status_static "$out_dir"
+      done
     fi
 
     refresh_seconds=$(( refresh_minutes * 60 ))
     while true; do
       [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
       # Live countdown (terminal + browser); returns 1 if the server died.
-      _dag_dash_countdown "$out_dir" "$refresh_seconds" "$_dag_dash_server_pid" || return 1
+      _dag_dash_countdown "$out_dir" "$refresh_seconds" "$_dag_dash_server_pid" "$_dag_dash_refresh_request_file" || return 1
       _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
     done
   } always {

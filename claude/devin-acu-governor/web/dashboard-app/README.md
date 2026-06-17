@@ -4,7 +4,7 @@ React (Vite + TypeScript + recharts) frontend for `dag dashboard`. Local-only: s
 
 ## How it runs
 
-`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist/` next to the generated `data.json` in the output dir, and serves that dir with `python3 -m http.server` on `127.0.0.1`. The app fetches `./data.json` on load and polls `./status.json` — the lightweight live refresh channel the backend rewrites far more often than the heavy snapshot — every second with `cache: no-store`. `status.json` drives a `next refresh in 4m 32s` countdown (from `next_refresh_epoch`) and, while the `dag dashboard --refresh` backend loop is fetching, a `Refreshing N%` progress bar (with the current phase) that replaces the `Refresh now` button. When `status.json` advertises a new `generated_at`, the app pulls the fresh `data.json` and updates in place — no page reload. With no backend loop (static snapshot) `status.json` is absent/`static` and the header shows `data refreshed X ago` plus a `Refresh now` button.
+`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist` next to the generated `data.json` in the output dir, and serves that dir through the localhost-only Python server embedded in `lib/dashboard.zsh`. The app fetches `./data.json` on load and polls `./status.json` — the lightweight live refresh channel the backend rewrites far more often than the heavy snapshot — every second with `cache: no-store`. `status.json` drives a `next refresh in 4m 32s` countdown (from `next_refresh_epoch`) and, while the backend loop is fetching, a `Refreshing N%` progress bar (with the current phase) that replaces the `Refresh now` button. Clicking `Refresh now` sends a same-origin, header-gated POST to `./__dag_refresh_now`; the server writes a local signal file, the zsh dashboard loop interrupts the countdown (or wakes static mode), and the app shows immediate `Refreshing…` feedback until `status.json` catches up. When `status.json` advertises a new `generated_at`, the app pulls the fresh `data.json` and updates in place — no page reload.
 
 Force a rebuild after changing app source: `dag dashboard --rebuild`.
 
@@ -22,8 +22,8 @@ npm test -- --run  # Vitest + React Testing Library interaction tests
 | Path | Responsibility |
 |---|---|
 | `src/types.ts` | Shape of `data.json` + `status.json` (mirror `lib/dashboard.jq` / `lib/dashboard.zsh` output) |
-| `src/useDashboardData.ts` | Polls `status.json` (1 s) for refresh state, pulls `data.json` on a new `generated_at`, exposes manual `refreshNow`, keeps last good snapshot on fetch failure |
-| `src/components/RefreshControls.tsx` | Console-meta row: live countdown, `Refreshing N%` progress bar, `Refresh now` button; isolates the per-second tick from the charts |
+| `src/useDashboardData.ts` | Polls `status.json` (1 s) for refresh state, pulls `data.json` on a new `generated_at`, POSTs manual refresh requests, exposes in-flight feedback, keeps last good snapshot on fetch failure |
+| `src/components/RefreshControls.tsx` | Console-meta row: live countdown, immediate manual `Refreshing…` state, `Refreshing N%` progress bar, `Refresh now` button; isolates the per-second tick from the charts |
 | `src/App.tsx` | Layout: header with `RefreshControls`, cycle progress, KPI cards including capped user total, panels |
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
