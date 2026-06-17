@@ -29,10 +29,12 @@ test("tells the orchestrator to decompose ordinary tasks across enabled kid pane
     claudeSurfaceId: "surface:claude",
     codexPanelSurfaceId: "surface:codex-panel",
     devinSurfaceId: "surface:devin",
-    windowId: "window:1",
     claudePanelEnabled: true,
     codexPanelEnabled: true,
     devinPanelEnabled: true,
+    reusedClaude: false,
+    reusedCodexPanel: false,
+    reusedDevin: false,
   });
 
   expect(prompt).toContain("Default orchestration for ordinary tasks");

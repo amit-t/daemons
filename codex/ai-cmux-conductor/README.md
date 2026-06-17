@@ -36,9 +36,15 @@ Run from any project directory, `aicc` makes Codex the base orchestrator tab wit
 8. Pass stable cMUX workspace/surface IDs into the base Codex orchestrator prompt.
 9. Teach the base Codex orchestrator that Amit's exact bare message `Reset` means run `aicc --reset`. Reset checks enabled managed side panes, refuses if any enabled agent has active or unresolved work, otherwise creates one fresh `terminal` surface and closes the base orchestrator plus enabled AICC-managed AI surfaces.
 
+## Default kid-panel orchestration
+
+For ordinary non-trivial tasks, the base orchestrator first attempts to decompose work across enabled kid panels even when Amit does not explicitly say `distribute`, `orchestrate`, or name a kid pane. The base orchestrator keeps ownership of decomposition, routing, progress checks, integration, and the final response; it skips delegation only for trivial one-step replies, sensitive/risky actions that need explicit approval, unclear tasks that need clarification before useful work, or work where parallelism would create conflicts.
+
+Every delegated kid-panel prompt must tell the kid agent to mark that assigned slice as a goal before working. The delegated prompt also includes the slice objective, context, constraints, acceptance criteria, verification expectations, and report-back format.
+
 ## Kid-pane routing (non-negotiable)
 
-The base orchestrator is a router and prompt engineer, not a doer, for any request that names a kid pane. The orchestrator prompt enforces:
+The base orchestrator is a router and prompt engineer, not a doer, for any request that names a kid pane. Explicit kid-pane routing wins over default decomposition. The orchestrator prompt enforces:
 
 - When the user says `ask Claude`, `tell Claude`, `send to Claude`, `tell kid-claude` (and the same for Codex/Devin), or otherwise names a kid pane, the orchestrator first rewrites the raw request into a structured, self-contained prompt for the targeted `kid-*` surface, writes that refined prompt with `cmux send`, and submits it with `cmux send-key ... Enter`. The prompt is written into the pane and executed so the user can watch the agent work through it.
 - The refined kid prompt preserves Amit's intent, constraints, target agents, and quoted text, but adds prompt structure: target agent/runtime profile, original ask, objective, context, constraints/non-goals, acceptance criteria, suggested first steps or commands, verification, and reporting instructions.
