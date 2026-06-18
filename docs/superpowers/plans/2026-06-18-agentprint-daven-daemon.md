@@ -1,8 +1,8 @@
-# ICS AI Attribution Daven Daemon Implementation Plan
+# Agentprint Daven Daemon Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a visible, interactive Daven-powered daemon that reports current-quarter Devin and Wispr/Windsurf Flow attribution metrics across `Invenco-Cloud-Systems-ICS`, writing a polished browser-renderable Markdown report plus a JSON sidecar for future local-dashboard ingestion.
+**Goal:** Build Agentprint, a visible, interactive Daven-powered daemon that reports current-quarter Devin and Windsurf attribution metrics across `Invenco-Cloud-Systems-ICS`, writing a polished browser-renderable Markdown report plus a JSON sidecar for future local-dashboard ingestion.
 
 **Architecture:** This daemon is an AI-agent launcher, not a deterministic scanner. The CLI command starts a Daven agent in YOLO/interactive mode so Amit can watch it work. The daemon supplies Daven with a focused playbook, repo-local GitHub helper scripts, report templates, analytics rules, and strict read-only GitHub guardrails. Daven calls the scripts, inspects outputs, runs attribution analytics, and writes Markdown + JSON artifacts.
 
@@ -23,6 +23,7 @@ Required behavior:
 - Helper scripts exist to make Daven faster and consistent; they do not replace the agent.
 - The handoff document is for a Claude agent to build, but the built daemon invokes Daven.
 - Amit must be able to watch Daven work through the analysis.
+- The daemon name is **Agentprint**; it reports AI-agent fingerprints, not human performance.
 
 Forbidden implementation shape:
 
@@ -56,7 +57,7 @@ Forbidden implementation shape:
 Primary metrics include only:
 
 - Devin.
-- Wispr Flow / Windsurf Flow.
+- Windsurf.
 
 Primary metrics exclude:
 
@@ -69,15 +70,15 @@ Primary metrics exclude:
 Every successful run writes both:
 
 ```text
-reports/ics-ai-attribution/<label>/ics-ai-attribution-<label>.md
-reports/ics-ai-attribution/<label>/ics-ai-attribution-<label>.json
+reports/agentprint/<label>/agentprint-<label>.md
+reports/agentprint/<label>/agentprint-<label>.json
 ```
 
 Example for default on 2026-06-18:
 
 ```text
-reports/ics-ai-attribution/2026-Q2/ics-ai-attribution-2026-Q2.md
-reports/ics-ai-attribution/2026-Q2/ics-ai-attribution-2026-Q2.json
+reports/agentprint/2026-Q2/agentprint-2026-Q2.md
+reports/agentprint/2026-Q2/agentprint-2026-Q2.json
 ```
 
 Markdown is the human-facing artifact and must render cleanly in browser/GitHub preview. JSON is the dashboard-ready sidecar for future local UI.
@@ -89,19 +90,19 @@ Markdown is the human-facing artifact and must render cleanly in browser/GitHub 
 Canonical command:
 
 ```zsh
-ics-ai-attribution
+agentprint
 ```
 
 Short alias:
 
 ```zsh
-iaa
+ap
 ```
 
 Expected default flow:
 
 1. zsh wrapper resolves daemon directory.
-2. Wrapper launches Daven in interactive YOLO mode from `codex/ics-ai-attribution/`.
+2. Wrapper launches Daven in interactive YOLO mode from `codex/agentprint/`.
 3. Wrapper passes a generated run context into Daven:
    - org = `Invenco-Cloud-Systems-ICS`;
    - account = `amit-tiwari_vnt`;
@@ -118,10 +119,10 @@ Expected default flow:
 Override examples:
 
 ```zsh
-ics-ai-attribution --quarter "Q2 2026"
-ics-ai-attribution --quarter "Q4 2025"
-ics-ai-attribution --start-date 2026-04-01 --end-date 2026-06-18
-ics-ai-attribution --out-dir /tmp/ics-ai-attribution
+agentprint --quarter "Q2 2026"
+agentprint --quarter "Q4 2025"
+agentprint --start-date 2026-04-01 --end-date 2026-06-18
+agentprint --out-dir /tmp/agentprint
 ```
 
 Daven launch command placeholder:
@@ -130,7 +131,7 @@ Daven launch command placeholder:
 daven --yolo --interactive --cwd "$daemon_dir" --prompt-file "$run_context"
 ```
 
-Implementation must inspect local Daven invocation conventions before finalizing. If Daven binary or flags differ, implement a small adapter in the wrapper and document actual command in `codex/ics-ai-attribution/README.md`.
+Implementation must inspect local Daven invocation conventions before finalizing. If Daven binary or flags differ, implement a small adapter in the wrapper and document actual command in `codex/agentprint/README.md`.
 
 ---
 
@@ -139,7 +140,7 @@ Implementation must inspect local Daven invocation conventions before finalizing
 Create new daemon:
 
 ```text
-codex/ics-ai-attribution/
+codex/agentprint/
 ```
 
 Rationale: repo instructions say Codex-related daemons live under `codex/<daemon-name>/`; this daemon is launched from this tools repo and uses AI-agent orchestration. Runtime is Daven, but daemon family remains local CLI daemon under existing `codex/` pattern unless Amit later creates a separate `daven/` family.
@@ -147,9 +148,9 @@ Rationale: repo instructions say Codex-related daemons live under `codex/<daemon
 Files to create:
 
 ```text
-codex/ics-ai-attribution/
+codex/agentprint/
   README.md
-  ics-ai-attribution
+  agentprint
   environment.env
   playbooks/
     _common.md
@@ -192,7 +193,7 @@ No generic shared runtime folders.
 
 Must include:
 
-- You are Daven, running inside `codex/ics-ai-attribution`.
+- You are Daven, running inside `codex/agentprint`.
 - Read-only GitHub guard is top-level and non-negotiable.
 - Use VNT account only: `gh auth token -u amit-tiwari_vnt`.
 - Do not print tokens.
@@ -209,7 +210,7 @@ Must include:
   - `gh issue create/edit/comment/close/reopen`
   - `gh api -X POST|PATCH|PUT|DELETE`
   - repository settings, branch, label, issue, PR, release, workflow writes.
-- Count only Devin and Wispr/Windsurf Flow in primary metrics.
+- Count only Devin and Windsurf in primary metrics.
 - Ignore Claude/Codex primary metrics even if found.
 - Human attribution is out of scope.
 - Always produce both Markdown and JSON artifacts.
@@ -313,16 +314,16 @@ Rules:
   - `devin-ai-integration[bot]`
   - `158243242+devin-ai-integration[bot]@users.noreply.github.com`
   - `Generated with [Devin](https://devin.ai)`
-- Strong Wispr/Windsurf Flow:
+- Strong Windsurf:
   - `windsurf-bot[bot]`
   - `189301087+windsurf-bot[bot]@users.noreply.github.com`
 - Weak-only signals excluded from primary metrics:
-  - `Windsurf`, `Cascade`, `.windsurf`, `Wispr Flow` without bot/email evidence.
+  - `Windsurf`, `Cascade`, and `.windsurf` mentions without bot/email evidence.
 - Claude/Codex ignored in primary metrics.
 
 ### `scripts/build-report-json.py`
 
-Writes schema version `ics-ai-attribution.v1` and dashboard-ready summary/repo/PR/error fields.
+Writes schema version `agentprint.v1` and dashboard-ready summary/repo/PR/error fields.
 
 ### `scripts/render-markdown-report.py`
 
@@ -338,7 +339,7 @@ Checks:
 - JSON schema version correct.
 - Markdown title matches JSON window label.
 - Markdown links to JSON sidecar.
-- Markdown includes Devin and Wispr/Windsurf Flow tables.
+- Markdown includes Devin and Windsurf tables.
 - Markdown does not include token-looking strings.
 - Summary totals in Markdown match JSON summary.
 
@@ -355,7 +356,7 @@ Primary metric includes strong evidence only.
 - Commit message contains `158243242+devin-ai-integration[bot]@users.noreply.github.com`.
 - Commit message contains `Generated with [Devin](https://devin.ai)`.
 
-### Wispr/Windsurf Flow strong evidence
+### Windsurf strong evidence
 
 - Commit author login equals `windsurf-bot[bot]`.
 - Commit committer login equals `windsurf-bot[bot]`.
@@ -368,7 +369,7 @@ Weak evidence can appear in JSON diagnostics but not primary metric:
 - `Windsurf` keyword only.
 - `Cascade` keyword only.
 - `.windsurf` path mention only.
-- `Wispr Flow` text without bot/email evidence.
+- Windsurf-family text without bot/email evidence.
 
 ### Ignored primary agents
 
@@ -381,7 +382,7 @@ Weak evidence can appear in JSON diagnostics but not primary metric:
 
 Every report includes:
 
-1. `# ICS AI Attribution Report — <label>`.
+1. `# Agentprint Report — <label>`.
 2. Metadata table: org, window, generated at, GitHub account, read-only mode, primary agents.
 3. Executive summary paragraph.
 4. KPI summary table.
@@ -405,19 +406,19 @@ Style:
 Example skeleton:
 
 ```markdown
-# ICS AI Attribution Report — 2026-Q2
+# Agentprint Report — 2026-Q2
 
 | Field | Value |
 |---|---|
 | Org | `Invenco-Cloud-Systems-ICS` |
 | Window | `2026-04-01T00:00:00.000Z` → `2026-06-18T23:59:59.999Z` |
 | GitHub account | `amit-tiwari_vnt` |
-| Primary agents | Devin, Wispr/Windsurf Flow |
+| Primary agents | Devin, Windsurf |
 | GitHub mode | Read-only GET/list/search |
 
 ## Executive summary
 
-Strong AI signal was found in **1,059 of 3,625** default-branch commits (**29.21%**) across scanned repos. Primary signal is commit-level Devin or Wispr/Windsurf Flow bot identity/trailers; Claude and Codex are intentionally excluded.
+Strong AI signal was found in **1,059 of 3,625** default-branch commits (**29.21%**) across scanned repos. Primary signal is commit-level Devin or Windsurf bot identity/trailers; Claude and Codex are intentionally excluded.
 
 ## KPI summary
 
@@ -433,7 +434,7 @@ Strong AI signal was found in **1,059 of 3,625** default-branch commits (**29.21
 
 ## JSON sidecar
 
-Machine-readable data: [`ics-ai-attribution-2026-Q2.json`](./ics-ai-attribution-2026-Q2.json)
+Machine-readable data: [`agentprint-2026-Q2.json`](./agentprint-2026-Q2.json)
 ```
 
 ---
@@ -446,7 +447,7 @@ Top-level shape:
 
 ```json
 {
-  "schemaVersion": "ics-ai-attribution.v1",
+  "schemaVersion": "agentprint.v1",
   "org": "Invenco-Cloud-Systems-ICS",
   "generatedAt": "2026-06-18T00:00:00.000Z",
   "githubAccount": "amit-tiwari_vnt",
@@ -458,7 +459,7 @@ Top-level shape:
     "quarter": "Q2 2026"
   },
   "agents": {
-    "primary": ["devin", "wispr_windsurf_flow"],
+    "primary": ["devin", "windsurf"],
     "ignoredInPrimary": ["claude", "codex"]
   },
   "summary": {
@@ -468,10 +469,10 @@ Top-level shape:
     "commitsScanned": 3625,
     "strongAiCommits": 1059,
     "devinCommits": 1008,
-    "wisprWindsurfFlowCommits": 51,
+    "windsurfCommits": 51,
     "aiCommitShare": 0.2921,
     "devinCommitShare": 0.2781,
-    "wisprWindsurfFlowCommitShare": 0.0141,
+    "windsurfCommitShare": 0.0141,
     "prsWithAiCommits": 123,
     "prLinkedAiCommits": 603,
     "directOrUnknownAiCommits": 456
@@ -501,7 +502,7 @@ Do not include raw commit messages by default. Future `--include-samples` may ad
 - [ ] Inspect existing wrappers and README patterns.
 - [ ] Locate Daven binary/CLI invocation pattern on Amit's machine.
 - [ ] Record actual Daven launch command in implementation notes.
-- [ ] Confirm whether daemon belongs under `codex/ics-ai-attribution/` or a new family; default to `codex/` unless Amit says otherwise.
+- [ ] Confirm whether daemon belongs under `codex/agentprint/` or a new family; default to `codex/` unless Amit says otherwise.
 
 Verification:
 
@@ -515,11 +516,11 @@ Expected: existing aliases parse.
 ### Task 2: Scaffold daemon directory and wrapper
 
 **Files:**
-- Create: `codex/ics-ai-attribution/README.md`
-- Create: `codex/ics-ai-attribution/ics-ai-attribution`
-- Create: `codex/ics-ai-attribution/environment.env`
-- Create: `codex/ics-ai-attribution/playbooks/_common.md`
-- Create: `codex/ics-ai-attribution/playbooks/run-attribution-report.md`
+- Create: `codex/agentprint/README.md`
+- Create: `codex/agentprint/agentprint`
+- Create: `codex/agentprint/environment.env`
+- Create: `codex/agentprint/playbooks/_common.md`
+- Create: `codex/agentprint/playbooks/run-attribution-report.md`
 
 - [ ] Create directories.
 - [ ] Create zsh wrapper with `script_path=${0:A}` captured before functions.
@@ -531,7 +532,7 @@ Expected: existing aliases parse.
 Wrapper must parse-check:
 
 ```zsh
-zsh -n codex/ics-ai-attribution/ics-ai-attribution
+zsh -n codex/agentprint/agentprint
 ```
 
 Expected: exit 0.
@@ -539,9 +540,9 @@ Expected: exit 0.
 ### Task 3: Implement date/window helper in wrapper or script
 
 **Files:**
-- Modify: `codex/ics-ai-attribution/ics-ai-attribution`
-- Optional create: `codex/ics-ai-attribution/scripts/resolve-window.zsh`
-- Test: `codex/ics-ai-attribution/test/run.zsh`
+- Modify: `codex/agentprint/agentprint`
+- Optional create: `codex/agentprint/scripts/resolve-window.zsh`
+- Test: `codex/agentprint/test/run.zsh`
 
 - [ ] Default no args to current quarter.
 - [ ] Support `--quarter "Q2 2026"`.
@@ -553,8 +554,8 @@ Expected: exit 0.
 Verification examples:
 
 ```zsh
-codex/ics-ai-attribution/ics-ai-attribution --dry-run-context --now 2026-06-18T10:20:30Z | grep '2026-Q2'
-codex/ics-ai-attribution/ics-ai-attribution --dry-run-context --quarter 'Q4 2025' | grep '2025-Q4'
+codex/agentprint/agentprint --dry-run-context --now 2026-06-18T10:20:30Z | grep '2026-Q2'
+codex/agentprint/agentprint --dry-run-context --quarter 'Q4 2025' | grep '2025-Q4'
 ```
 
 Expected: context output contains correct windows and does not launch Daven in dry-run mode.
@@ -579,14 +580,14 @@ Each script must:
 Parse verification:
 
 ```zsh
-zsh -n codex/ics-ai-attribution/scripts/*.zsh
+zsh -n codex/agentprint/scripts/*.zsh
 ```
 
 Functional smoke with no writes:
 
 ```zsh
-codex/ics-ai-attribution/scripts/github-auth-check.zsh --org Invenco-Cloud-Systems-ICS --account amit-tiwari_vnt --out /tmp/iaa-auth.json
-jq '.ok, .org, .account' /tmp/iaa-auth.json
+codex/agentprint/scripts/github-auth-check.zsh --org Invenco-Cloud-Systems-ICS --account amit-tiwari_vnt --out /tmp/ap-auth.json
+jq '.ok, .org, .account' /tmp/ap-auth.json
 ```
 
 Expected: `true`, org name, account name.
@@ -602,7 +603,7 @@ Expected: `true`, org name, account name.
 - Create: `templates/report.md.tmpl`
 
 - [ ] `classify-ai-signals.py` reads commits JSONL and writes classified commits JSONL + summary.
-- [ ] `build-report-json.py` writes `schemaVersion: ics-ai-attribution.v1` JSON.
+- [ ] `build-report-json.py` writes `schemaVersion: agentprint.v1` JSON.
 - [ ] `render-markdown-report.py` writes browser-renderable Markdown.
 - [ ] `verify-report-artifacts.py` validates consistency and no secrets.
 - [ ] `report.schema.json` documents JSON sidecar schema.
@@ -611,10 +612,10 @@ Expected: `true`, org name, account name.
 Verification:
 
 ```zsh
-python3 codex/ics-ai-attribution/scripts/classify-ai-signals.py --commits codex/ics-ai-attribution/test/fixtures/commits.jsonl --out /tmp/iaa-classified.jsonl --summary /tmp/iaa-summary.json
-python3 codex/ics-ai-attribution/scripts/build-report-json.py --classified /tmp/iaa-classified.jsonl --repos codex/ics-ai-attribution/test/fixtures/repos.json --errors /tmp/empty-errors.jsonl --window codex/ics-ai-attribution/test/fixtures/window.json --out /tmp/iaa-report.json
-python3 codex/ics-ai-attribution/scripts/render-markdown-report.py --json /tmp/iaa-report.json --template codex/ics-ai-attribution/templates/report.md.tmpl --out /tmp/iaa-report.md
-python3 codex/ics-ai-attribution/scripts/verify-report-artifacts.py --markdown /tmp/iaa-report.md --json /tmp/iaa-report.json
+python3 codex/agentprint/scripts/classify-ai-signals.py --commits codex/agentprint/test/fixtures/commits.jsonl --out /tmp/ap-classified.jsonl --summary /tmp/ap-summary.json
+python3 codex/agentprint/scripts/build-report-json.py --classified /tmp/ap-classified.jsonl --repos codex/agentprint/test/fixtures/repos.json --errors /tmp/empty-errors.jsonl --window codex/agentprint/test/fixtures/window.json --out /tmp/ap-report.json
+python3 codex/agentprint/scripts/render-markdown-report.py --json /tmp/ap-report.json --template codex/agentprint/templates/report.md.tmpl --out /tmp/ap-report.md
+python3 codex/agentprint/scripts/verify-report-artifacts.py --markdown /tmp/ap-report.md --json /tmp/ap-report.json
 ```
 
 Expected: all exit 0.
@@ -637,8 +638,8 @@ Playbook acceptance:
 Verification:
 
 ```zsh
-grep -R "gh api -X POST\\|gh api -X PATCH\\|gh api -X PUT\\|gh api -X DELETE" codex/ics-ai-attribution/playbooks && exit 1 || true
-grep -R "devin-ai-integration\\|windsurf-bot" codex/ics-ai-attribution/playbooks
+grep -R "gh api -X POST\\|gh api -X PATCH\\|gh api -X PUT\\|gh api -X DELETE" codex/agentprint/playbooks && exit 1 || true
+grep -R "devin-ai-integration\\|windsurf-bot" codex/agentprint/playbooks
 ```
 
 Expected: no forbidden write verbs; detection signals present.
@@ -646,7 +647,7 @@ Expected: no forbidden write verbs; detection signals present.
 ### Task 7: Build daemon test harness
 
 **Files:**
-- Create: `codex/ics-ai-attribution/test/run.zsh`
+- Create: `codex/agentprint/test/run.zsh`
 - Create fixtures under `test/fixtures/`
 
 Test harness must check:
@@ -662,7 +663,7 @@ Test harness must check:
 Command:
 
 ```zsh
-zsh codex/ics-ai-attribution/test/run.zsh
+zsh codex/agentprint/test/run.zsh
 ```
 
 Expected: all assertions pass.
@@ -672,19 +673,19 @@ Expected: all assertions pass.
 **Files:**
 - Modify: `README.md`
 - Modify: `aliases.zsh`
-- Modify: `codex/ics-ai-attribution/README.md`
+- Modify: `codex/agentprint/README.md`
 
 Root README entry:
 
 ```markdown
-- [`codex/ics-ai-attribution`](./codex/ics-ai-attribution) — `ics-ai-attribution`/`iaa`, a visible Daven-powered read-only Invenco ICS GitHub AI attribution daemon that launches Daven in interactive YOLO mode, defaults to the current calendar quarter, uses the VNT GitHub account, calls repo-local GitHub helper scripts, and writes a browser-renderable Markdown report plus JSON sidecar for Devin and Wispr/Windsurf Flow metrics.
+- [`codex/agentprint`](./codex/agentprint) — `agentprint`/`ap`, a visible Daven-powered read-only Invenco ICS GitHub AI attribution daemon that launches Daven in interactive YOLO mode, defaults to the current calendar quarter, uses the VNT GitHub account, calls repo-local GitHub helper scripts, and writes a browser-renderable Markdown report plus JSON sidecar for Devin and Windsurf metrics.
 ```
 
 Aliases:
 
 ```zsh
-alias ics-ai-attribution='/Users/amittiwari/Projects/Tools-Utilities/daemons/codex/ics-ai-attribution/ics-ai-attribution'
-alias iaa='ics-ai-attribution'
+alias agentprint='/Users/amittiwari/Projects/Tools-Utilities/daemons/codex/agentprint/agentprint'
+alias ap='agentprint'
 ```
 
 Verification:
@@ -700,7 +701,7 @@ Expected: exit 0.
 Run:
 
 ```zsh
-ics-ai-attribution --quarter "Q2 2026"
+agentprint --quarter "Q2 2026"
 ```
 
 Expected:
@@ -713,19 +714,19 @@ Expected:
 - JSON sidecar exists;
 - Markdown renders cleanly in browser/GitHub preview;
 - JSON parses with `jq`;
-- primary metrics include only Devin and Wispr/Windsurf Flow.
+- primary metrics include only Devin and Windsurf.
 
 Validate outputs:
 
 ```zsh
-jq '.schemaVersion, .org, .agents.primary, .summary.strongAiCommits' reports/ics-ai-attribution/2026-Q2/ics-ai-attribution-2026-Q2.json
+jq '.schemaVersion, .org, .agents.primary, .summary.strongAiCommits' reports/agentprint/2026-Q2/agentprint-2026-Q2.json
 python3 - <<'PY'
 from pathlib import Path
-p = Path('reports/ics-ai-attribution/2026-Q2/ics-ai-attribution-2026-Q2.md')
+p = Path('reports/agentprint/2026-Q2/agentprint-2026-Q2.md')
 text = p.read_text()
-assert text.startswith('# ICS AI Attribution Report')
+assert text.startswith('# Agentprint Report')
 assert '| Metric | Value |' in text
-assert 'ics-ai-attribution-2026-Q2.json' in text
+assert 'agentprint-2026-Q2.json' in text
 agent_split = text.split('## Agent split')[1].split('##')[0]
 assert 'Claude' not in agent_split
 assert 'Codex' not in agent_split
@@ -741,7 +742,7 @@ Run:
 
 ```zsh
 cd /Users/amittiwari/Projects/Tools-Utilities/daemons
-zsh codex/ics-ai-attribution/test/run.zsh
+zsh codex/agentprint/test/run.zsh
 zsh -n aliases.zsh
 git status --short
 git diff --stat
@@ -758,7 +759,7 @@ Audit:
 Commit:
 
 ```zsh
-git add codex/ics-ai-attribution README.md aliases.zsh
+git add codex/agentprint README.md aliases.zsh
 git commit -m "feat: add ICS AI attribution Daven daemon"
 git push -u origin HEAD
 ```
@@ -773,9 +774,9 @@ The daemon v1 must not build the dashboard. It prepares the dashboard data contr
 
 Future dashboard should:
 
-- read `reports/ics-ai-attribution/*/*.json`;
+- read `reports/agentprint/*/*.json`;
 - show current quarter AI commit share;
-- show Devin vs Wispr/Windsurf Flow split;
+- show Devin vs Windsurf split;
 - show top repos by AI commit count;
 - show top repos by AI commit share with minimum commit threshold;
 - show PR-linked vs direct/unknown delivery;
@@ -795,7 +796,7 @@ The future UI should not rescan GitHub in v1. Daven daemon owns collection/repor
 | GitHub search caps at 1,000 results | PR comment rankings incomplete | Use commit pagination as primary metric; mark PR comment data as capped |
 | Direct pushes by Devin lack human owner | Human attribution impossible | Human attribution explicitly out of scope |
 | Claude/Codex appear in AI tooling repos | Primary metric pollution | Classifier ignores Claude/Codex primary signals |
-| Wispr naming differs from Windsurf evidence | Under-count Flow work | Treat Windsurf bot and Wispr aliases as one `wispr_windsurf_flow` metric |
+| Windsurf naming evidence varies | Under-count Flow work | Treat Windsurf bot and Windsurf aliases as one `windsurf` metric |
 | Markdown report too large | Browser preview slow | Keep raw commits out of Markdown; structured detail goes in JSON |
 | Token accidentally printed | Secret leak | Scripts never echo token; verifier scans artifacts for token-like strings |
 | GitHub write command accidentally added | Safety breach | Tests grep scripts/playbooks for forbidden verbs |
@@ -812,13 +813,13 @@ The future UI should not rescan GitHub in v1. Daven daemon owns collection/repor
 - [ ] Default org is `Invenco-Cloud-Systems-ICS`.
 - [ ] Default account is `amit-tiwari_vnt`.
 - [ ] GitHub operations are read-only.
-- [ ] Primary metrics include only Devin and Wispr/Windsurf Flow.
+- [ ] Primary metrics include only Devin and Windsurf.
 - [ ] Claude/Codex excluded from primary metrics.
 - [ ] Human attribution/ranking absent.
 - [ ] Markdown report written by each successful run.
 - [ ] Markdown renders in browser/GitHub preview.
 - [ ] JSON sidecar written by each successful run.
-- [ ] JSON sidecar uses `schemaVersion: ics-ai-attribution.v1`.
+- [ ] JSON sidecar uses `schemaVersion: agentprint.v1`.
 - [ ] Helper scripts make Daven faster and consistent.
 - [ ] README documents guardrails, command use, Daven launch, scripts, Markdown, JSON, metrics, verification.
 - [ ] Root README and aliases updated.
