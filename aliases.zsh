@@ -34,6 +34,10 @@ dag() {
   "$daemon_entry" "$@"
 }
 
+# Dotted shorthands: cx = base aicc (codex parent), cl = claude-parent aicc.
+alias cx.aicc='aicc'
+alias cl.aicc='aicc --claude'
+
 # Parent-agent shorthands: same daemons, different base agent. Kid agents unchanged.
 aicc--claude() { aicc --agent claude "$@" }
 aicc--codex()  { aicc --agent codex "$@" }
