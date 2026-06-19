@@ -421,6 +421,7 @@ describe("prepareConductor", () => {
       "cmux new-split up --workspace workspace-uuid --surface surface:devin --focus false --window window-uuid": { stdout: "OK surface:claude workspace:1\n" },
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:claude kid-claude": { stdout: "" },
       [["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch].join(" ")]: { stdout: "" },
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:devin --scrollback --lines 160": { stdout: "Devin CLI ready" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
 
@@ -450,6 +451,7 @@ describe("prepareConductor", () => {
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "kid-claude"],
       ["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", claudeLaunch],
       ["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "Enter"],
+      ["cmux", "read-screen", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:devin", "--scrollback", "--lines", "160"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
@@ -466,6 +468,7 @@ describe("prepareConductor", () => {
         { stdout: treeWithExistingAgentsWorkspaceTitle("old") },
         { stdout: treeWithExistingAgentsWorkspaceTitle("Project-X") },
       ],
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude --scrollback --lines 160": { stdout: "Claude Code" },
       "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
     });
 
@@ -490,6 +493,7 @@ describe("prepareConductor", () => {
     expect(calls).toEqual([
       ["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "base-surface-uuid", "codex"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
+      ["cmux", "read-screen", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:claude", "--scrollback", "--lines", "160"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],
       ["cmux", "rename-workspace", "--workspace", "workspace-uuid", "--window", "window-uuid", "Project-X"],
       ["cmux", "--id-format", "both", "--json", "tree", "--workspace", "workspace-uuid", "--window", "window-uuid"],

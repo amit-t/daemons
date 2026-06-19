@@ -129,6 +129,52 @@ describe("prepareConductor optional managed panel stack", () => {
     expect(calls).not.toContainEqual(["cmux", "rename-tab", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "Codex"]);
   });
 
+  test("relaunches the CLI in a reused pane that has dropped back to a shell prompt", async () => {
+    const claudeLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && clscb'\n";
+    const codexLaunch = "zsh -lc 'cd '\\''/work/project-x'\\'' && cxscb --disable apps -c '\\''mcp_servers={}'\\'''\n";
+    const { runner, calls } = strictRunnerFor({
+      "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:base codex": { stdout: "" },
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface]) },
+        { stdout: workspaceTree("old", [baseSurface, claudeSurface, codexPanelSurface]) },
+        { stdout: workspaceTree("Project-X", [baseSurface, claudeSurface, codexPanelSurface]) },
+      ],
+      // Claude pane is alive (shows the Claude Code UI) → must NOT be relaunched.
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:claude --scrollback --lines 160": {
+        stdout: "Claude Code\n> ready",
+      },
+      // Codex pane fell back to an idle shell prompt → must be relaunched.
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:codex-panel --scrollback --lines 160": {
+        stdout: "Last login: Thu\namit@host project-x %",
+      },
+      "cmux rename-workspace --workspace workspace-uuid --window window-uuid Project-X": { stdout: "" },
+    });
+
+    const result = await prepareConductor({
+      cwd: "/work/project-x",
+      env: {
+        CMUX_WORKSPACE_ID: "workspace-uuid",
+        CMUX_WINDOW_ID: "window-uuid",
+        CMUX_SURFACE_ID: "surface:base",
+      },
+      runner,
+    });
+
+    expect(result.mode).toBe("ready");
+    if (result.mode !== "ready") throw new Error("expected ready");
+    expect(result.context.reusedClaude).toBe(true);
+    expect(result.context.reusedCodexPanel).toBe(true);
+    // No new panes were created — only the dead CLI was restarted in place.
+    expect(calls.some((call) => call.includes("new-pane") || call.includes("new-split"))).toBe(false);
+    // Codex got its launch command re-sent and submitted.
+    expect(calls).toContainEqual(["cmux", "send", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", codexLaunch]);
+    expect(calls).toContainEqual(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex-panel", "Enter"]);
+    // The alive Claude pane was never relaunched.
+    expect(calls.some((call) => call[1] === "send" && call.includes("surface:claude"))).toBe(false);
+    expect(calls.find((call) => call[1] === "send" && call.includes("surface:codex-panel"))?.at(-1)).toBe(codexLaunch);
+    expect(calls.some((call) => call[1] === "send" && call.at(-1) === claudeLaunch)).toBe(false);
+  });
+
   test("reuses legacy managed side panels and retitles them to kid-prefixed names", async () => {
     const { runner, calls } = strictRunnerFor({
       "cmux rename-tab --workspace workspace-uuid --window window-uuid --surface surface:base codex": { stdout: "" },

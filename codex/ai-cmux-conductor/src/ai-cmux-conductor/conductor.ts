@@ -266,6 +266,15 @@ async function createAgentSurface(options: {
   const existingId = existing && surfaceId(existing);
   if (existingId) {
     await renameManagedSurfaceIfNeeded(options.runner, options.workspaceId, options.windowId, options.agent, existing, existingId);
+    await ensureAgentCliRunning({
+      runner: options.runner,
+      workspaceId: options.workspaceId,
+      windowId: options.windowId,
+      cwd: options.cwd,
+      agent: options.agent,
+      command: options.command,
+      surfaceId: existingId,
+    });
     return { surfaceId: existingId, reused: true, surfaces: options.surfaces };
   }
 
@@ -370,6 +379,88 @@ async function renameManagedSurfaceIfNeeded(
   ]);
 }
 
+function hasAgentUiMarkers(agent: ManagedAgentName, screenText: string): boolean {
+  switch (agent) {
+    case "Claude":
+      return /Claude Code|Welcome to Claude|Bypassing Permissions|\bOpus\b|\bSonnet\b|\bHaiku\b/i.test(screenText);
+    case "Codex":
+      return /OpenAI Codex|Codex CLI|\bcodex\b\s+(?:v\d|cli|ready|session)|To get started|Esc to interrupt/i.test(screenText);
+    case "Devin":
+      return /\bDevin\b|dey\.boil|boil mode|Devin CLI/i.test(screenText);
+  }
+}
+
+function looksLikeIdleShell(screenText: string): boolean {
+  if (!screenText.trim()) return false;
+  if (/zsh: command not found:|command not found:|parse error near|no matches found:/i.test(screenText)) return true;
+  return /Last login:|(?:^|\n)[^\n]*[%$#]\s*$/m.test(screenText);
+}
+
+async function readSurfaceScreen(
+  runner: CommandRunner,
+  workspaceId: string,
+  windowId: string | undefined,
+  surfaceId: string,
+): Promise<string> {
+  const result = await runner("cmux", [
+    "read-screen",
+    "--workspace",
+    workspaceId,
+    ...windowArgs(windowId),
+    "--surface",
+    surfaceId,
+    "--scrollback",
+    "--lines",
+    "160",
+  ]);
+  return result.code === 0 ? result.stdout : "";
+}
+
+function sendAgentLaunchCommand(options: {
+  runner: CommandRunner;
+  workspaceId: string;
+  windowId?: string;
+  cwd: string;
+  surfaceId: string;
+  command: string;
+}): Promise<void> {
+  const launch = `zsh -lc ${shellQuote(`cd ${shellQuote(options.cwd)} && ${options.command}`)}\n`;
+  return sendCmuxTextAndEnter({
+    runner: options.runner,
+    workspaceId: options.workspaceId,
+    windowId: options.windowId,
+    surfaceId: options.surfaceId,
+    text: launch,
+    separator: false,
+  });
+}
+
+// When a managed pane is reused, the pane survives but the agent CLI inside it may have exited
+// back to a shell. Re-launch the expected CLI only when the screen positively looks like an idle
+// shell and shows no agent UI, so a live CLI is never double-launched.
+async function ensureAgentCliRunning(options: {
+  runner: CommandRunner;
+  workspaceId: string;
+  windowId?: string;
+  cwd: string;
+  agent: ManagedAgentName;
+  command: string;
+  surfaceId: string;
+}): Promise<boolean> {
+  const screen = await readSurfaceScreen(options.runner, options.workspaceId, options.windowId, options.surfaceId);
+  if (hasAgentUiMarkers(options.agent, screen)) return false;
+  if (!looksLikeIdleShell(screen)) return false;
+  await sendAgentLaunchCommand({
+    runner: options.runner,
+    workspaceId: options.workspaceId,
+    windowId: options.windowId,
+    cwd: options.cwd,
+    surfaceId: options.surfaceId,
+    command: options.command,
+  });
+  return true;
+}
+
 export async function prepareConductor(options: PrepareConductorOptions): Promise<PrepareConductorResult> {
   const runner = options.runner || defaultRunner;
   const cwd = options.cwd;
@@ -414,6 +505,15 @@ export async function prepareConductor(options: PrepareConductorOptions): Promis
     const existingSurfaceId = existing && surfaceId(existing);
     if (existingSurfaceId) {
       await renameManagedSurfaceIfNeeded(runner, workspaceId, windowId, spec.agent, existing, existingSurfaceId);
+      await ensureAgentCliRunning({
+        runner,
+        workspaceId,
+        windowId,
+        cwd,
+        agent: spec.agent,
+        command: spec.command,
+        surfaceId: existingSurfaceId,
+      });
       panels[spec.key] = { surfaceId: existingSurfaceId, reused: true };
       stackAnchorSurfaceRef = existingSurfaceId;
       continue;
