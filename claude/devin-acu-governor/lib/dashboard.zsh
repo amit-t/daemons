@@ -450,7 +450,7 @@ _dag_dashboard_write_data() {
     mv "${out_dir}/data.json.tmp" "${out_dir}/data.json" || return 1
     _dag_dash_emit "$out_dir" 100 "snapshot ready" "" "$prev_gen"
     [[ -t 1 ]] && print -n -- $'\r\033[K'
-    print -r -- "Data written: ${out_dir}/data.json"
+    print -r -- "✓ refreshed at $(date -r "$now" +%H:%M:%S)"
     return 0
   } always {
     rm -rf "$work"

@@ -413,6 +413,13 @@ out=$(DAG_DASHBOARD_SERVE_ONCE="" DAG_DASHBOARD_REFRESH_ONCE=1 \
   run_dash --refresh 30 --no-open --out "${tmpdir}/dash-refresh" 2>&1); rc=$?
 assert_exit "refresh rc" 0 $rc
 assert_contains "refresh stdout" "$out" "data refetched every 30 minute(s) in the background"
+expected_refresh_time=$(date -r "$now_epoch" +%H:%M:%S)
+assert_contains "refresh completion line" "$out" "✓ refreshed at ${expected_refresh_time}"
+if [[ "$out" == *"Data written:"* ]]; then
+  _fail "refresh output should not print data.json path each cycle"
+else
+  _ok
+fi
 assert_eq "refresh enabled" "true" "$(jq -r '.refresh.enabled' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh minutes" "30" "$(jq -r '.refresh.interval_minutes' "${tmpdir}/dash-refresh/data.json")"
 assert_eq "refresh ms" "1800000" "$(jq -r '.refresh.interval_ms' "${tmpdir}/dash-refresh/data.json")"
