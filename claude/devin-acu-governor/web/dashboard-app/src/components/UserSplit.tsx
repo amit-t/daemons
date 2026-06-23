@@ -16,7 +16,7 @@ const BANDS: BandDef[] = [
   { label: 'over cap', color: '#dc2626', match: (m) => m.headroom < 0 },
   { label: 'maxed (0 left)', color: '#f97316', match: (m) => m.headroom === 0 },
   { label: '<25% left', color: '#ffb224', match: (m) => m.pct > 0 && m.pct <= 25 },
-  { label: '25–50% left', color: '#cddc39', match: (m) => m.pct > 25 && m.pct <= 50 },
+  { label: '25–50% left', color: '#fadb14', match: (m) => m.pct > 25 && m.pct <= 50 },
   { label: '50–75% left', color: '#66bb6a', match: (m) => m.pct > 50 && m.pct <= 75 },
   { label: '75–100% left', color: '#22c55e', match: (m) => m.pct > 75 && m.pct <= 100 },
 ]
