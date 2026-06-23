@@ -1,42 +1,44 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import type { UserRow } from '../types'
-import { fmt } from '../format'
 
-// Slice color by user status, mirroring the .badge-<status> palette in app.css.
-const STATUS_COLORS: Record<string, string> = {
-  ok: '#4ade80',
-  warning: '#ffb224',
-  critical: '#fb923c',
-  over: '#f87171',
-  forecast_over: '#f87171',
-  blocked: '#6f8479',
-  uncapped: '#6f8479',
-}
+// Headroom-remaining bands. A user lands in the first band where
+// min < headroom <= max. Edges are trivially tweakable here; colors ramp
+// red (out of headroom) -> green (lots left), a burn-down gradient.
+const BANDS: Array<{ label: string; min: number; max: number; color: string }> = [
+  { label: '0 / over-cap', min: -Infinity, max: 0, color: '#f87171' },
+  { label: '1–25 left', min: 0, max: 25, color: '#fb923c' },
+  { label: '25–100 left', min: 25, max: 100, color: '#ffb224' },
+  { label: '100–500 left', min: 100, max: 500, color: '#60a5fa' },
+  { label: '500+ left', min: 500, max: Infinity, color: '#4ade80' },
+]
 
-interface Slice {
-  key: string
+interface BandRow {
   label: string
-  headroom: number
-  status: string
+  color: string
+  count: number
 }
 
 export function UserSplitPanel({ users }: { users: UserRow[] }) {
-  const rows: Slice[] = users.map((u) => ({
-    key: u.user_id,
-    label: u.name || u.email,
-    headroom: u.headroom ?? 0,
-    status: u.status,
+  const uncapped = users.filter((u) => u.headroom === null).length
+  const capped = users.filter((u) => u.headroom !== null)
+  const cappedTotal = capped.length
+
+  const rows: BandRow[] = BANDS.map((b) => ({
+    label: b.label,
+    color: b.color,
+    count: capped.filter((u) => (u.headroom as number) > b.min && (u.headroom as number) <= b.max).length,
   }))
-  const total = rows.reduce((s, r) => s + Math.max(0, r.headroom), 0)
-  const data = rows.filter((r) => r.headroom > 0)
-  const pie = data.length ? data : [{ key: 'none', label: 'none', headroom: 1, status: 'blocked' }]
+
+  const data = rows.filter((r) => r.count > 0)
+  const pie = data.length ? data : [{ label: 'none', color: '#46584f', count: 1 }]
+
   return (
     <div>
       <ResponsiveContainer width="100%" height={170}>
         <PieChart>
           <Pie
             data={pie}
-            dataKey="headroom"
+            dataKey="count"
             nameKey="label"
             innerRadius={48}
             outerRadius={72}
@@ -44,11 +46,11 @@ export function UserSplitPanel({ users }: { users: UserRow[] }) {
             stroke="#0e1311"
           >
             {pie.map((r) => (
-              <Cell key={r.key} fill={STATUS_COLORS[r.status] ?? '#46584f'} />
+              <Cell key={r.label} fill={r.color} />
             ))}
           </Pie>
           <Tooltip
-            formatter={(v: number | string, name: string) => [`${fmt(Number(v))} ACUs`, name]}
+            formatter={(v: number | string, name: string) => [`${Number(v)} users`, name]}
             contentStyle={{
               background: '#111614',
               border: '1px solid #1f2a25',
@@ -63,16 +65,23 @@ export function UserSplitPanel({ users }: { users: UserRow[] }) {
       <table>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key}>
+            <tr key={r.label}>
               <td>
-                <span style={{ color: STATUS_COLORS[r.status] ?? '#46584f' }}>●</span> {r.label}
+                <span style={{ color: r.color }}>●</span> {r.label}
               </td>
-              <td className="num">{fmt(r.headroom)}</td>
-              <td className="num dim">{total > 0 ? ((Math.max(0, r.headroom) / total) * 100).toFixed(1) + '%' : '—'}</td>
+              <td className="num">{r.count}</td>
+              <td className="num dim">
+                {cappedTotal > 0 ? ((r.count / cappedTotal) * 100).toFixed(1) + '%' : '—'}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {uncapped > 0 && (
+        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+          {uncapped} uncapped (no cap)
+        </p>
+      )}
     </div>
   )
 }
