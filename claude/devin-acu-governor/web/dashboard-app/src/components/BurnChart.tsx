@@ -1,12 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
-  Area,
   Bar,
+  BarChart,
   CartesianGrid,
-  ComposedChart,
   Legend,
-  Line,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,15 +22,10 @@ const PRODUCT_COLORS: Record<string, string> = {
 interface Props {
   daily: DailyPoint[]
   cycle: CycleInfo
-  pool: number
-  runRate: number
-  projected: number
 }
 
 interface Point extends DailyPoint {
   label: string
-  cumulative: number | null
-  forecast: number | null
 }
 
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number | string; color?: string }>; label?: string }) {
@@ -51,22 +43,16 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   )
 }
 
-// Daily stacked product bars + cumulative burn line + linear forecast to
-// cycle end, with the monthly pool as a reference line.
-export function BurnChart({ daily, cycle, pool, runRate, projected }: Props) {
-  const [view, setView] = useState<'burn' | 'cumulative'>('burn')
-
+// Daily stacked product bars across the full cycle window, zero-filled for days
+// without usage so the x-axis spans the whole cycle.
+export function BurnChart({ daily, cycle }: Props) {
   const points = useMemo<Point[]>(() => {
     const byEpoch = new Map(daily.map((d) => [d.epoch, d]))
     const out: Point[] = []
-    let cum = 0
-    const nowDays = cycle.elapsed_days
     for (let i = 0; i < cycle.cycle_days; i++) {
       const epoch = cycle.after + i * 86400
       const d = byEpoch.get(epoch)
       const date = d?.date ?? new Date(epoch * 1000).toISOString().slice(0, 10)
-      const inPast = i < nowDays
-      if (d) cum += d.acus
       out.push({
         date,
         epoch,
@@ -76,30 +62,15 @@ export function BurnChart({ daily, cycle, pool, runRate, projected }: Props) {
         terminal: d?.terminal ?? 0,
         review: d?.review ?? 0,
         label: shortDay(date),
-        cumulative: inPast ? Math.round(cum * 100) / 100 : null,
-        forecast: i >= nowDays - 1 ? Math.round(runRate * (i + 1) * 100) / 100 : null,
       })
     }
     return out
-  }, [daily, cycle, runRate])
-
-  const cumulative = view === 'cumulative'
+  }, [daily, cycle])
 
   return (
     <div>
-      <div className="controls" style={{ marginBottom: 10 }}>
-        <button className={`chip ${view === 'burn' ? 'on' : ''}`} onClick={() => setView('burn')}>
-          daily burn
-        </button>
-        <button
-          className={`chip ${cumulative ? 'on' : ''}`}
-          onClick={() => setView('cumulative')}
-        >
-          cumulative + forecast
-        </button>
-      </div>
       <ResponsiveContainer width="100%" height={280}>
-        <ComposedChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+        <BarChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="#1f2a25" strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="label"
@@ -120,55 +91,18 @@ export function BurnChart({ daily, cycle, pool, runRate, projected }: Props) {
             wrapperStyle={{ fontSize: 11, fontFamily: 'IBM Plex Mono', color: '#6f8479' }}
             iconSize={9}
           />
-          {!cumulative &&
-            Object.entries(PRODUCT_COLORS).map(([product, color]) => (
-              <Bar
-                key={product}
-                dataKey={product}
-                stackId="products"
-                name={product}
-                fill={color}
-                fillOpacity={0.85}
-                maxBarSize={26}
-              />
-            ))}
-          {cumulative && (
-            <>
-              <Area
-                dataKey="cumulative"
-                name="consumed"
-                stroke="#ffb224"
-                strokeWidth={2}
-                fill="rgba(255,178,36,0.12)"
-                dot={false}
-                connectNulls={false}
-              />
-              <Line
-                dataKey="forecast"
-                name={`forecast (${fmt(runRate)}/day → ${fmt(projected)})`}
-                stroke="#f87171"
-                strokeWidth={1.5}
-                strokeDasharray="6 4"
-                dot={false}
-                connectNulls={false}
-              />
-              {pool <= Math.max(projected, pool) && (
-                <ReferenceLine
-                  y={pool}
-                  stroke="#4ade80"
-                  strokeDasharray="4 4"
-                  label={{
-                    value: `pool ${fmt(pool)}`,
-                    fill: '#4ade80',
-                    fontSize: 10,
-                    fontFamily: 'IBM Plex Mono',
-                    position: 'insideTopRight',
-                  }}
-                />
-              )}
-            </>
-          )}
-        </ComposedChart>
+          {Object.entries(PRODUCT_COLORS).map(([product, color]) => (
+            <Bar
+              key={product}
+              dataKey={product}
+              stackId="products"
+              name={product}
+              fill={color}
+              fillOpacity={0.85}
+              maxBarSize={26}
+            />
+          ))}
+        </BarChart>
       </ResponsiveContainer>
     </div>
   )

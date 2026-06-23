@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useDashboardData } from './useDashboardData'
 import { fmt } from './format'
 import { BurnChart } from './components/BurnChart'
-import { ProductSplitPanel } from './components/ProductSplit'
+import { UserSplitPanel } from './components/UserSplit'
 import { OrgTable } from './components/OrgTable'
 import { UserTable } from './components/UserTable'
 import { UserDetail } from './components/UserDetail'
@@ -105,17 +105,11 @@ export default function App() {
       <div className="panel-grid">
         <section className="panel">
           <h2 className="panel-title">Burn rate</h2>
-          <BurnChart
-            daily={data.daily}
-            cycle={cycle}
-            pool={data.pool}
-            runRate={ent.daily_run_rate}
-            projected={ent.projected_cycle_total}
-          />
+          <BurnChart daily={data.daily} cycle={cycle} />
         </section>
         <section className="panel">
-          <h2 className="panel-title">Product split</h2>
-          <ProductSplitPanel split={data.product_split} />
+          <h2 className="panel-title">User split</h2>
+          <UserSplitPanel users={data.users} />
         </section>
       </div>
 
