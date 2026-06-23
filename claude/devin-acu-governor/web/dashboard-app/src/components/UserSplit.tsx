@@ -13,7 +13,7 @@ interface BandDef {
 }
 
 const BANDS: BandDef[] = [
-  { label: 'over cap', color: '#ef4444', match: (m) => m.headroom < 0 },
+  { label: 'over cap', color: '#dc2626', match: (m) => m.headroom < 0 },
   { label: 'maxed (0 left)', color: '#f97316', match: (m) => m.headroom === 0 },
   { label: '<25% left', color: '#ffb224', match: (m) => m.pct > 0 && m.pct <= 25 },
   { label: '25–50% left', color: '#cddc39', match: (m) => m.pct > 25 && m.pct <= 50 },
