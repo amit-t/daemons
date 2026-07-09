@@ -1,0 +1,500 @@
+#!/usr/bin/env zsh
+# dag — Devin Enterprise ACU governor.
+# Thin launcher: resolves the Devin API keys, assembles a playbook prompt,
+# and hands the job to a Claude agent session (DAG_LAUNCHER, default clscb).
+# Primary key: Devin API v3 service-user key (cog_..., api.devin.ai) — required.
+# Secondary: Windsurf service key (server.codeium.com) — optional, enables
+# per-model/IDE breakdown and roster activity analytics.
+set -u
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+source "${daemon_dir}/lib/key-resolve.zsh"
+
+dag_load_env() {
+  local env_file="${daemon_dir}/environment.env" line key value
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == \#* || "$line" != *=* ]] && continue
+    key=${line%%=*}
+    value=${line#*=}
+    if [[ -z "${(P)key:-}" ]]; then
+      typeset -gx "$key"="$value"
+    fi
+  done < "$env_file"
+}
+
+dag_usage() {
+  cat <<'EOF'
+dag — Devin Enterprise ACU governor
+
+Usage:
+  dag [--agent claude|codex|devin] <command ...>
+                              Pick the parent agent that runs the playbook session
+                              (default claude via clscb); shorthands --claude/--codex/--devin;
+                              agent flags go before the command
+  dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
+  dag set-limits <email>      Cap only one uncapped active user, funded zero-sum by Borrowing
+                              headroom from active capped users
+  dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
+                              by Borrowing headroom from the lowest-consuming capped users
+  dag set limit global <acus> [org_id|org_name]
+                              Set org-level Local Agent limit(s), then live-GET verify each
+  dag set-limit global <acus> [org_id|org_name]
+                              Alias for: dag set limit global
+  dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
+                              (recommends amount + donors; omit [acus] to use the recommendation)
+  dag boost over              Boost every user currently over budget (consumed >= cap) in one
+                              run, each funded zero-sum from the lowest consumers; discovers the
+                              over set live — no emails needed
+  dag over                    Alias for: dag boost over
+  dag user <email>            Deep-dive one user's consumption and model usage (read-only)
+  dag usage [--json] [--top <n>]
+                              List every user's consumed ACUs, effective Local Agent cap,
+                              and consumed/cap ratio (read-only, local, no agent)
+  dag usage --user-email <email> [--json]
+                              Resolve one email to a Devin user_id, then print that user's
+                              current-cycle total ACUs plus daily/product breakdown
+  dag usage --group [idp_group_name] [--json] [--top <n>]
+  dag usage--group [idp_group_name] [--json] [--top <n>]
+                              Same local report, scoped to one IDP group, with current-cycle
+                              and last-3-days per-user usage/status detail; prompts if omitted
+  dag status                  Consumption, remaining ACUs, month-end projection
+  dag status --group [idp_group_name]
+  dag status--group [idp_group_name]
+                              Agent status report scoped to one IDP group; prompts if omitted
+  dag models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
+  dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
+  dag all-commands [task...]  Alias for: dag all commands
+  dag doctor                  Probe both API keys and report which capabilities they hold
+  dag dashboard [--no-open] [--json-only] [--rebuild] [--out <dir>] [--port <n>] [--refresh <5|10|15|30>]
+                              Local React ACU burn-rate + forecast dashboard served on
+                              127.0.0.1 (read-only, no agent); --refresh refetches data
+                              in the background, page updates without reloading
+  dag setup-extract           Print pasteable target-machine keychain setup commands
+                              with the currently configured DAG keys (secret output)
+  dag help                    Show this help
+
+Examples:
+  dag usage --user-email alice@corp.com
+  dag usage --user-email alice@corp.com --json
+  dag usage --group "Platform Eng" --top 5
+  dag --agent codex status
+  dag --devin boost alice@corp.com
+  dag set-limits alice@corp.com
+  dag boost over
+
+Config (environment.env; shell env vars override):
+  DAG_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)
+  DAG_LAUNCHER               agent launcher command when no --agent given (default clscb)
+  DAG_LAUNCHER_CLAUDE        launcher for --agent claude (default clscb)
+  DAG_LAUNCHER_CODEX         launcher for --agent codex (default cxscb)
+  DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous --)
+  DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
+  DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
+  DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
+
+Keys, one-time setup:
+  Required — Devin API v3 service-user key (app.devin.ai > Settings > Service users,
+  enterprise-scoped, permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions + ViewAccountMetrics + ViewAccountMembership):
+    security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_...'
+    Fallback: export DEVIN_COG_KEY=cog_...
+  Optional — Windsurf service key (windsurf.com/team/settings; Analytics Read +
+  Teams Read-only) for per-model/IDE breakdown and roster activity:
+    security add-generic-password -s devin-service-key -a "$USER" -w '<key>'
+    Fallback: export DEVIN_SERVICE_KEY=<key>
+EOF
+}
+
+dag_prompt_group_name() {
+  local label=$1 group
+  if [[ -t 0 ]]; then
+    print -rn -- "${label}: IDP group name: " >&2
+    IFS= read -r group
+  else
+    IFS= read -r group || group=""
+  fi
+  if [[ -z "$(print -r -- "$group" | tr -d '[:space:]')" ]]; then
+    print -ru2 -- "${label}: IDP group name is required"
+    return 2
+  fi
+  print -r -- "$group"
+}
+
+dag_collect_group_name() {  # $1=label, rest=args; accepts --group[=x] or bare group words.
+  local label=$1 group="" arg
+  shift
+  local -a parts
+  while (( $# )); do
+    arg="$1"
+    case "$arg" in
+      --group=*)
+        group="${arg#--group=}"
+        shift
+        ;;
+      --group)
+        shift
+        parts=()
+        while (( $# )) && [[ "$1" != --* ]]; do
+          parts+=("$1")
+          shift
+        done
+        if (( ${#parts} > 0 )); then
+          group="${(j: :)parts}"
+        else
+          group=$(dag_prompt_group_name "$label") || return $?
+        fi
+        ;;
+      --*)
+        print -ru2 -- "${label}: unknown flag '${arg}' (expected --group [idp_group_name])"
+        return 2
+        ;;
+      *)
+        parts=()
+        while (( $# )) && [[ "$1" != --* ]]; do
+          parts+=("$1")
+          shift
+        done
+        group="${(j: :)parts}"
+        ;;
+    esac
+  done
+  if [[ -z "$(print -r -- "$group" | tr -d '[:space:]')" ]]; then
+    group=$(dag_prompt_group_name "$label") || return $?
+  fi
+  print -r -- "$group"
+}
+
+dag_build_prompt() {  # $1 = command, rest = extra run-context lines
+  local cmd="$1"; shift
+  cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${cmd}.md"
+  if [[ "$cmd" == "all-commands" ]]; then
+    print -r -- ""
+    print -r -- "## Existing DAG command playbooks"
+    print -r -- ""
+    local playbook
+    for playbook in set-limits set-limits-new boost over user status models; do
+      print -r -- ""
+      print -r -- "### ${playbook}"
+      cat "${daemon_dir}/playbooks/${playbook}.md"
+    done
+  fi
+  print -r -- ""
+  print -r -- "## Run context"
+  print -r -- "- command: ${cmd}"
+  print -r -- "- today: $(date +%F)"
+  print -r -- "- DAG_MONTHLY_ACU_POOL: ${DAG_MONTHLY_ACU_POOL}"
+  print -r -- "- compute_caps_jq: ${daemon_dir}/lib/compute-caps.jq"
+  print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
+  print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
+  print -r -- "- borrow_caps_jq: ${daemon_dir}/lib/borrow-caps.jq"
+  print -r -- "- ledger: ${DAG_STATE_DIR}/allocations.json"
+  if [[ -n "${_dag_have_cog_key:-}" ]]; then
+    print -r -- "- Devin v3 key: exported as DEVIN_COG_KEY in this shell. Never print it."
+  else
+    print -r -- "- Devin v3 key: ABSENT — docs/design mode only; ask the user to configure DEVIN_COG_KEY before live Devin API calls."
+  fi
+  if [[ -n "${_dag_have_windsurf_key}" ]]; then
+    print -r -- "- Windsurf key: exported as DEVIN_SERVICE_KEY in this shell. Never print it."
+  else
+    print -r -- "- Windsurf key: ABSENT — skip server.codeium.com calls; per-model/IDE breakdown and roster activity unavailable."
+  fi
+  local line
+  for line in "$@"; do print -r -- "- ${line}"; done
+}
+
+dag_resolve_launcher() {  # $1 = agent (claude|codex|devin|""); prints launcher command prefix.
+  case "$1" in
+    claude) print -r -- "${DAG_LAUNCHER_CLAUDE:-clscb}" ;;
+    codex)  print -r -- "${DAG_LAUNCHER_CODEX:-cxscb}" ;;
+    devin)  print -r -- "${DAG_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
+    *)      return 2 ;;
+  esac
+}
+
+main() {
+  dag_load_env
+  : ${DAG_MONTHLY_ACU_POOL:=24000}
+  : ${DAG_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
+
+  local agent=""
+  while (( $# )); do
+    case "${1:-}" in
+      --agent=*)
+        agent="${1#--agent=}"
+        shift
+        ;;
+      --agent)
+        agent="${2:-}"
+        if [[ -z "$agent" ]]; then
+          print -ru2 -- "dag: --agent expects one of claude, codex, devin"
+          exit 2
+        fi
+        shift 2
+        ;;
+      --claude|--codex|--devin)
+        agent="${1#--}"
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [[ -n "$agent" && "$agent" != (claude|codex|devin) ]]; then
+    print -ru2 -- "dag: --agent expects one of claude, codex, devin (got: ${agent})"
+    exit 2
+  fi
+  local launcher
+  launcher=$(dag_resolve_launcher "$agent") || exit 2
+
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    dag_usage >&2
+    exit 2
+  fi
+  shift
+
+  local -a context_lines
+  context_lines=()
+  case "$cmd" in
+    help|-h|--help)
+      dag_usage
+      exit 0
+      ;;
+    doctor)
+      source "${daemon_dir}/lib/doctor.zsh"
+      dag_doctor
+      exit $?
+      ;;
+    dashboard)
+      source "${daemon_dir}/lib/dashboard.zsh"
+      dag_dashboard "$@"
+      exit $?
+      ;;
+    setup-extract)
+      source "${daemon_dir}/lib/setup-extract.zsh"
+      dag_setup_extract "$@"
+      exit $?
+      ;;
+    usage)
+      source "${daemon_dir}/lib/usage.zsh"
+      dag_usage_report "$@"
+      exit $?
+      ;;
+    usage--group)
+      source "${daemon_dir}/lib/usage.zsh"
+      dag_usage_report --group "$@"
+      exit $?
+      ;;
+    set)
+      if [[ "${1:-}" == "limit" && "${2:-}" == "global" ]]; then
+        shift 2
+        source "${daemon_dir}/lib/local-agent-limits.zsh"
+        dag_set_limit_global "$@"
+        exit $?
+      fi
+      print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
+      dag_usage >&2
+      exit 2
+      ;;
+    set-limit)
+      if [[ "${1:-}" == "global" ]]; then
+        shift
+        source "${daemon_dir}/lib/local-agent-limits.zsh"
+        dag_set_limit_global "$@"
+        exit $?
+      fi
+      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
+      dag_usage >&2
+      exit 2
+      ;;
+    set-limit-global)
+      source "${daemon_dir}/lib/local-agent-limits.zsh"
+      dag_set_limit_global "$@"
+      exit $?
+      ;;
+    set-limits)
+      if (( $# > 0 )); then
+        local target_email="${1:-}"
+        if [[ "$target_email" != *@*.* ]]; then
+          print -ru2 -- "dag set-limits: argument must be a user email (got: ${target_email:-<missing>})"
+          exit 2
+        fi
+        if (( $# > 1 )); then
+          print -ru2 -- "dag set-limits: takes at most one target email (got: $*)"
+          exit 2
+        fi
+        context_lines=(
+          "requested shell command: dag set-limits ${target_email}"
+          "target email: ${target_email}"
+          "scope: cap only this target user; do not cap any other uncapped users"
+          "Borrow from active capped donors using borrow-caps.jq; recipient list must contain exactly the target user"
+          "If the target already has an explicit cap, stop and suggest dag boost ${target_email} [acus] for increases or dag user ${target_email} for inspection"
+        )
+      fi
+      ;;
+    set-limits-new) ;;
+    status)
+      if (( $# > 0 )); then
+        if [[ "${1:-}" == --group* ]]; then
+          local group_name
+          group_name=$(dag_collect_group_name "dag status" "$@") || exit $?
+          context_lines=(
+            "requested shell command: dag status --group"
+            "idp group name: ${group_name}"
+            "scope: exact IDP group match; report only users whose idp_role_assignments include this idp_group_name"
+            "membership source: GET /v3/enterprise/members/idp-users with pagination; requires ViewAccountMembership"
+            "usage focus: detailed per-user current-cycle usage/status, plus last 3 days daily/product pattern"
+            "no writes: GET-only status mode"
+          )
+        else
+          print -ru2 -- "dag status: unknown flag '${1}' (expected --group [idp_group_name])"
+          exit 2
+        fi
+      fi
+      ;;
+    status--group)
+      local group_name
+      group_name=$(dag_collect_group_name "dag status" "$@") || exit $?
+      cmd="status"
+      context_lines=(
+        "requested shell command: dag status--group"
+        "idp group name: ${group_name}"
+        "scope: exact IDP group match; report only users whose idp_role_assignments include this idp_group_name"
+        "membership source: GET /v3/enterprise/members/idp-users with pagination; requires ViewAccountMembership"
+        "usage focus: detailed per-user current-cycle usage/status, plus last 3 days daily/product pattern"
+        "no writes: GET-only status mode"
+      )
+      ;;
+    all)
+      if [[ "${1:-}" != "commands" ]]; then
+        print -ru2 -- "dag: unknown all command (expected: dag all commands [task...])"
+        dag_usage >&2
+        exit 2
+      fi
+      shift
+      cmd="all-commands"
+      if (( $# > 0 )); then
+        context_lines=("requested shell command: dag all commands" "generic task: $*" "spin-up trigger phrase: spin it up")
+      else
+        context_lines=("requested shell command: dag all commands" "generic task: not provided — start by asking the user what Devin/API task they want to explore or automate" "spin-up trigger phrase: spin it up")
+      fi
+      ;;
+    all-commands)
+      if (( $# > 0 )); then
+        context_lines=("requested shell command: dag all-commands" "generic task: $*" "spin-up trigger phrase: spin it up")
+      else
+        context_lines=("requested shell command: dag all-commands" "generic task: not provided — start by asking the user what Devin/API task they want to explore or automate" "spin-up trigger phrase: spin it up")
+      fi
+      ;;
+    boost)
+      if [[ "${1:-}" == "over" ]]; then
+        shift
+        if (( $# > 0 )); then
+          print -ru2 -- "dag boost over: takes no arguments (got: $*); it boosts every user currently over budget"
+          exit 2
+        fi
+        cmd="over"
+        context_lines=(
+          "requested shell command: dag boost over"
+          "scope: all users currently over budget (state OVER: consumed >= effective Local Agent cap)"
+          "no explicit target — discover the over set live, then run the boost + borrow flow for each over user"
+        )
+      else
+        local email="${1:-}" amount="${2:-}"
+        if [[ "$email" != *@*.* ]]; then
+          print -ru2 -- "dag boost: first argument must be a user email (got: ${email:-<missing>})"
+          exit 2
+        fi
+        if [[ -n "$amount" && "$amount" != <1-> ]]; then
+          print -ru2 -- "dag boost: optional second argument must be a positive integer ACU amount (got: ${amount})"
+          exit 2
+        fi
+        context_lines=("boost target: ${email}")
+        if [[ -n "$amount" ]]; then
+          context_lines+=("explicit increment: ${amount}")
+        else
+          context_lines+=("explicit increment: none — recommend from the user's run-rate projection")
+        fi
+      fi
+      ;;
+    over)
+      if (( $# > 0 )); then
+        print -ru2 -- "dag over: takes no arguments (got: $*); it boosts every user currently over budget"
+        exit 2
+      fi
+      context_lines=(
+        "requested shell command: dag over"
+        "scope: all users currently over budget (state OVER: consumed >= effective Local Agent cap)"
+        "no explicit target — discover the over set live, then run the boost + borrow flow for each over user"
+      )
+      ;;
+    user)
+      local user_email="${1:-}"
+      if [[ "$user_email" != *@*.* ]]; then
+        print -ru2 -- "dag user: argument must be a user email (got: ${user_email:-<missing>})"
+        exit 2
+      fi
+      context_lines=("user: ${user_email}")
+      ;;
+    models)
+      if [[ -n "${1:-}" && -f "${1:-}" ]]; then
+        context_lines=("desired model allowlist (from file $1):" "$(cat "$1")")
+      elif (( $# > 0 )); then
+        context_lines=("desired model allowlist: $*")
+      else
+        context_lines=("desired model allowlist: not provided — report current usage only")
+      fi
+      ;;
+    *)
+      print -ru2 -- "dag: unknown command '${cmd}'"
+      dag_usage >&2
+      exit 2
+      ;;
+  esac
+
+  local cog_key windsurf_key
+  typeset -g _dag_have_cog_key=""
+  if ! cog_key=$(dag_resolve_cog_key); then
+    if [[ "$cmd" == "all-commands" ]]; then
+      print -ru2 -- "dag: note — no Devin API v3 service-user key; all-commands will run in docs/design mode only."
+    else
+      print -ru2 -- "dag: no Devin API v3 service-user key (cog_...) found."
+      print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
+      print -ru2 -- "  permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+      print -ru2 -- "  Keychain: security add-generic-password -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
+      print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
+      exit 1
+    fi
+  else
+    _dag_have_cog_key=1
+  fi
+  typeset -g _dag_have_windsurf_key=""
+  if windsurf_key=$(dag_resolve_service_key); then
+    _dag_have_windsurf_key=1
+  else
+    print -ru2 -- "dag: note — no Windsurf service key; per-model/IDE breakdown and roster activity degraded."
+  fi
+
+  mkdir -p "${DAG_STATE_DIR}"
+  local prompt
+  prompt=$(dag_build_prompt "$cmd" "${context_lines[@]}")
+
+  if [[ -n "${DAG_PRINT_LAUNCHER:-}" ]]; then
+    print -r -- "$launcher"
+    exit 0
+  fi
+
+  if [[ -n "${DAG_PRINT_PROMPT:-}" ]]; then
+    print -r -- "$prompt"
+    exit 0
+  fi
+
+  [[ -n "$_dag_have_cog_key" ]] && export DEVIN_COG_KEY="$cog_key"
+  [[ -n "$_dag_have_windsurf_key" ]] && export DEVIN_SERVICE_KEY="$windsurf_key"
+  exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
+}
+
+main "$@"

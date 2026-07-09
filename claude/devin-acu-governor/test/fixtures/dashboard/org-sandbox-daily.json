@@ -1,0 +1,6 @@
+{
+  "total_acus": 1100,
+  "consumption_by_date": [
+    {"date": "2026-06-01", "acus": 1100, "acus_by_product": {"devin": 600, "cascade": 400, "terminal": 100, "review": 0}}
+  ]
+}
