@@ -23,16 +23,6 @@ aicc() {
   "$daemon_entry" "$@"
 }
 
-dag() {
-  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/devin-acu-governor/bin/dag"
-
-  if [[ ! -x "$daemon_entry" ]]; then
-    print -ru2 -- "dag: missing daemon entrypoint at $daemon_entry"
-    return 127
-  fi
-
-  "$daemon_entry" "$@"
-}
 
 # Dotted shorthands: cx = base aicc (codex parent), cl = claude-parent aicc.
 alias cx.aicc='aicc'
@@ -42,6 +32,3 @@ alias cl.aicc='aicc --claude'
 aicc--claude() { aicc --agent claude "$@" }
 aicc--codex()  { aicc --agent codex "$@" }
 aicc--devin()  { aicc --agent devin "$@" }
-dag--claude()  { dag --agent claude "$@" }
-dag--codex()   { dag --agent codex "$@" }
-dag--devin()   { dag --agent devin "$@" }

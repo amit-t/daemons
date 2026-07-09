@@ -1,8 +1,0 @@
-{
-  "total_acus": 1500,
-  "consumption_by_date": [
-    {"date": 1778918400, "acus": 500, "acus_by_product": {"devin": 100, "cascade": 300, "terminal": 80, "review": 20}},
-    {"date": 1780300800, "acus": 600, "acus_by_product": {"devin": 150, "cascade": 350, "terminal": 100, "review": 0}},
-    {"date": 1781424000, "acus": 400, "acus_by_product": {"devin": 50, "cascade": 250, "terminal": 60, "review": 40}}
-  ]
-}
