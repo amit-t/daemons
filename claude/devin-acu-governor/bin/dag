@@ -121,6 +121,22 @@ dag_prompt_group_name() {
   print -r -- "$group"
 }
 
+dag_global_instructions_file() {
+  print -r -- "${HOME}/.codex/memories/global-zsh-and-dag-instructions.md"
+}
+
+dag_print_global_instructions() {
+  local instructions_file
+  instructions_file=$(dag_global_instructions_file)
+  [[ -r "$instructions_file" ]] || return 0
+  print -r -- ""
+  print -r -- "## Global user instructions"
+  print -r -- ""
+  print -r -- "Source: ${instructions_file}"
+  print -r -- ""
+  cat "$instructions_file"
+}
+
 dag_collect_group_name() {  # $1=label, rest=args; accepts --group[=x] or bare group words.
   local label=$1 group="" arg
   shift
@@ -179,6 +195,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
       cat "${daemon_dir}/playbooks/${playbook}.md"
     done
   fi
+  dag_print_global_instructions
   print -r -- ""
   print -r -- "## Run context"
   print -r -- "- command: ${cmd}"

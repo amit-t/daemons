@@ -41,6 +41,36 @@ out=$(run_dag boost a@b.co xx 2>&1); rc=$?; assert_exit "boost bad amount" 2 $rc
 out=$(run_dag boost a@b.co 2>&1); rc=$?; assert_exit "boost no amount ok" 0 $rc
 assert_contains "boost no amount recommend" "$out" "recommend from the user's run-rate projection"
 
+# 4a. Global user-memory instructions are included in every agent prompt.
+memhome="${tmpdir}/memhome"
+mkdir -p "${memhome}/.codex/memories"
+cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
+# Global user preferences
+
+- Prefer zsh for all new shell scripts.
+- Never describe Borrow donor reductions as “negative ACUs.”
+EOF
+run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
+for agent_args in "" "--claude" "--codex" "--devin"; do
+  if [[ -n "$agent_args" ]]; then
+    out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
+  else
+    out=$(run_dag_with_home status); rc=$?
+  fi
+  assert_exit "global memory prompt rc ${agent_args:-default}" 0 $rc
+  assert_contains "global memory heading ${agent_args:-default}" "$out" "## Global user instructions"
+  assert_contains "global memory path ${agent_args:-default}" "$out" "global-zsh-and-dag-instructions.md"
+  assert_contains "global zsh preference ${agent_args:-default}" "$out" "Prefer zsh for all new shell scripts"
+  assert_contains "global dag donor wording ${agent_args:-default}" "$out" "Never describe Borrow donor reductions as “negative ACUs.”"
+done
+
+# Missing global memory is non-fatal and does not add an empty section.
+missinghome="${tmpdir}/missinghome"
+mkdir -p "$missinghome"
+out=$(HOME="$missinghome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" status); rc=$?
+assert_exit "missing global memory rc" 0 $rc
+if [[ "$out" == *"## Global user instructions"* ]]; then _fail "missing global memory added section"; else _ok; fi
+
 # 5. set-limits prompt assembly: contains common contract, playbook, run context.
 out=$(run_dag set-limits); rc=$?
 assert_exit "setlimits rc" 0 $rc

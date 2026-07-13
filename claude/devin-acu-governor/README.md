@@ -5,6 +5,7 @@
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
 - The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>`. The playbook prompt is identical for every agent.
+- Every agent prompt also includes Amit's durable global DAG instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. This keeps shell preferences and DAG-specific safety rules consistent across Claude, Codex, and Devin engines.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
 - `all commands` launches a broad Claude-agent lab seeded with the Devin docs index, the pinned ACU/UsageConfig docs, and every current DAG playbook so ad hoc tasks can graduate into exact `dag ...` commands. It can open without a Devin key for docs/design work, but live API calls require `DEVIN_COG_KEY`.
 
@@ -467,7 +468,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
 | `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger/dashboard state directory |
-| `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit |
+| `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit; useful for verifying included playbooks, run context, and global instructions |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |
 | `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3/v3beta1 base URL |
