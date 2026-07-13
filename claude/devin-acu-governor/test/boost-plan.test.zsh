@@ -52,4 +52,26 @@ assert_contains "D takes empty" "$out" '"takes":[]'
 assert_contains "D recip same" "$out" '"cap_after":500'
 assert_contains "D sum invariant" "$out" '"sum_before":500'
 
+# E. Donor safety policy: avoid low-cap skim donors and preserve a 50 ACU floor.
+#    low@x has old-rule availability (19 - ceil(0 + 20) = -1? no useful headroom) and
+#    skim@x would have one ACU above old floor, but both are below the global 50 ACU floor.
+#    high@x funds the request while staying at/above 50.
+out=$(run_jq '{"pool":1000,"share":200,"recipient_buffer":0.15,"donor_buffer":0.10,
+  "recipient":{"email":"r@x","cap":0,"consumed":0,"run_rate":0,"days_left":1,"delta_override":50},
+  "donors":[{"email":"low@x","cap":19,"consumed":0},{"email":"skim@x","cap":51,"consumed":0},{"email":"high@x","cap":100,"consumed":0}]}')
+assert_contains "E funded" "$out" '"funded":50'
+takes=$(print -r -- "$out" | jq -c '.takes')
+assert_eq "E uses only high-headroom donor" '[{"email":"high@x","cap_before":100,"cap_after":50,"given":50}]' "$takes"
+
+# F. Remainder-aware donor safety: do not leave a sub-min-give shortfall when
+#    another high-headroom donor can cover it by taking less from the current donor.
+out=$(run_jq '{"pool":1000,"share":200,"recipient_buffer":0.15,"donor_buffer":0.10,
+  "recipient":{"email":"r@x","cap":0,"consumed":0,"run_rate":0,"days_left":1,"delta_override":50},
+  "donors":[{"email":"d1@x","cap":55,"consumed":0},{"email":"d2@x","cap":57,"consumed":0},{"email":"d3@x","cap":57,"consumed":0},{"email":"d4@x","cap":62,"consumed":0},{"email":"d5@x","cap":56,"consumed":0},{"email":"d6@x","cap":61,"consumed":0},{"email":"d7@x","cap":64,"consumed":0}]}')
+assert_contains "F fully funded" "$out" '"funded":50'
+assert_contains "F no shortfall" "$out" '"shortfall":0'
+assert_contains "F recipient full cap" "$out" '"cap_after":50'
+takes=$(print -r -- "$out" | jq -c '[.takes[].given]')
+assert_eq "F no donor below min give" '[5,7,7,12,6,8,5]' "$takes"
+
 report

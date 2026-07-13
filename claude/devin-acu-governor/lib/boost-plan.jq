@@ -7,6 +7,8 @@
 #   "pool": <int>, "share": <number>,        # share = pool / N (even per-user share)
 #   "recipient_buffer": <number=0.15>,        # comfort buffer over projected month-end
 #   "donor_buffer": <number=0.10>,            # keep donor this fraction of share above consumed
+#   "min_donor_cap_after"?: <number=50>,      # never borrow a donor below this cap floor
+#   "min_donor_give"?: <number=5>,            # skip skim donors with less than this safe headroom
 #   "recipient": {"email","cap","consumed","run_rate","days_left", "delta_override"?},
 #   "donors": [{"email","cap","consumed"}, ...]   # candidate donor pool
 # }
@@ -21,19 +23,31 @@
 | .recipient as $r
 | (.recipient_buffer // 0.15) as $rbuf
 | (.donor_buffer // 0.10) as $dbuf
+| (.min_donor_cap_after // 50) as $mincap
+| (.min_donor_give // 5) as $mingive
 | ($r.consumed + ($r.run_rate * $r.days_left)) as $projected
 | (if ($r.delta_override // null) != null
      then ($r.cap + $r.delta_override)
      else (($projected * (1 + $rbuf)) | ceil) end) as $recommended
 | ([$recommended - $r.cap, 0] | max) as $delta
 | ([ .donors[]
-     | ((.consumed + ($dbuf * $share)) | ceil) as $floor
-     | {email, cap, consumed, floor: $floor, available: ([.cap - $floor, 0] | max)} ]
+     | ([((.consumed + ($dbuf * $share)) | ceil), $mincap] | max) as $floor
+     | {email, cap, consumed, floor: $floor, available: ([.cap - $floor, 0] | max)}
+     | select(.available >= $mingive) ]
    | sort_by(.consumed)) as $cands
-| (reduce $cands[] as $d ({remaining: $delta, takes: []};
-     (if .remaining > 0 and $d.available > 0
-        then ([$d.available, .remaining] | min)
-        else 0 end) as $give
+| (reduce range(0; ($cands | length)) as $i ({remaining: $delta, takes: []};
+     $cands[$i] as $d
+     | (any($cands[($i + 1):][]; .available >= $mingive)) as $has_later
+     | (if .remaining >= $mingive and $d.available >= $mingive
+          then ([$d.available, .remaining] | min)
+          else 0 end) as $base_give
+     | (if ($base_give > 0)
+             and ((.remaining - $base_give) > 0)
+             and ((.remaining - $base_give) < $mingive)
+             and $has_later
+             and (($base_give - ($mingive - (.remaining - $base_give))) >= $mingive)
+          then ($base_give - ($mingive - (.remaining - $base_give)))
+          else $base_give end) as $give
      | {remaining: (.remaining - $give),
         takes: (.takes + (if $give > 0
                   then [{email: $d.email, cap_before: $d.cap, cap_after: ($d.cap - $give), given: $give}]
@@ -50,7 +64,7 @@
     takes: $alloc.takes,
     recipient_after: {email: $r.email, cap_before: $r.cap, cap_after: ($r.cap + $funded)},
     warnings: (if $alloc.remaining > 0
-                 then ["donors can only fund \($funded) of \($delta) ACUs; recipient raised by \($funded) only. Add more donors, or cover \($alloc.remaining) from pool headroom (creates overage risk)."]
+                 then ["donors can only fund \($funded) of \($delta) ACUs under donor safety policy (min cap after \($mincap), min donor give \($mingive)); recipient raised by \($funded) only. Add more high-headroom donors, lower donor safety thresholds explicitly, or cover \($alloc.remaining) from pool headroom (creates overage risk)."]
                  else [] end)
   }
 | . + {
