@@ -446,9 +446,9 @@ main() {
         fi
         context_lines=("boost target: ${email}")
         if [[ -n "$amount" ]]; then
-          context_lines+=("explicit increment: ${amount}")
+          context_lines+=("requested increment: ${amount} ACUs — planning input only; it is not write authorization")
         else
-          context_lines+=("explicit increment: none — recommend from the user's run-rate projection")
+          context_lines+=("requested increment: none — derive the recommendation from the user's run-rate projection; the result is planning input only, not write authorization")
         fi
       fi
       ;;

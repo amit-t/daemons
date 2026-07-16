@@ -39,7 +39,8 @@ out=$(run_dag boost 2>&1); rc=$?; assert_exit "boost noargs" 2 $rc
 out=$(run_dag boost not-an-email 50 2>&1); rc=$?; assert_exit "boost bad email" 2 $rc
 out=$(run_dag boost a@b.co xx 2>&1); rc=$?; assert_exit "boost bad amount" 2 $rc
 out=$(run_dag boost a@b.co 2>&1); rc=$?; assert_exit "boost no amount ok" 0 $rc
-assert_contains "boost no amount recommend" "$out" "recommend from the user's run-rate projection"
+assert_contains "boost no amount recommend" "$out" "derive the recommendation from the user's run-rate projection"
+assert_contains "boost no amount planning only" "$out" "planning input only, not write authorization"
 
 # 4a. Global user-memory instructions are included in every agent prompt.
 memhome="${tmpdir}/memhome"
@@ -118,6 +119,17 @@ assert_contains "set-limits-new zero sum" "$out" "zero-sum"
 assert_contains "set-limits-new active default" "$out" "Default eligible set = current roster members whose activity status is active"
 assert_contains "set-limits-new inactive no reserve" "$out" "Do not seed caps for inactive or former users"
 assert_contains "set-limits-new stale cleanup" "$out" "clear stale explicit overrides for excluded users"
+assert_contains "set-limits-new execution contract" "$out" "## DAG execution contract"
+assert_contains "set-limits-new write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "set-limits-new headroom contract" "$out" "250 default, 500 hard max, above 500 never"
+assert_contains "set-limits-new headroom default input" "$out" '"max_headroom": 250'
+assert_contains "set-limits-new partial keywords" "$out" "PARTIAL"
+# Old home-memory donor-policy section must no longer reach the prompt.
+if [[ "$out" == *"donor presentation + safety rule"* ]]; then
+  _fail "stale home-memory donor policy section leaked into prompt"
+else
+  _ok
+fi
 # usage help lists the new mode.
 out=$(run_dag 2>&1)
 assert_contains "usage lists set-limits-new" "$out" "dag set-limits-new"
@@ -138,6 +150,9 @@ assert_contains "new-cycle user api" "$out" "/v3beta1/enterprise/users/{user_id}
 assert_contains "new-cycle live verify" "$out" "GET each changed user limit after PATCH"
 assert_contains "new-cycle ui instruction" "$out" "Enterprise Settings > Consumption"
 assert_contains "new-cycle headroom hard rule" "$out" "Direct cap headroom ceiling"
+assert_contains "new-cycle execution contract" "$out" "## DAG execution contract"
+assert_contains "new-cycle write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "new-cycle headroom contract" "$out" "250 default, 500 hard max, above 500 never"
 out=$(run_dag new-cycle extra 2>&1); rc=$?
 assert_exit "new-cycle extra args" 2 $rc
 assert_contains "new-cycle extra args msg" "$out" "dag new-cycle: takes no arguments"
@@ -152,14 +167,17 @@ assert_contains "all-commands new-cycle available" "$out" "# Playbook: new-cycle
 out=$(run_dag boost alice@corp.com 50)
 assert_contains "boost playbook" "$out" "# Playbook: boost"
 assert_contains "boost email" "$out" "alice@corp.com"
-assert_contains "boost amount" "$out" "explicit increment: 50"
+assert_contains "boost amount" "$out" "requested increment: 50 ACUs"
+assert_contains "boost amount planning only" "$out" "planning input only; it is not write authorization"
 assert_contains "boost plan jq" "$out" "boost-plan.jq"
 assert_contains "boost borrow wording" "$out" "Borrow"
 assert_contains "boost user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
 assert_contains "boost live verify" "$out" "GET every changed user limit after PATCH"
-assert_contains "boost headroom clamp" "$out" '"max_headroom": 500'
+assert_contains "boost headroom clamp default" "$out" '"max_headroom": 250'
 assert_contains "boost headroom hard rule" "$out" "Direct cap headroom ceiling"
 assert_contains "boost donor run rate" "$out" "run_rate"
+assert_contains "boost write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "boost never lower thresholds" "$out" "Never lower donor safety thresholds"
 
 # 6a. boost over: no email required, discovers the over set at run time.
 out=$(run_dag boost over); rc=$?

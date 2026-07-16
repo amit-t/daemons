@@ -5,7 +5,7 @@
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
 - The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>`. The playbook prompt is identical for every agent.
-- Every agent prompt also includes Amit's durable global DAG instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. This keeps shell preferences and DAG-specific safety rules consistent across Claude, Codex, and Devin engines.
+- Every agent prompt also includes Amit's durable global instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. That file carries shell preferences only — all DAG policy lives in `playbooks/_common.md`, which is injected into every dag session for every engine.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
 - `all commands` launches a broad Claude-agent lab seeded with the Devin docs index, the pinned ACU/UsageConfig docs, and every current DAG playbook so ad hoc tasks can graduate into exact `dag ...` commands. It can open without a Devin key for docs/design work, but live API calls require `DEVIN_COG_KEY`.
 
@@ -56,7 +56,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag setup-extract` | ❌ local secret output | Print pasteable target-machine `security add-generic-password` commands containing the currently configured DAG keys |
 | `dag help` | ❌ | Usage text |
 
-Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, and waits for explicit confirmation. The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
+Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, then stops — writes happen only after the user sends the exact token `CONFIRM DAG WRITE` in the same session (see `playbooks/_common.md` "DAG execution contract"). The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
 
 ## `dag set-limits`
 
@@ -122,7 +122,7 @@ Flow:
 8. Update the ledger; report newly-capped active users, donors + given, excluded inactive/former users, cleared stale caps, and any active users left uncapped.
 
 Borrow math (`lib/borrow-caps.jq`), zero-sum in every mode:
-- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + min(share, 500)`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Direct recipient headroom never exceeds 500 ACUs (hard policy; prefer ≤ 250).
+- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + min(share, max_headroom)`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). The playbook passes `max_headroom: 250` by default; 250–500 only on explicit in-session user request; above 500 never — the jq built-in default of 500 is the backstop clamp.
 - `min_cover` — headroom covers consumption only: `cap_i = ceil(consumed_i)`, no growth headroom (warns).
 - `partial` — headroom too thin: fund the cheapest recipients first, leave the rest uncapped (listed), never create overage.
 
@@ -181,7 +181,7 @@ Flow:
 2. Fetch per-user consumption and live current user limits; derive each donor's `run_rate` (last-7-day average ACUs/day) and the cycle's `days_left`.
 3. Rank Borrow donors by highest projected safe surplus (consumed as tie-break) when run rates are supplied; lowest consumers first otherwise.
 4. Run `lib/boost-plan.jq`:
-   - recommended cap = `ceil(projected_month_end × 1.15)` unless `[acus]` is passed, always clamped to `consumed + 500` (`max_headroom`; the clamp also applies to an explicit `[acus]` and emits a warning — hard policy: max 500 ACUs direct headroom, prefer ≤ 250);
+   - recommended cap = `ceil(projected_month_end × 1.15)` unless `[acus]` is passed (a passed `[acus]` is planning input only, never write authorization), always clamped to `consumed + max_headroom` — the playbook passes `max_headroom: 250` by default, 250–500 only on explicit in-session request, above 500 never (jq's built-in 500 default is the backstop); the clamp also applies to an explicit `[acus]` and emits a warning;
    - donor floor = `max(consumed + 10% of even share, 50)`, raised to `ceil((consumed + run_rate × days_left) × 1.1)` when the donor's `run_rate` is known — projected heavy burners are protected, long-idle low-headroom users become safe donors;
    - output proves `sum_before == sum_after` when fully funded.
 5. Preview recipient Boost and donor Borrow table.
@@ -509,9 +509,15 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 - Reads gate writes: any failed read stops writes and quotes exact response body.
 - Every write is verified with a GET of the same ACU-limit resource.
 - Math lives in jq, not agent mental arithmetic.
-- Direct cap headroom is hard-capped at 500 ACUs above current consumption in every flow (`max_headroom` in both jq programs); ≤ 250 is the preferred recommendation, and anything above 500 needs an explicit in-session override plus a warning.
+- Direct cap headroom policy in every flow: default plans pass `max_headroom: 250` to the jq programs; 250–500 only on explicit in-session user request; above 500 never — the jq built-in 500 default is the backstop clamp, and raising it means changing repository policy, not a session instruction.
+- Writes require the exact in-session token `CONFIRM DAG WRITE` after the preview; shell commands, scope confirmations, and requested increments are planning input only.
+- `playbooks/_common.md` carries a DAG execution contract: the assembled prompt is the complete DAG policy for the session, conflicting saved memories/global instructions are ignored, and dag sessions never modify, commit, or push repository files.
 - Windsurf consumption calls are rate-limit aware.
 - Keys never appear in prompts, stdout, generated dashboard files, or ledgers.
+
+## Future parity hardening (untested)
+
+For the strongest Claude/Codex startup parity, the engines could run in customization-minimal modes — `claude --bare` / `--safe-mode`, `codex exec --ignore-user-config` — with all needed runtime configuration injected explicitly via the dag prompt. Untested against the real `clscb`/`cxscb` wrappers' auth/permission behavior; inspect the wrappers before enabling.
 
 ## API surface touched
 

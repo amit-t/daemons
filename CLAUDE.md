@@ -1,12 +1,5 @@
 # Daemons Repository Claude Instructions
 
-Claude agents working in this repository must follow `AGENTS.md`.
+This file intentionally contains no independent repository policy. Read and follow `AGENTS.md` as the sole repository instruction source. If this file and `AGENTS.md` ever differ, `AGENTS.md` wins.
 
-## Completion commit/push rule
-
-- When you finish user-requested work, run the relevant verification before reporting completion.
-- If verification passes, commit the scoped work with a clear message and push the current branch.
-- If the branch has no upstream, push with upstream tracking (`git push -u origin HEAD`) unless the push is rejected.
-- Stage only files you intentionally changed. Do not include unrelated dirty work from other agents or earlier tasks.
-- If verification fails, required credentials are missing, or push is rejected, do not claim completion; report the exact blocker and leave the work unpushed.
-- Never commit secrets, tokens, generated credentials, or local-only scratch artifacts.
+For a `dag` session, the prompt's DAG execution contract is more specific than the repository completion/commit rules: do not modify, commit, or push repository files unless the user explicitly requests repository changes.
