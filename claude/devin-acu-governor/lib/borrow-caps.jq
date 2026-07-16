@@ -1,12 +1,13 @@
 # Zero-sum cap-seeding for dag set-limits-new.
 # Give an explicit Local Agent cap to users who currently have NONE (recipients),
-# funded entirely by Borrowing cap headroom from the lowest-consuming users who
-# already HAVE explicit caps (donors). Total Σ explicit caps is unchanged
+# funded entirely by Borrowing cap headroom from high-surplus users who already
+# HAVE explicit caps (donors); consumption breaks equal-surplus ties. Total Σ explicit caps is unchanged
 # (zero-sum), so the team never tips into overage.
 #
 # Input:
 # {
 #   "donor_buffer": <number=0.10>,                          # keep each donor this fraction above its consumed
+#   "max_headroom": <number=500>,                            # maximum new cap headroom per recipient
 #   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
 #                                                            # uncapped users (no explicit cap today)
 #   "donors":     [{"email","user_id"?,"cap","consumed","member"?,"active"?}, ...]
@@ -20,14 +21,15 @@
 #   share?,                                  # even_share only
 #   recipients_capped: [{email,user_id?,consumed,cap}],
 #   recipients_skipped: [{email,user_id?,consumed}],   # could not be funded zero-sum
-#   donor_takes: [{email,user_id?,cap_before,cap_after,given}],   # lowest consumer first
+#   donor_takes: [{email,user_id?,cap_before,cap_after,given}],   # high surplus first
 #   recipients_excluded, donors_excluded, eligible_recipient_count,
 #   eligible_donor_count, sum_donor_before, sum_donor_after, sum_before,
 #   sum_after, zero_sum, warnings
 # }  or  {error} on empty/fully-ineligible recipient set.
 #
 # Modes:
-#   even_share  donors can fund floor(consumed)+share for every recipient (share>=1).
+#   even_share  donors can fund floor(consumed)+share for every recipient (share>=1),
+#               capped by max_headroom (500 ACUs by global policy).
 #   min_cover   donors can cover each recipient's consumed ACUs only (no growth headroom).
 #   partial     donors cannot fund everyone; cheapest recipients funded first, rest left uncapped.
 # Invariant: borrowed == Σ recipients_capped[].cap == Σ donor_takes[].given, and
@@ -78,6 +80,7 @@ def excluded_donor_row:
   + {consumed, cap, member: current_member, active: active_member, reasons: exclusion_reasons};
 
 (.donor_buffer // 0.10) as $dbuf
+| (.max_headroom // 500) as $max_headroom
 | (.recipients // []) as $all_recips
 | (.donors // [])     as $all_donors
 | ([ $all_recips[] | select(eligible) ]) as $recips
@@ -98,17 +101,18 @@ def excluded_donor_row:
      recipients_excluded: $recips_excluded,
      donors_excluded: $donors_excluded}
   else
-    # Donor headroom above a buffer over consumption, lowest consumer first.
+    # Donor headroom above a buffer over consumption, ranked by highest safe surplus.
     ([ $donors[]
        | ((.consumed * (1 + $dbuf)) | ceil) as $floor
        | {email, consumed, cap, floor: $floor, available: ([.cap - $floor, 0] | max)} + uid ]
-     | sort_by(.consumed)) as $cands
+     | sort_by(-.available, .consumed)) as $cands
     | ([ $cands[].available ] | add // 0)      as $total_available
     | ([ $recips[].consumed | floor ] | add)   as $base_sum
     | ([ $donors[].cap ] | add // 0)           as $sum_donor_before
     # Plan recipient caps.
     | (if $total_available >= ($base_sum + $n) then
-         ((($total_available - $base_sum) / $n) | floor) as $share
+         ((($total_available - $base_sum) / $n) | floor) as $raw_share
+         | ([$raw_share, $max_headroom] | min) as $share
          | { mode: "even_share", share: $share,
              capped: [ $recips[] | {email, consumed, cap: ((.consumed | floor) + $share)} + uid ],
              skipped: [] }
@@ -129,7 +133,7 @@ def excluded_donor_row:
             capped: .capped, skipped: .skipped}
        end) as $plan
     | ([ $plan.capped[].cap ] | add // 0) as $borrowed
-    # Draw exactly $borrowed from donors, lowest consumer first.
+    # Draw exactly $borrowed from high-surplus donors first; consumption breaks ties.
     | (reduce $cands[] as $d ({remaining: $borrowed, takes: []};
          (if .remaining > 0 and $d.available > 0
             then ([$d.available, .remaining] | min) else 0 end) as $give
@@ -141,6 +145,7 @@ def excluded_donor_row:
     | {
         mode: $plan.mode,
         donor_buffer: $dbuf,
+        max_headroom: $max_headroom,
         total_available: $total_available,
         recipients_total: $n,
         eligible_recipient_count: $n,

@@ -92,7 +92,7 @@ Behavior:
 1. Resolve `<email>` to one current-member `user_id`.
 2. Fetch the target's current-cycle consumption and live explicit Local Agent override.
 3. If the target already has an explicit cap, stop and report it; use `dag boost <email> [acus]` to raise an existing cap.
-4. If the target is uncapped, run `lib/borrow-caps.jq` with `recipients` containing only that target and `donors` containing active capped users. Donors are ranked lowest-consumer-first and keep their consumed ACUs plus the donor buffer.
+4. If the target is uncapped, run `lib/borrow-caps.jq` with `recipients` containing only that target and `donors` containing active capped users. Donors are ranked highest-safe-surplus-first, then lowest consumption, and keep their consumed ACUs plus the donor buffer.
 5. Preview one target cap plus donor reductions, proving `zero_sum: true` and `sum_before == sum_after`.
 6. After explicit confirmation, PATCH only the target and tapped donors, then GET-verify each changed user.
 7. Update the ledger and print the Enterprise Settings > Consumption UI instruction.
@@ -107,7 +107,7 @@ Goal: give an enforceable Local Agent cap to active current-member engineers who
 
 Roles:
 - **Recipients** = active current-member users whose live `local_agent.cycle_acu_limit` is **unset**. They get new caps.
-- **Donors** = active current-member users whose cap **is** set, ranked lowest consumer first. They lend cap headroom. Recipients are never donors; no donor is cut below its consumed ACUs + 10% buffer.
+- **Donors** = active current-member users whose cap **is** set, ranked highest safe surplus first, then lowest consumption. They lend cap headroom. Recipients are never donors; no donor is cut below its consumed ACUs + 10% buffer.
 - **Excluded** = inactive users or users not in the current roster. They are shown for audit but do not get new caps and do not inflate active-member donor headroom.
 
 Flow:
@@ -121,7 +121,7 @@ Flow:
 8. Update the ledger; report newly-capped active users, donors + given, excluded inactive/former users, cleared stale caps, and any active users left uncapped.
 
 Borrow math (`lib/borrow-caps.jq`), zero-sum in every mode:
-- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + share`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Remaining budget is prorated evenly.
+- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + min(share, 500)`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Direct recipient headroom never exceeds 500 ACUs.
 - `min_cover` — headroom covers consumption only: `cap_i = ceil(consumed_i)`, no growth headroom (warns).
 - `partial` — headroom too thin: fund the cheapest recipients first, leave the rest uncapped (listed), never create overage.
 

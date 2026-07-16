@@ -63,33 +63,33 @@ assert_contains "D zero_sum" "$out" '"zero_sum":true'
 out=$(run_jq '{"recipients":[],"donors":[{"email":"d1@x","cap":100,"consumed":10}]}')
 assert_contains "E error" "$out" '"error":"no uncapped users to seed"'
 
-# F. donor_buffer override (0): floor = ceil(consumed*1) = consumed, full headroom above consumption.
-#    donor cap 1000 consumed 100 -> avail 900. base_sum 100, share floor((900-100)/1)=800, cap 900.
+# F. donor_buffer override (0): global 500-ACU direct-headroom ceiling still applies.
+#    donor cap 1000 consumed 100 -> avail 900; recipient cap=100+500=600.
 out=$(run_jq '{"donor_buffer":0,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":1000,"consumed":100}]}')
 assert_contains "F donor_buffer" "$out" '"donor_buffer":0'
-assert_contains "F cap" "$out" '{"email":"r1@x","consumed":100,"cap":900}'
-assert_contains "F take cap_after" "$out" '"cap_after":100'
+assert_contains "F cap" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
+assert_contains "F take cap_after" "$out" '"cap_after":400'
 assert_contains "F zero_sum" "$out" '"zero_sum":true'
 
 # G. Lowest-consumer-first draw + buffer + user_id passthrough.
 #    d2 (consumed 5) drained before d1 (consumed 100). d1 keeps a ~10% buffer above
-#    100 (FP: ceil(100*1.1)=111 -> floor 111, avail 39). user_id flows to outputs.
+#    100 (FP: ceil(100*1.1)=111 -> floor 111, avail 39). 500-ACU recipient
+#    ceiling means d2 alone funds the 600-ACU cap. user_id flows to outputs.
 out=$(run_jq '{"recipients":[{"email":"r1@x","user_id":"email|r1","consumed":100}],
   "donors":[{"email":"d1@x","cap":150,"consumed":100},{"email":"d2@x","user_id":"email|d2","cap":1000,"consumed":5}]}')
 assert_contains "G recipient user_id" "$out" '"user_id":"email|r1"'
-assert_contains "G draw d2 first" "$out" '{"email":"d2@x","cap_before":1000,"cap_after":6,"given":994,"user_id":"email|d2"}'
-assert_contains "G draw d1 second" "$out" '{"email":"d1@x","cap_before":150,"cap_after":111,"given":39}'
+assert_contains "G draw d2 first" "$out" '{"email":"d2@x","cap_before":1000,"cap_after":400,"given":600,"user_id":"email|d2"}'
 assert_contains "G zero_sum" "$out" '"zero_sum":true'
 
 # H. Multi-donor even_share, single recipient: draw spans donors lowest-first, buffer respected.
 #    d1 cap500 c0 avail500; d2 cap500 c200 floor ceil(200*1.1)=221 avail279. total 779.
-#    share floor((779-100)/1)=679, cap 779. Draw d1(500) then d2(279): d2 cap_after 221.
+#    raw share is 679 but global ceiling gives cap 600. Draw d1(500) then d2(100): d2 cap_after 400.
 out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":500,"consumed":0},{"email":"d2@x","cap":500,"consumed":200}]}')
-assert_contains "H cap" "$out" '{"email":"r1@x","consumed":100,"cap":779}'
+assert_contains "H cap" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
 assert_contains "H d1 drained" "$out" '{"email":"d1@x","cap_before":500,"cap_after":0,"given":500}'
-assert_contains "H d2 buffered" "$out" '{"email":"d2@x","cap_before":500,"cap_after":221,"given":279}'
+assert_contains "H d2 buffered" "$out" '{"email":"d2@x","cap_before":500,"cap_after":400,"given":100}'
 assert_contains "H zero_sum" "$out" '"zero_sum":true'
 
 # I. Default reservation set excludes inactive or non-current-member users.
@@ -122,5 +122,26 @@ assert_contains "I inactive donor audit" "$out" '{"email":"d-inactive@x","user_i
 assert_contains "I inactive string donor audit" "$out" '{"email":"d-inactive-string@x","user_id":"email|d-inactive-string","consumed":0,"cap":10000,"member":true,"active":false,"reasons":["inactive"]}'
 assert_contains "I borrowed only active donor" "$out" '"borrowed":500'
 assert_contains "I active donor take" "$out" '{"email":"d-active@x","cap_before":500,"cap_after":0,"given":500,"user_id":"email|d-active"}'
+
+# J. Global direct-headroom ceiling: no new recipient gets more than 500 ACUs
+# above current consumption, even when donor availability would support more.
+# cap=floor(100)+500=600; only 600 is borrowed and donor keeps 400.
+out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":1000,"consumed":0}]}')
+assert_contains "J default max headroom" "$out" '"max_headroom":500'
+assert_contains "J cap ceiling" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
+assert_contains "J borrowed ceiling" "$out" '"borrowed":600'
+assert_contains "J donor remainder" "$out" '{"email":"d1@x","cap_before":1000,"cap_after":400,"given":600}'
+
+# K. Prefer one high-surplus donor over draining many low-cap donors.  This keeps
+# the zero-sum plan legible while preserving each donor's safety floor.
+out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"small@x","cap":100,"consumed":0},{"email":"large@x","cap":1000,"consumed":0}]}')
+assert_contains "K high-surplus donor selected" "$out" '{"email":"large@x","cap_before":1000,"cap_after":400,"given":600}'
+if [[ "$out" == *'"email":"small@x","cap_before"'* ]]; then
+  _fail "K low-cap donor should not be skimmed"
+else
+  _ok
+fi
 
 report
