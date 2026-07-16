@@ -8,11 +8,18 @@
 # {
 #   "donor_buffer": <number=0.10>,                          # keep each donor this fraction above its consumed
 #   "max_headroom": <number=500>,                            # maximum new cap headroom per recipient
+#   "days_left": <number=0>,                                 # cycle days left, for donor run-rate projection
 #   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
 #                                                            # uncapped users (no explicit cap today)
-#   "donors":     [{"email","user_id"?,"cap","consumed","member"?,"active"?}, ...]
+#   "donors":     [{"email","user_id"?,"cap","consumed","run_rate"?,"member"?,"active"?}, ...]
 #                                                            # capped users = candidate donors
 # }
+#
+# Donor run_rate (recent ACUs/day, e.g. last-7-day average): when present, the donor's
+# protected floor covers projected end-of-cycle consumption, not just current burn —
+# floor = max(ceil(consumed*(1+donor_buffer)), ceil((consumed + run_rate*days_left)*(1+donor_buffer))).
+# available = cap - floor. Donors are ranked highest available first, consumed as tie-break.
+# Absent run_rate the floor is exactly the legacy ceil(consumed*(1+donor_buffer)).
 #
 # Output:
 # {
@@ -81,6 +88,7 @@ def excluded_donor_row:
 
 (.donor_buffer // 0.10) as $dbuf
 | (.max_headroom // 500) as $max_headroom
+| (.days_left // 0) as $days_left
 | (.recipients // []) as $all_recips
 | (.donors // [])     as $all_donors
 | ([ $all_recips[] | select(eligible) ]) as $recips
@@ -101,9 +109,13 @@ def excluded_donor_row:
      recipients_excluded: $recips_excluded,
      donors_excluded: $donors_excluded}
   else
-    # Donor headroom above a buffer over consumption, ranked by highest safe surplus.
+    # Donor headroom above a buffer over consumption — projected to cycle end when a
+    # run_rate is known — ranked by highest safe surplus.
     ([ $donors[]
-       | ((.consumed * (1 + $dbuf)) | ceil) as $floor
+       | ((.consumed * (1 + $dbuf)) | ceil) as $base_floor
+       | (if (.run_rate // null) != null
+            then ([$base_floor, (((.consumed + (.run_rate * $days_left)) * (1 + $dbuf)) | ceil)] | max)
+            else $base_floor end) as $floor
        | {email, consumed, cap, floor: $floor, available: ([.cap - $floor, 0] | max)} + uid ]
      | sort_by(-.available, .consumed)) as $cands
     | ([ $cands[].available ] | add // 0)      as $total_available

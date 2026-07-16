@@ -2,7 +2,7 @@
 
 Give an enforceable per-user **Local Agent limit** to active current-member engineers who currently have **no explicit cap** (they ride the inherited org/default limit), and fund those new caps **zero-sum** by Borrowing cap headroom from active current-member users with the **highest safe surplus**. Σ explicit caps for the active eligible set stays unchanged, so the team never tips into overage. This is the targeted complement to `dag set-limits` (which (re)prorates *everyone*): use `set-limits-new` to onboard newly-added active engineers without disturbing existing capped users beyond the borrow.
 
-Default eligible set = current roster members whose activity status is active. Do not seed caps for inactive or former users, and do not count inactive/former capped users as active-member donor headroom. Recipients = active uncapped users. Donors = active capped users, ranked highest safe surplus first, with lowest consumption as tie-breaker. Recipients are never donors; donors are never re-capped upward. The remaining borrowable budget is prorated **evenly** across recipients (`floor(consumed_i) + min(share, 500)`); direct recipient headroom never exceeds **500 ACUs**. When donor headroom is too thin to fund everyone, the cheapest recipients are funded first and the rest are reported as still-uncapped (no overage is ever created).
+Default eligible set = current roster members whose activity status is active. Do not seed caps for inactive or former users, and do not count inactive/former capped users as active-member donor headroom. Recipients = active uncapped users. Donors = active capped users, ranked highest **projected** safe surplus first, with lowest consumption as tie-breaker. Recipients are never donors; donors are never re-capped upward. The remaining borrowable budget is prorated **evenly** across recipients (`floor(consumed_i) + min(share, 500)`); direct recipient headroom never exceeds **500 ACUs** (hard rule; prefer ≤ 250 — anything past 500 needs an explicit in-session override plus a warning). When donor headroom is too thin to fund everyone, the cheapest recipients are funded first and the rest are reported as still-uncapped (no overage is ever created).
 
 ## Steps
 
@@ -18,18 +18,18 @@ Default eligible set = current roster members whose activity status is active. D
    - **Excluded** = inactive or non-current-member users. They are audited separately and get no new cap reservation by default.
    If a fresh ledger has caps but live is unset, the live API is authoritative — treat as uncapped (recipient) unless the user asks to seed live limits from the ledger first.
 6. **Confirm the recipient set.** Present the active uncapped headcount N plus their email/user_id/consumed table, then a separate excluded inactive/former table and capped active donor summary. If activity evidence is unavailable, state that current roster membership is the fallback and ask the user to remove inactive users before any write. Ask the user to confirm engineers to cap (remove service accounts / non-engineers). Do not cap users outside the confirmed active set. If N = 0, report "all active users already have explicit caps — nothing to seed" and stop.
-7. **Plan the borrow.** Build the `borrow_caps_jq` input:
+7. **Plan the borrow — usage patterns, not just the bottom of the table.** First fetch each donor's recent burn to compute `run_rate` (last-7-day average ACUs/day): with the Windsurf key, reuse the single `consumption` call from step 3 with `granularity=daily` and derive each donor's last-7-day window; without it, GET `/v3/enterprise/consumption/daily/users/{user_id}` with `time_after = now − 7d` and divide `total_acus` by 7. Compute `days_left` in the cycle from the cycle epochs. Then build the `borrow_caps_jq` input:
    ```json
-   {"donor_buffer": 0.10,
+   {"donor_buffer": 0.10, "days_left": <days left in cycle>,
     "recipients": [{"email": ..., "user_id": ..., "consumed": ..., "member": true, "active": true|false}, ...],
-    "donors":     [{"email": ..., "user_id": ..., "cap": ..., "consumed": ..., "member": true, "active": true|false}, ...]}
+    "donors":     [{"email": ..., "user_id": ..., "cap": ..., "consumed": ..., "run_rate": <last-7d ACUs/day>, "member": true, "active": true|false}, ...]}
    ```
-   Run `jq -f <borrow_caps_jq>`. It filters out `member:false` and `active:false`, then returns:
+   Run `jq -f <borrow_caps_jq>`. A donor's `run_rate` raises its protected floor to projected end-of-cycle consumption + buffer (`ceil((consumed + run_rate × days_left) × 1.1)`), so heavy burners with big nominal surplus are protected while idle users with little nominal headroom but weeks of zero usage become safe donors; donors are ranked by highest projected safe surplus first. Omit `run_rate` only when recent usage genuinely cannot be fetched (floor then falls back to consumed + buffer). The program filters out `member:false` and `active:false`, then returns:
    - `mode` — `even_share` (full prorate, `share` ≥ 1), `min_cover` (caps == consumption, no headroom), or `partial` (some recipients could not be funded zero-sum).
    - `recipients_capped[]` `{email, user_id, consumed, cap}` — the new per-user caps.
    - `recipients_skipped[]` — uncapped users left untouched (partial mode).
    - `recipients_excluded[]` / `donors_excluded[]` — inactive or non-current-member rows ignored by default.
-   - `donor_takes[]` `{email, cap_before, cap_after, given}` — Borrow draws from highest safe surplus first; no donor cut below its consumed ACUs + `donor_buffer`.
+   - `donor_takes[]` `{email, cap_before, cap_after, given}` — Borrow draws from highest projected safe surplus first; no donor cut below its consumed ACUs + `donor_buffer` (or its projected end-of-cycle consumption + buffer when `run_rate` is supplied).
    - `borrowed`, `sum_before`, `sum_after`, `zero_sum` (must be `true`), plus `warnings`.
    Surface every warning. Note: a capped user is never set below their own current consumption (`cap_i ≥ consumed_i`).
 8. **Stale excluded-cap cleanup.** If an excluded inactive/former user has an explicit `local_agent.cycle_acu_limit` and a known `user_id`, include a default cleanup action to clear stale explicit overrides for excluded users by PATCHing `{"local_agent":null}` after confirmation. This removes their individual reservation and intentionally lowers total exposure outside the active zero-sum borrow. If an excluded non-current member lacks a known `user_id`, list it as not API-addressable and do not write.

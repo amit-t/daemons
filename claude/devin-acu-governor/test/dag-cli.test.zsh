@@ -122,6 +122,32 @@ assert_contains "set-limits-new stale cleanup" "$out" "clear stale explicit over
 out=$(run_dag 2>&1)
 assert_contains "usage lists set-limits-new" "$out" "dag set-limits-new"
 
+# 5c. new-cycle prompt assembly: own playbook + guard/ledger context; no args allowed.
+out=$(run_dag new-cycle); rc=$?
+assert_exit "newcycle rc" 0 $rc
+assert_contains "new-cycle playbook" "$out" "# Playbook: new-cycle"
+assert_contains "new-cycle command" "$out" "command: new-cycle"
+assert_contains "new-cycle requested" "$out" "requested shell command: dag new-cycle"
+assert_contains "new-cycle scope" "$out" "start-of-cycle full reset"
+assert_contains "new-cycle guard" "$out" "confirm a NEW cycle is actually current"
+assert_contains "new-cycle old-cycle warn" "$out" "warn loudly and require explicit confirmation"
+assert_contains "new-cycle ledger fresh" "$out" "rewrite fresh with the new cycle epochs"
+assert_contains "new-cycle compute jq" "$out" "compute-caps.jq"
+assert_contains "new-cycle stale cleanup" "$out" '{"local_agent":null}'
+assert_contains "new-cycle user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "new-cycle live verify" "$out" "GET each changed user limit after PATCH"
+assert_contains "new-cycle ui instruction" "$out" "Enterprise Settings > Consumption"
+assert_contains "new-cycle headroom hard rule" "$out" "Direct cap headroom ceiling"
+out=$(run_dag new-cycle extra 2>&1); rc=$?
+assert_exit "new-cycle extra args" 2 $rc
+assert_contains "new-cycle extra args msg" "$out" "dag new-cycle: takes no arguments"
+# usage help lists new-cycle.
+out=$(run_dag 2>&1)
+assert_contains "usage lists new-cycle" "$out" "dag new-cycle"
+# all-commands surfaces the new-cycle playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands new-cycle available" "$out" "# Playbook: new-cycle"
+
 # 6. boost prompt carries args.
 out=$(run_dag boost alice@corp.com 50)
 assert_contains "boost playbook" "$out" "# Playbook: boost"
@@ -131,6 +157,9 @@ assert_contains "boost plan jq" "$out" "boost-plan.jq"
 assert_contains "boost borrow wording" "$out" "Borrow"
 assert_contains "boost user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
 assert_contains "boost live verify" "$out" "GET every changed user limit after PATCH"
+assert_contains "boost headroom clamp" "$out" '"max_headroom": 500'
+assert_contains "boost headroom hard rule" "$out" "Direct cap headroom ceiling"
+assert_contains "boost donor run rate" "$out" "run_rate"
 
 # 6a. boost over: no email required, discovers the over set at run time.
 out=$(run_dag boost over); rc=$?

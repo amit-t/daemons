@@ -74,4 +74,49 @@ assert_contains "F recipient full cap" "$out" '"cap_after":50'
 takes=$(print -r -- "$out" | jq -c '[.takes[].given]')
 assert_eq "F no donor below min give" '[5,7,7,12,6,8,5]' "$takes"
 
+# G. Headroom ceiling: projection-driven recommendation clamped at consumed + 500.
+#    consumed 100, run_rate 100, days_left 10 -> projected 1100, raw rec ceil(1100*1.15)=1265,
+#    clamped to 100+500=600. delta 400, d1 floor max(ceil(10+50),50)=60 -> avail 940, funds all.
+out=$(run_jq '{"pool":2000,"share":500,"recipient_buffer":0.15,"donor_buffer":0.10,
+  "recipient":{"email":"r@x","cap":200,"consumed":100,"run_rate":100,"days_left":10},
+  "donors":[{"email":"d1@x","cap":1000,"consumed":10}]}')
+assert_contains "G clamped recommended" "$out" '"recommended_cap":600'
+assert_contains "G max_headroom" "$out" '"max_headroom":500'
+assert_contains "G delta" "$out" '"delta":400'
+assert_contains "G clamp warning" "$out" 'direct-headroom ceiling'
+assert_contains "G clamp warning value" "$out" 'clamped to 600'
+assert_contains "G recip after" "$out" '"cap_after":600'
+
+# H. delta_override is clamped too, with a warning.
+#    cap 200 + override 900 = 1100 -> clamped to consumed(100)+500=600. delta 400.
+out=$(run_jq '{"pool":2000,"share":500,"recipient_buffer":0.15,"donor_buffer":0.10,
+  "recipient":{"email":"r@x","cap":200,"consumed":100,"run_rate":1,"days_left":10,"delta_override":900},
+  "donors":[{"email":"d1@x","cap":1000,"consumed":10}]}')
+assert_contains "H clamped recommended" "$out" '"recommended_cap":600'
+assert_contains "H delta" "$out" '"delta":400'
+assert_contains "H clamp warning" "$out" 'clamped to 600'
+assert_contains "H recip after" "$out" '"cap_after":600'
+
+# I. Clamp with no delta: cap already above the ceiling -> delta 0, no donors touched,
+#    clamp warning still surfaces the policy.
+out=$(run_jq '{"pool":2000,"share":500,"recipient_buffer":0.15,"donor_buffer":0.10,
+  "recipient":{"email":"r@x","cap":700,"consumed":100,"run_rate":100,"days_left":10},
+  "donors":[{"email":"d1@x","cap":1000,"consumed":10}]}')
+assert_contains "I clamped recommended" "$out" '"recommended_cap":600'
+assert_contains "I delta zero" "$out" '"delta":0'
+assert_contains "I takes empty" "$out" '"takes":[]'
+assert_contains "I clamp warning" "$out" 'direct-headroom ceiling'
+
+# J. Donor run_rate protection + surplus-first ranking.
+#    days_left 10. burner: cap 500, consumed 20, run_rate 40 -> projected 420,
+#    floor max(max(ceil(20+20),50)=50, ceil(420*1.1)=462)=462 -> avail 38.
+#    idle: cap 300, consumed 50, run_rate 0 -> floor max(ceil(70),50)=70 -> avail 230.
+#    run_rate present -> rank by highest available: idle funds the whole 100; burner untouched.
+out=$(run_jq '{"pool":1000,"share":200,"recipient_buffer":0.15,"donor_buffer":0.10,"days_left":10,
+  "recipient":{"email":"r@x","cap":100,"consumed":100,"run_rate":0,"days_left":10,"delta_override":100},
+  "donors":[{"email":"burner@x","cap":500,"consumed":20,"run_rate":40},{"email":"idle@x","cap":300,"consumed":50,"run_rate":0}]}')
+assert_contains "J funded" "$out" '"funded":100'
+takes=$(print -r -- "$out" | jq -c '.takes')
+assert_eq "J idle-first, burner protected" '[{"email":"idle@x","cap_before":300,"cap_after":200,"given":100}]' "$takes"
+
 report

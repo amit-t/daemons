@@ -144,4 +144,42 @@ else
   _ok
 fi
 
+# L. Usage-pattern donor floors: a heavy burner's projected end-of-cycle consumption
+# is protected, while an idle donor still lends its true surplus.
+#    days_left 10. burner: cap 1000, consumed 200, run_rate 50 -> projected 700,
+#    floor ceil(700*1.1)=771 (FP), available 229 (nominal would be 780). idle: cap 400,
+#    consumed 300, run_rate 0 -> floor 330, available 70. total 299.
+#    recipient consumed 0 -> even_share share 299 (< 500 ceiling), cap 299.
+#    Draw highest-available first: burner gives 229 (never below its projected floor), idle gives 70.
+out=$(run_jq '{"days_left":10,"recipients":[{"email":"r1@x","consumed":0}],
+  "donors":[{"email":"burner@x","cap":1000,"consumed":200,"run_rate":50},{"email":"idle@x","cap":400,"consumed":300,"run_rate":0}]}')
+assert_contains "L cap" "$out" '{"email":"r1@x","consumed":0,"cap":299}'
+assert_contains "L burner projected floor" "$out" '{"email":"burner@x","cap_before":1000,"cap_after":771,"given":229}'
+assert_contains "L idle donor gives" "$out" '{"email":"idle@x","cap_before":400,"cap_after":330,"given":70}'
+assert_contains "L zero_sum" "$out" '"zero_sum":true'
+
+# M. Projection can fully protect a nominal-surplus burner; the idle low-headroom
+# donor becomes the only eligible source.
+#    days_left 20. burner: cap 600, consumed 100, run_rate 30 -> projected 700,
+#    floor 771 (FP) > cap -> available 0. idle: cap 170, consumed 100, run_rate 0 ->
+#    floor ceil(100*1.1)=111 (FP), available 59 (only 70 ACUs nominal headroom, but weeks idle = safe).
+#    recipient consumed 40 -> even_share share floor((59-40)/1)=19, cap 59.
+out=$(run_jq '{"days_left":20,"recipients":[{"email":"r1@x","consumed":40}],
+  "donors":[{"email":"burner@x","cap":600,"consumed":100,"run_rate":30},{"email":"idle@x","cap":170,"consumed":100,"run_rate":0}]}')
+assert_contains "M idle funds" "$out" '{"email":"idle@x","cap_before":170,"cap_after":111,"given":59}'
+if [[ "$out" == *'"email":"burner@x","cap_before"'* ]]; then
+  _fail "M projected burner must not donate"
+else
+  _ok
+fi
+assert_contains "M zero_sum" "$out" '"zero_sum":true'
+
+# N. Backward compatible: donors without run_rate behave exactly as before even
+# when days_left is supplied (same as case J).
+out=$(run_jq '{"days_left":15,"recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":1000,"consumed":0}]}')
+assert_contains "N cap ceiling" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
+assert_contains "N no run_rate unchanged" "$out" '{"email":"d1@x","cap_before":1000,"cap_after":400,"given":600}'
+assert_contains "N zero_sum" "$out" '"zero_sum":true'
+
 report

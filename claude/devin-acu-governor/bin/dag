@@ -38,6 +38,9 @@ Usage:
                               headroom from active capped users
   dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
                               by Borrowing headroom from the lowest-consuming capped users
+  dag new-cycle               Start-of-cycle full reset: verify the new billing cycle is
+                              live, rebuild every active user's cap from the full monthly
+                              pool, clear stale excluded-user overrides, rewrite the ledger
   dag set limit global <acus> [org_id|org_name]
                               Set org-level Local Agent limit(s), then live-GET verify each
   dag set-limit global <acus> [org_id|org_name]
@@ -189,7 +192,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new boost over user status models; do
+    for playbook in set-limits set-limits-new new-cycle boost over user status models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -353,6 +356,18 @@ main() {
       fi
       ;;
     set-limits-new) ;;
+    new-cycle)
+      if (( $# > 0 )); then
+        print -ru2 -- "dag new-cycle: takes no arguments (got: $*); it rebuilds the whole cap table for the new cycle"
+        exit 2
+      fi
+      context_lines=(
+        "requested shell command: dag new-cycle"
+        "scope: start-of-cycle full reset — rebuild every active user's Local Agent cap from DAG_MONTHLY_ACU_POOL"
+        "guard: confirm a NEW cycle is actually current (cycle start within ~3 days or consumed near zero); if the old cycle is still running, warn loudly and require explicit confirmation before any write"
+        "ledger: rewrite fresh with the new cycle epochs; do not merge old-cycle data"
+      )
+      ;;
     status)
       if (( $# > 0 )); then
         if [[ "${1:-}" == --group* ]]; then

@@ -36,6 +36,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits` | ✅ user limits + ledger | Discover active current-member engineers/user IDs, compute remaining-pool prorated caps, PATCH each active user's Local Agent override, live-GET verify each write |
 | `dag set-limits <email>` | ✅ target user + donor limits + ledger | Cap only one active current-member user who has no explicit cap yet, funded zero-sum by Borrowing headroom from active capped users; no other uncapped users are capped |
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
+| `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
@@ -121,15 +122,33 @@ Flow:
 8. Update the ledger; report newly-capped active users, donors + given, excluded inactive/former users, cleared stale caps, and any active users left uncapped.
 
 Borrow math (`lib/borrow-caps.jq`), zero-sum in every mode:
-- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + min(share, 500)`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Direct recipient headroom never exceeds 500 ACUs.
+- `even_share` — donors have ample headroom: `cap_i = floor(consumed_i) + min(share, 500)`, `share = floor((Σ donor_headroom − Σ floor(consumed)) / N)` (≥ 1). Direct recipient headroom never exceeds 500 ACUs (hard policy; prefer ≤ 250).
 - `min_cover` — headroom covers consumption only: `cap_i = ceil(consumed_i)`, no growth headroom (warns).
 - `partial` — headroom too thin: fund the cheapest recipients first, leave the rest uncapped (listed), never create overage.
 
-No recipient is ever capped below its own current consumption. The borrow draws from the lowest consumers first.
+No recipient is ever capped below its own current consumption. Donors may carry an optional `run_rate` (last-7-day average ACUs/day, with cycle `days_left` in the input): the donor's protected floor then covers projected end-of-cycle consumption — `ceil((consumed + run_rate × days_left) × 1.1)` — so heavy burners with big nominal surplus are protected while long-idle users with little nominal headroom become safe donors. The borrow draws from the highest projected safe surplus first (consumed as tie-break); without `run_rate` the legacy consumed-plus-buffer floor applies unchanged.
 
 ```zsh
 dag set-limits-new
 ```
+
+## `dag new-cycle` — Start-of-cycle full reset
+
+Run once at the start of every billing cycle. Resets all Local Agent limits and rebuilds the whole cap table from `DAG_MONTHLY_ACU_POOL` (default 24,000) and the current active engineer count — at cycle start consumed ≈ 0, so every confirmed active engineer gets an even `floor(pool / N)` cap.
+
+Flow:
+1. **Fresh-cycle guard.** GET `/v3/enterprise/consumption/cycles` and confirm a new cycle is actually current: cycle start within ~3 days **or** consumed total near zero. If the old cycle is still running, the playbook warns loudly and requires explicit confirmation — default is to stop and suggest `dag set-limits`.
+2. Full roster + per-user consumption + activity filter (same pattern as `set-limits`); confirm the active engineer set.
+3. Rebuild the cap table from scratch with `lib/compute-caps.jq` on the **full** pool (not the remaining pool).
+4. Clear stale explicit overrides on excluded inactive/former users with `{"local_agent":null}`.
+5. Preview, explicit confirmation, PATCH every active user, live-GET verify each write.
+6. **Rewrite the ledger fresh** with the new cycle's epochs — old-cycle data is never merged.
+
+```zsh
+dag new-cycle
+```
+
+Takes no arguments — `dag new-cycle whatever` exits 2.
 
 ## `dag set limit global <acus> [org_id|org_name]`
 
@@ -159,11 +178,11 @@ Goal: raise one legitimate heavy user's enforceable Local Agent user limit witho
 
 Flow:
 1. Resolve target email to `user_id` from roster.
-2. Fetch per-user consumption and live current user limits.
-3. Rank lowest consumers as Borrow donors.
+2. Fetch per-user consumption and live current user limits; derive each donor's `run_rate` (last-7-day average ACUs/day) and the cycle's `days_left`.
+3. Rank Borrow donors by highest projected safe surplus (consumed as tie-break) when run rates are supplied; lowest consumers first otherwise.
 4. Run `lib/boost-plan.jq`:
-   - recommended cap = `ceil(projected_month_end × 1.15)` unless `[acus]` is passed;
-   - donor floor = `consumed + 10% of even share`;
+   - recommended cap = `ceil(projected_month_end × 1.15)` unless `[acus]` is passed, always clamped to `consumed + 500` (`max_headroom`; the clamp also applies to an explicit `[acus]` and emits a warning — hard policy: max 500 ACUs direct headroom, prefer ≤ 250);
+   - donor floor = `max(consumed + 10% of even share, 50)`, raised to `ceil((consumed + run_rate × days_left) × 1.1)` when the donor's `run_rate` is known — projected heavy burners are protected, long-idle low-headroom users become safe donors;
    - output proves `sum_before == sum_after` when fully funded.
 5. Preview recipient Boost and donor Borrow table.
 6. On confirmation, PATCH recipient and donors via `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits`.
@@ -490,6 +509,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 - Reads gate writes: any failed read stops writes and quotes exact response body.
 - Every write is verified with a GET of the same ACU-limit resource.
 - Math lives in jq, not agent mental arithmetic.
+- Direct cap headroom is hard-capped at 500 ACUs above current consumption in every flow (`max_headroom` in both jq programs); ≤ 250 is the preferred recommendation, and anything above 500 needs an explicit in-session override plus a warning.
 - Windsurf consumption calls are rate-limit aware.
 - Keys never appear in prompts, stdout, generated dashboard files, or ledgers.
 
@@ -531,7 +551,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,boost,over,user,status,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,new-cycle,boost,over,user,status,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
@@ -552,10 +572,11 @@ zsh -n claude/devin-acu-governor/bin/dag
 zsh -n claude/devin-acu-governor/lib/*.zsh
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits alice@corp.com
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag new-cycle
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math, zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation), CLI prompt assembly, all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math (including the consumed+500 headroom clamp with and without an explicit increment, donor `run_rate` projected floors, and projected-surplus donor ranking), zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation), CLI prompt assembly (`new-cycle` guard/ledger context and no-arg validation included), all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
 
 ## Troubleshooting
 
