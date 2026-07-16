@@ -87,6 +87,11 @@ assert_contains "set-limits ui instructions" "$out" "Enterprise Settings > Consu
 assert_contains "set-limits active default" "$out" "Default eligible set = current roster members whose activity status is active"
 assert_contains "set-limits inactive no reserve" "$out" "Do not reserve ACUs for users who are not current members or are inactive"
 assert_contains "set-limits stale cleanup" "$out" "clear stale explicit overrides for excluded users"
+assert_contains "set-limits write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "set-limits scope not write auth" "$out" "Scope confirmation does not authorize any PATCH"
+assert_contains "set-limits deterministic fallback" "$out" "an unmentioned roster member remains included"
+assert_contains "set-limits first-failure stop" "$out" "perform no further PATCH, DELETE, or ledger update"
+assert_contains "set-limits headroom guidance" "$out" "250 ACUs of direct headroom by default"
 
 # 5a. set-limits targeted user mode: cap exactly one uncapped user by Borrowing.
 out=$(run_dag set-limits alice@corp.com); rc=$?
@@ -98,6 +103,8 @@ assert_contains "setlimits target borrow" "$out" "Borrow from active capped dono
 assert_contains "setlimits target only target" "$out" "do not cap any other uncapped users"
 assert_contains "setlimits target already capped guard" "$out" "If the target already has an explicit cap, stop"
 assert_contains "setlimits target jq" "$out" "borrow-caps.jq"
+assert_contains "setlimits target headroom default" "$out" '"max_headroom": 250'
+assert_contains "setlimits target write gate" "$out" "After the user sends \`CONFIRM DAG WRITE\`"
 
 out=$(run_dag set-limits not-an-email 2>&1); rc=$?
 assert_exit "setlimits target bad email" 2 $rc
