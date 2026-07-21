@@ -90,8 +90,21 @@ jobs:
             exit 1
           fi
 
+      # --yes and --global are required, not cosmetic. Without them the
+      # installer prompts "Which agents do you want to install to?"; a runner
+      # has no TTY, so it installs nothing and publish.sh is simply absent
+      # several steps later. Assert the publisher here so a future installer
+      # change fails where it happens.
       - name: Install the official here.now publisher
-        run: npx --yes skills add heredotnow/skill --skill here-now
+        run: |
+          set -euo pipefail
+          npx --yes skills add heredotnow/skill --skill here-now --yes --global
+          publisher="$HOME/.agents/skills/here-now/scripts/publish.sh"
+          [[ -x $publisher ]] || {
+            echo "::error::here.now publisher missing at $publisher after install." >&2
+            exit 1
+          }
+          echo "publisher installed at $publisher"
 
       - name: Publish to here.now
         run: |
