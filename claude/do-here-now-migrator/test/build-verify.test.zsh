@@ -118,4 +118,19 @@ assert_eq "https remote" "amit-t/amittiwari-me" "$(dhm_ci_repo_slug "$repo")"
 git -C "$repo" remote set-url origin 'https://github.com/amit-t/amittiwari-me'
 assert_eq "https remote without .git" "amit-t/amittiwari-me" "$(dhm_ci_repo_slug "$repo")"
 
+# ---- generated workflow: the publisher install must be non-interactive -------
+# Regression: the first real deployment run failed with "publish.sh not found"
+# because `npx skills add` without --yes/--global prompts for target agents,
+# and a runner has no TTY to answer with.
+
+local tpl
+tpl=$(<"$(dhm_test_daemon_dir)/templates/deploy-here-now.yml")
+assert_contains "installer passes --yes"    "$tpl" "--yes --global"
+assert_contains "install step asserts the publisher exists" "$tpl" "publisher missing at"
+
+# The bare form must not survive anywhere in the template.
+local bare
+bare=$(print -r -- "$tpl" | grep -c 'skills add heredotnow/skill --skill here-now$' || true)
+assert_eq "no bare interactive install remains" "0" "$bare"
+
 report

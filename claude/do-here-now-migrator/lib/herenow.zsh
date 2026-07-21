@@ -121,7 +121,9 @@ dhm_hn_install_publisher() {
   if dhm_dry "install the official here.now publisher"; then return 0; fi
   dhm_require_cmds npx || return 1
   dhm_info "installing the official here.now skill"
-  npx --yes skills add heredotnow/skill --skill here-now -g >&2 || true
+  # --yes and --global keep the installer non-interactive. Without them it
+  # prompts for target agents and installs nothing when there is no TTY.
+  npx --yes skills add heredotnow/skill --skill here-now --yes --global >&2 </dev/null || true
   if ! dhm_hn_publisher_path >/dev/null; then
     dhm_error "here.now publisher not found after install"
     return 1
