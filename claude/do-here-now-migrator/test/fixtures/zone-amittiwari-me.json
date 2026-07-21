@@ -1,0 +1,22 @@
+[
+  { "id": 1776405959, "type": "SOA",   "name": "@",   "data": "1800", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1776405960, "type": "NS",    "name": "@",   "data": "ns1.digitalocean.com", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1776405961, "type": "NS",    "name": "@",   "data": "ns2.digitalocean.com", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1776405962, "type": "NS",    "name": "@",   "data": "ns3.digitalocean.com", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1776406402, "type": "AAAA",  "name": "@",   "data": "2a06:98c1:58::60", "priority": 0, "port": 0, "ttl": 30, "weight": 0 },
+  { "id": 1776406403, "type": "AAAA",  "name": "@",   "data": "2606:4700:7::60", "priority": 0, "port": 0, "ttl": 30, "weight": 0 },
+  { "id": 1776406404, "type": "A",     "name": "@",   "data": "162.159.140.98", "priority": 0, "port": 0, "ttl": 30, "weight": 0 },
+  { "id": 1776406405, "type": "A",     "name": "@",   "data": "172.66.0.96", "priority": 0, "port": 0, "ttl": 30, "weight": 0 },
+  { "id": 1776422488, "type": "TXT",   "name": "@",   "data": "zoho-verification=zb59678947.zmverify.zoho.in", "priority": 0, "port": 0, "ttl": 3600, "weight": 0 },
+  { "id": 1776422489, "type": "TXT",   "name": "@",   "data": "v=spf1 include:zoho.in ~all", "priority": 0, "port": 0, "ttl": 3600, "weight": 0 },
+  { "id": 1776422490, "type": "TXT",   "name": "_dmarc", "data": "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com", "priority": 0, "port": 0, "ttl": 3600, "weight": 0 },
+  { "id": 1776422491, "type": "TXT",   "name": "zoho._domainkey", "data": "v=DKIM1; k=rsa; p=MIGfMA0GCS", "priority": 0, "port": 0, "ttl": 3600, "weight": 0 },
+  { "id": 1778366878, "type": "MX",    "name": "@",   "data": "mx.zoho.in", "priority": 10, "port": 0, "ttl": 300, "weight": 0 },
+  { "id": 1778366897, "type": "MX",    "name": "@",   "data": "mx2.zoho.in", "priority": 20, "port": 0, "ttl": 300, "weight": 0 },
+  { "id": 1778366904, "type": "MX",    "name": "@",   "data": "mx3.zoho.in", "priority": 50, "port": 0, "ttl": 300, "weight": 0 },
+  { "id": 1778366905, "type": "CAA",   "name": "@",   "data": "0 issue \"letsencrypt.org\"", "priority": 0, "port": 0, "ttl": 3600, "weight": 0 },
+  { "id": 1778366906, "type": "SRV",   "name": "_sip._tcp", "data": "sip.example.com", "priority": 10, "port": 5060, "ttl": 3600, "weight": 5 },
+  { "id": 1821093128, "type": "CNAME", "name": "www", "data": "amittiwari-me-7o6zj.ondigitalocean.app", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1821093129, "type": "CNAME", "name": "blog", "data": "hosted.example.com", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 },
+  { "id": 1821093130, "type": "A",     "name": "api", "data": "203.0.113.10", "priority": 0, "port": 0, "ttl": 1800, "weight": 0 }
+]
