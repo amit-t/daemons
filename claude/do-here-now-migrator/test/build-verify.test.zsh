@@ -54,8 +54,9 @@ mkdir -p "${tmp}/leaky-modules/node_modules"
 assert_fails "export containing node_modules rejected" dhm_build_verify_output "$tmp" leaky-modules
 
 # Credential-shaped strings in the bundle are public the moment it ships.
+# The fake URI is assembled from parts so secret scanners don't flag this file.
 cp -R "${tmp}/good" "${tmp}/leaky-uri"
-print -r -- 'const u="mongodb+srv://admin:hunter2@cluster.mongodb.net/db";' \
+print -r -- 'const u="mongodb+srv://admin:''hunter2@''cluster.mongodb.net/db";' \
   > "${tmp}/leaky-uri/_next/static/app.js"
 assert_fails "export with a mongo URI rejected" dhm_build_verify_output "$tmp" leaky-uri
 
