@@ -1,0 +1,57 @@
+[
+  {
+    "id": "c1d83b56-c46a-453f-8059-ef6fe539de7c",
+    "default_ingress": "https://amittiwari-me-7o6zj.ondigitalocean.app",
+    "spec": {
+      "name": "amittiwari-me",
+      "region": "blr",
+      "domains": [
+        { "domain": "amittiwari.me", "type": "PRIMARY", "zone": "amittiwari.me" },
+        { "domain": "www.amittiwari.me", "type": "ALIAS", "zone": "amittiwari.me" }
+      ],
+      "databases": [
+        { "cluster_name": "db-mongodb-amittiwar-me-blr", "engine": "MONGODB", "name": "db-mongodb-amittiwar-me-blr" }
+      ],
+      "services": [
+        { "name": "amittiwari-me", "github": { "repo": "amit-t/amittiwari-me", "branch": "main", "deploy_on_push": true } }
+      ]
+    }
+  },
+  {
+    "id": "00052d67-e71e-46ae-ac96-faedbdffd3fd",
+    "default_ingress": "https://tiny-trauma-3km9n.ondigitalocean.app",
+    "spec": {
+      "name": "tiny-trauma",
+      "region": "blr",
+      "domains": [ { "domain": "tinytrauma.com", "type": "PRIMARY", "zone": "tinytrauma.com" } ],
+      "databases": [ { "cluster_name": "tt-pg", "engine": "PG", "name": "tt-pg" } ],
+      "services": [
+        { "name": "tiny-trauma", "github": { "repo": "amit-t/tiny-trauma", "branch": "main", "deploy_on_push": true } }
+      ]
+    }
+  },
+  {
+    "id": "aaaa1111-2222-3333-4444-555566667777",
+    "default_ingress": "https://static-site-abc12.ondigitalocean.app",
+    "spec": {
+      "name": "static-site",
+      "region": "nyc",
+      "domains": [ { "domain": "www.www-only.example", "type": "ALIAS", "zone": "www-only.example" } ],
+      "static_sites": [
+        { "name": "static-site", "github": { "repo": "someone/static-site", "branch": "main" } }
+      ]
+    }
+  },
+  {
+    "id": "bbbb1111-2222-3333-4444-555566667777",
+    "default_ingress": "https://image-app-xyz98.ondigitalocean.app",
+    "spec": {
+      "name": "image-app",
+      "region": "ams",
+      "domains": [ { "domain": "images.example", "type": "PRIMARY", "zone": "images.example" } ],
+      "services": [
+        { "name": "image-app", "image": { "registry_type": "DOCR", "repository": "image-app", "tag": "latest" } }
+      ]
+    }
+  }
+]

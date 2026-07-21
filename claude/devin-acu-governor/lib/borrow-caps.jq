@@ -8,6 +8,7 @@
 # {
 #   "donor_buffer": <number=0.10>,                          # keep each donor this fraction above its consumed
 #   "max_headroom": <number=500>,                            # maximum new cap headroom per recipient
+#   "donor_floor_min": <number=0>,                           # absolute minimum cap left to any donor (never raises a cap)
 #   "days_left": <number=0>,                                 # cycle days left, for donor run-rate projection
 #   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
 #                                                            # uncapped users (no explicit cap today)
@@ -88,6 +89,7 @@ def excluded_donor_row:
 
 (.donor_buffer // 0.10) as $dbuf
 | (.max_headroom // 500) as $max_headroom
+| (.donor_floor_min // 0) as $floor_min
 | (.days_left // 0) as $days_left
 | (.recipients // []) as $all_recips
 | (.donors // [])     as $all_donors
@@ -115,7 +117,8 @@ def excluded_donor_row:
        | ((.consumed * (1 + $dbuf)) | ceil) as $base_floor
        | (if (.run_rate // null) != null
             then ([$base_floor, (((.consumed + (.run_rate * $days_left)) * (1 + $dbuf)) | ceil)] | max)
-            else $base_floor end) as $floor
+            else $base_floor end) as $proj_floor
+       | ([$proj_floor, $floor_min] | max) as $floor
        | {email, consumed, cap, floor: $floor, available: ([.cap - $floor, 0] | max)} + uid ]
      | sort_by(-.available, .consumed)) as $cands
     | ([ $cands[].available ] | add // 0)      as $total_available
@@ -158,6 +161,7 @@ def excluded_donor_row:
         mode: $plan.mode,
         donor_buffer: $dbuf,
         max_headroom: $max_headroom,
+        donor_floor_min: $floor_min,
         total_available: $total_available,
         recipients_total: $n,
         eligible_recipient_count: $n,

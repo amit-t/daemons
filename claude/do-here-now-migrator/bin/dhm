@@ -1,0 +1,655 @@
+#!/usr/bin/env zsh
+# dhm — DigitalOcean to here.now static site migrator.
+#
+# Takes a site that is deployed on DigitalOcean App Platform, converts it into
+# a static site, publishes it to here.now, cuts DNS over, wires push-to-deploy,
+# and only then removes the DigitalOcean resources it can positively attribute
+# to that site.
+#
+# Division of responsibility, deliberately:
+#   deterministic zsh  — inventory, backup, DNS, domains, publishing, deletion
+#   an AI agent        — the source transformation, and nothing else
+#
+# An agent that improvises against a delete API destroys data. An agent is,
+# however, the only thing that can rewrite a Next.js app into a static export.
+set -u
+
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+source "${daemon_dir}/lib/common.zsh"
+source "${daemon_dir}/lib/preflight.zsh"
+source "${daemon_dir}/lib/detect.zsh"
+source "${daemon_dir}/lib/inventory.zsh"
+source "${daemon_dir}/lib/backup.zsh"
+source "${daemon_dir}/lib/herenow.zsh"
+source "${daemon_dir}/lib/dns.zsh"
+source "${daemon_dir}/lib/subscribe.zsh"
+source "${daemon_dir}/lib/transform.zsh"
+source "${daemon_dir}/lib/build.zsh"
+source "${daemon_dir}/lib/verify.zsh"
+source "${daemon_dir}/lib/ci.zsh"
+source "${daemon_dir}/lib/decommission.zsh"
+source "${daemon_dir}/lib/report.zsh"
+
+dhm_init_colors
+
+# Ordered pipeline. `--through` names the last phase a `run`/`continue` will
+# execute; `decommission` is never included by default because it is the one
+# step that cannot be undone.
+typeset -ga DHM_PHASES=(
+  preflight inventory backup account transform build publish domain verify ci decommission report
+)
+
+typeset -g DHM_DEFAULT_THROUGH=ci
+
+dhm_load_env() {
+  local env_file="${daemon_dir}/environment.env" line key value
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == \#* || "$line" != *=* ]] && continue
+    key=${line%%=*}
+    value=${line#*=}
+    if [[ -z "${(P)key:-}" ]]; then
+      typeset -gx "$key"="$value"
+    fi
+  done < "$env_file"
+}
+
+dhm_usage() {
+  cat <<'EOF'
+dhm — DigitalOcean to here.now static site migrator
+
+Usage:
+  dhm run [options]              Run the migration from the first incomplete phase
+  dhm continue [options]         Alias for run; what the agent calls when it finishes
+  dhm resume [options]           Alias for run
+  dhm status [--site <name>]     Show phase status and recorded facts
+  dhm plan [options]             Preflight + inventory only; changes nothing
+  dhm doctor                     Check tools, credentials, and agent launchers
+
+Individual phases (each assumes the earlier ones ran):
+  dhm inventory                  Read-only DigitalOcean discovery
+  dhm backup                     Dump databases, archive app specs, snapshot DNS
+  dhm account                    Ensure a here.now account and API key exist
+  dhm transform                  Hand the source transformation to an AI agent
+  dhm build                      Install, build, and prove the static export is real
+  dhm publish                    Publish the export to here.now
+  dhm domain                     Register the custom domain and apply DNS
+  dhm bind-domain                Mount the published Site at the domain root
+  dhm verify                     Full production gate; blocks decommission on failure
+  dhm ci                         Write the deploy workflow and set repo secret/variable
+  dhm decommission               DESTRUCTIVE: remove the attributed DO resources
+  dhm report                     Write docs/migration-to-here-now.md
+  dhm herenow-login [email]      Sign in to here.now (creates the account if new)
+
+Agent selection (the transform phase only):
+  --agent claude                 Claude via `co`            (default)
+  --agent cf                     Claude via `cf`
+  --agent codex                  Codex via `cxscb`
+  --agent devin                  Devin via `dey`
+  --claude | --cf | --codex | --devin
+                                 Shorthands for the above
+
+Site and repository:
+  --repo <dir>                   Repository to migrate (default: current directory)
+  --site <name>                  State key for this migration (default: repo basename)
+  --repo-slug <owner/repo>       Override the GitHub slug used for attribution and CI
+  --domain <domain>              Primary domain the site will serve from (required)
+  --branch <name>                Branch the agent works on (default: migrate/here-now)
+
+Subscribe replacement (a static site cannot accept a form POST):
+  --subscribe <provider>         substack | buttondown | convertkit | mailchimp
+                                 | beehiiv | ghost | custom | none
+  --subscribe-url <url>          Full https:// URL of the hosted subscribe page
+  --subscribe-handle <handle>    Derive the URL from a provider handle
+                                 Omitting all three prompts interactively;
+                                 non-interactively it defaults to `none`.
+
+Build overrides (detection is usually right):
+  --output-dir <dir>             Static output directory
+  --install-command <cmd>        Override the dependency install command
+  --build-command <cmd>          Override the build command
+
+Control:
+  --through <phase>              Last phase to run (default: ci)
+  --dry-run                      Print every action; change nothing
+  --yes                          Auto-confirm. Never use with decommission unattended.
+  --no-ci                        Skip the CI phase
+  --no-digitalocean              Site is not on DigitalOcean; skip inventory/backup/decommission
+  --decommission-first           Destroy BEFORE the replacement is verified (causes downtime)
+  --ttl <seconds>                TTL for created DNS records (default 600)
+  --force                        Re-run a phase already marked done
+
+Examples:
+  dhm run --domain example.com --subscribe substack --subscribe-handle myblog
+  dhm run --codex --domain example.com --subscribe none
+  dhm plan --domain example.com
+  dhm run --dry-run --domain example.com --subscribe none
+  dhm decommission --site example-site
+
+Config (environment.env; shell environment overrides):
+  DHM_LAUNCHER               launcher when no --agent is given (default co)
+  DHM_LAUNCHER_CLAUDE        launcher for --agent claude       (default co)
+  DHM_LAUNCHER_CLAUDE_FABLE  launcher for --agent cf           (default cf)
+  DHM_LAUNCHER_CODEX         launcher for --agent codex        (default cxscb)
+  DHM_LAUNCHER_DEVIN         launcher for --agent devin        (default dey)
+  DHM_STATE_DIR              state directory (default ~/.local/state/do-here-now-migrator)
+  DHM_HERENOW_API            here.now API base (default https://here.now)
+  DHM_DNS_TTL                default TTL for created records (default 600)
+  DHM_HTTP_TIMEOUT           per-request timeout in seconds (default 30)
+
+Safety model:
+  - Only apex and www A/AAAA/CNAME records are ever created or deleted.
+    MX, TXT, SPF, DKIM, DMARC, CAA, SRV, NS, and every other subdomain are preserved.
+  - A DigitalOcean resource is destroyed only when the inventory positively
+    attributed it to this repository or one of its domains.
+  - Nothing is destroyed until a backup has been written AND read back.
+  - Nothing is destroyed until the live site verifies, unless you pass
+    --decommission-first and accept the downtime.
+  - Destroying a resource requires typing its exact name, not "y".
+EOF
+}
+
+# ------------------------------------------------------------ arg parsing ----
+
+typeset -g OPT_REPO="" OPT_SITE="" OPT_DOMAIN="" OPT_AGENT="" OPT_BRANCH=""
+typeset -g OPT_SUBSCRIBE="" OPT_SUB_URL="" OPT_SUB_HANDLE="" OPT_REPO_SLUG=""
+typeset -g OPT_OUTPUT_DIR="" OPT_INSTALL_CMD="" OPT_BUILD_CMD=""
+typeset -g OPT_THROUGH="" OPT_TTL="" OPT_FORCE=""
+typeset -g OPT_NO_CI="" OPT_NO_DO="" OPT_EMAIL=""
+
+# Sets the OPT_* globals and DHM_POSITIONAL.
+#
+# This must NOT be called through $(...). A command substitution runs in a
+# subshell, so every option assignment would be discarded and the whole CLI
+# would silently ignore its flags.
+typeset -ga DHM_POSITIONAL=()
+
+dhm_parse_args() {
+  local -a rest=()
+  while (( $# > 0 )); do
+    case "$1" in
+      --repo)              OPT_REPO=${2:-}; shift 2 ;;
+      --site)              OPT_SITE=${2:-}; shift 2 ;;
+      --domain)            OPT_DOMAIN=${2:-}; shift 2 ;;
+      --branch)            OPT_BRANCH=${2:-}; shift 2 ;;
+      --repo-slug)         OPT_REPO_SLUG=${2:-}; shift 2 ;;
+      --agent)             OPT_AGENT=${2:-}; shift 2 ;;
+      --claude)            OPT_AGENT=claude; shift ;;
+      --cf|--claude-fable) OPT_AGENT=cf; shift ;;
+      --codex)             OPT_AGENT=codex; shift ;;
+      --devin)             OPT_AGENT=devin; shift ;;
+      --subscribe)         OPT_SUBSCRIBE=${2:-}; shift 2 ;;
+      --subscribe-url)     OPT_SUB_URL=${2:-}; shift 2 ;;
+      --subscribe-handle)  OPT_SUB_HANDLE=${2:-}; shift 2 ;;
+      --output-dir)        OPT_OUTPUT_DIR=${2:-}; shift 2 ;;
+      --install-command)   OPT_INSTALL_CMD=${2:-}; shift 2 ;;
+      --build-command)     OPT_BUILD_CMD=${2:-}; shift 2 ;;
+      --through)           OPT_THROUGH=${2:-}; shift 2 ;;
+      --ttl)               OPT_TTL=${2:-}; shift 2 ;;
+      --email)             OPT_EMAIL=${2:-}; shift 2 ;;
+      --dry-run)           typeset -gx DHM_DRY_RUN=1; shift ;;
+      --yes|-y)            typeset -gx DHM_ASSUME_YES=1; shift ;;
+      --force)             OPT_FORCE=1; shift ;;
+      --no-ci)             OPT_NO_CI=1; shift ;;
+      --no-digitalocean)   OPT_NO_DO=1; shift ;;
+      --decommission-first) typeset -gx DHM_DECOMMISSION_FIRST=1; shift ;;
+      -h|--help)           dhm_usage; exit 0 ;;
+      --) shift; rest+=("$@"); break ;;
+      -*) dhm_error "unknown option: $1"; return 2 ;;
+      *)  rest+=("$1"); shift ;;
+    esac
+  done
+  DHM_POSITIONAL=("${rest[@]}")
+  return 0
+}
+
+# Resolve everything the phases need, and record it in state.
+dhm_resolve_context() {
+  OPT_REPO=${OPT_REPO:-$PWD}
+  OPT_REPO=${OPT_REPO:A}
+  [[ -d "$OPT_REPO" ]] || dhm_die 2 "repository directory '${OPT_REPO}' does not exist"
+
+  if [[ -z "$OPT_SITE" ]]; then
+    OPT_SITE=$(dhm_slugify "${OPT_REPO:t}")
+  fi
+  [[ -n "$OPT_SITE" ]] || dhm_die 2 "could not derive a site name; pass --site"
+
+  if [[ -z "$OPT_REPO_SLUG" ]]; then
+    OPT_REPO_SLUG=$(dhm_ci_repo_slug "$OPT_REPO" 2>/dev/null) || OPT_REPO_SLUG=""
+  fi
+
+  OPT_BRANCH=${OPT_BRANCH:-migrate/here-now}
+  OPT_TTL=${OPT_TTL:-${DHM_DNS_TTL:-600}}
+  OPT_THROUGH=${OPT_THROUGH:-$DHM_DEFAULT_THROUGH}
+  dhm_phase_index "$OPT_THROUGH" >/dev/null || dhm_die 2 "unknown phase '${OPT_THROUGH}'"
+
+  local canonical
+  canonical=$(dhm_agent_canonical "$OPT_AGENT") || dhm_die 2 "unknown agent '${OPT_AGENT}'"
+  OPT_AGENT=$canonical
+
+  dhm_state_init "$OPT_SITE" "$OPT_REPO" "$OPT_AGENT" || dhm_die 1 "could not initialise state"
+
+  # Flags win over stored values; stored values fill in what was omitted so a
+  # resumed run does not need every flag repeated.
+  [[ -n "$OPT_DOMAIN" ]] || OPT_DOMAIN=$(dhm_fact_get "$OPT_SITE" domain)
+  [[ -n "$OPT_SUBSCRIBE" ]] || OPT_SUBSCRIBE=$(dhm_fact_get "$OPT_SITE" subscribe_provider)
+  [[ -n "$OPT_SUB_URL" ]] || OPT_SUB_URL=$(dhm_fact_get "$OPT_SITE" subscribe_url)
+  [[ -n "$OPT_OUTPUT_DIR" ]] || OPT_OUTPUT_DIR=$(dhm_fact_get "$OPT_SITE" output_dir)
+
+  if [[ -n "$OPT_DOMAIN" ]]; then
+    dhm_is_valid_domain "$OPT_DOMAIN" || dhm_die 2 "'${OPT_DOMAIN}' does not look like a domain"
+    dhm_fact_set "$OPT_SITE" domain "$OPT_DOMAIN"
+  fi
+  dhm_state_edit "$OPT_SITE" '.agent = $a' --arg a "$OPT_AGENT"
+  dhm_fact_set "$OPT_SITE" repo_slug "$OPT_REPO_SLUG"
+  dhm_fact_set "$OPT_SITE" branch "$OPT_BRANCH"
+}
+
+dhm_phase_index() {  # dhm_phase_index <phase> ; prints 0-based index
+  local i
+  for (( i = 1; i <= ${#DHM_PHASES}; i++ )); do
+    [[ "${DHM_PHASES[$i]}" == "$1" ]] && { print -r -- $(( i - 1 )); return 0 }
+  done
+  return 1
+}
+
+dhm_phase_should_run() {  # dhm_phase_should_run <site> <phase>
+  [[ -n "$OPT_FORCE" ]] && return 0
+  dhm_phase_is_done "$1" "$2" && { dhm_log "phase '${2}' already done; skipping (use --force to re-run)"; return 1 }
+  return 0
+}
+
+# ---------------------------------------------------------------- phases ----
+
+dhm_do_preflight() {
+  dhm_phase_banner preflight "tools, credentials, repository hygiene"
+  DHM_PREFLIGHT_PROBLEMS=0
+  dhm_preflight_core_tools
+  dhm_preflight_repo "$OPT_REPO"
+
+  local detected pm
+  detected=$(dhm_detect_all "$OPT_REPO")
+  pm=$(jq -r '.package_manager' <<<"$detected")
+  dhm_preflight_node "$pm"
+  dhm_preflight_digitalocean "$([[ -n "$OPT_NO_DO" ]] && print 0 || print 1)" >/dev/null
+  dhm_preflight_github "$OPT_REPO_SLUG" "$([[ -n "$OPT_NO_CI" ]] && print 0 || print 1)"
+  dhm_preflight_launcher "$(dhm_agent_launcher "$OPT_AGENT")"
+
+  dhm_state_edit "$OPT_SITE" '.detected = $d' --argjson d "$detected"
+  print -r -- ""
+  dhm_info "detected: $(jq -r '"\(.framework) / \(.package_manager), static output in \(.output_dir)"' <<<"$detected")"
+  local coupling
+  coupling=$(jq -r '.server_coupling | length' <<<"$detected")
+  if (( coupling > 0 )); then
+    dhm_warn "${coupling} server-side coupling(s) must be removed before a static export:"
+    jq -r '.server_coupling[] | "      \(.)"' <<<"$detected" >&2
+  fi
+
+  [[ -z "$OPT_OUTPUT_DIR" ]] && OPT_OUTPUT_DIR=$(jq -r '.output_dir' <<<"$detected")
+  dhm_fact_set "$OPT_SITE" output_dir "$OPT_OUTPUT_DIR"
+
+  if [[ -z "$OPT_DOMAIN" ]]; then
+    dhm_error "--domain is required"
+    (( DHM_PREFLIGHT_PROBLEMS++ )) || true
+  fi
+
+  dhm_preflight_report
+}
+
+dhm_do_inventory() {
+  dhm_phase_banner inventory "read-only DigitalOcean discovery"
+  if [[ -n "$OPT_NO_DO" ]]; then
+    dhm_log "--no-digitalocean: skipping"
+    dhm_state_edit "$OPT_SITE" '.inventory = {claimed:{apps:[],databases:[]},untouched:{apps:[],databases:[],droplets:[],volumes:[],load_balancers:[]},dns_zones:[]}'
+    return 0
+  fi
+  dhm_require_cmds doctl || return 1
+  local inv
+  inv=$(dhm_inventory_build "$OPT_REPO_SLUG" "$OPT_DOMAIN") || return 1
+  dhm_state_edit "$OPT_SITE" '.inventory = $i' --argjson i "$inv" || return 1
+  dhm_inventory_render "$inv"
+  return 0
+}
+
+dhm_inventory_json() { dhm_state_get "$OPT_SITE" '.inventory' }
+
+dhm_do_backup() {
+  dhm_phase_banner backup "dump databases, archive specs, snapshot DNS"
+  if [[ -n "$OPT_NO_DO" ]]; then dhm_log "--no-digitalocean: skipping"; return 0; fi
+
+  local inv dest
+  inv=$(dhm_inventory_json)
+  dest=$(dhm_backup_root "$OPT_REPO" "$OPT_SITE")
+  dhm_info "backup destination: ${dest}"
+  dhm_dry "create ${dest}" || mkdir -p "$dest" || return 1
+
+  local i n id name engine
+  n=$(jq '.claimed.databases | length' <<<"$inv")
+  for (( i = 0; i < n; i++ )); do
+    id=$(jq -r ".claimed.databases[$i].id" <<<"$inv")
+    name=$(jq -r ".claimed.databases[$i].name" <<<"$inv")
+    engine=$(jq -r ".claimed.databases[$i].engine" <<<"$inv")
+    dhm_backup_database "$id" "$name" "$engine" "$dest"
+    local rc=$?
+    (( rc == 1 )) && { dhm_error "backup failed; refusing to continue"; return 1 }
+  done
+
+  local -a app_ids
+  app_ids=(${(f)"$(jq -r '.claimed.apps[].id' <<<"$inv")"})
+  (( ${#app_ids} > 0 )) && { dhm_backup_app_specs "$dest" "${app_ids[@]}" || return 1 }
+
+  dhm_backup_dns_zones "$dest" "$OPT_DOMAIN"
+  dhm_backup_manifest "$dest" "$OPT_SITE" "$inv"
+
+  if [[ -z "${DHM_DRY_RUN:-}" ]]; then
+    dhm_backup_verify "$dest" || return 1
+    dhm_fact_set "$OPT_SITE" backup_dir "$dest"
+  fi
+  return 0
+}
+
+dhm_do_account() {
+  dhm_phase_banner account "here.now account and API key"
+  dhm_hn_ensure_account "$OPT_EMAIL" || return 1
+  dhm_hn_install_publisher || return 1
+  return 0
+}
+
+dhm_do_transform() {
+  dhm_phase_banner transform "hand the source transformation to ${OPT_AGENT}"
+
+  local sub detected launcher prompt file
+  sub=$(dhm_subscribe_resolve "$OPT_SUBSCRIBE" "$OPT_SUB_URL" "$OPT_SUB_HANDLE") || return 1
+  OPT_SUBSCRIBE=$(jq -r '.provider' <<<"$sub")
+  OPT_SUB_URL=$(jq -r '.url // ""' <<<"$sub")
+  dhm_fact_set "$OPT_SITE" subscribe_provider "$OPT_SUBSCRIBE"
+  dhm_fact_set "$OPT_SITE" subscribe_url "$OPT_SUB_URL"
+
+  detected=$(dhm_state_get "$OPT_SITE" '.detected')
+  launcher=$(dhm_agent_launcher "$OPT_AGENT") || return 1
+
+  dhm_transform_prepare_branch "$OPT_REPO" "$OPT_BRANCH" || return 1
+
+  local vars
+  vars=$(jq -n \
+    --arg repo "$OPT_REPO" --arg site "$OPT_SITE" --arg domain "$OPT_DOMAIN" \
+    --arg branch "$OPT_BRANCH" \
+    --arg framework "$(jq -r '.framework' <<<"$detected")" \
+    --arg pm "$(jq -r '.package_manager' <<<"$detected")" \
+    --arg outdir "$OPT_OUTPUT_DIR" \
+    --arg recipe "$(jq -r '.static_recipe' <<<"$detected")" \
+    --arg coupling "$(jq -r '.server_coupling | map("  - " + .) | join("\n")' <<<"$detected")" \
+    --arg candidates "$(jq -r '.subscribe_candidates | map("  - " + .) | join("\n")' <<<"$detected")" \
+    --arg provider "$OPT_SUBSCRIBE" --arg suburl "$OPT_SUB_URL" \
+    --arg install "$(dhm_build_install_command "$(jq -r '.package_manager' <<<"$detected")")" \
+    --arg build "$(dhm_build_build_command "$(jq -r '.package_manager' <<<"$detected")" "$(jq -r '.framework' <<<"$detected")")" \
+    '{REPO:$repo, SITE:$site, DOMAIN:$domain, BRANCH:$branch, FRAMEWORK:$framework,
+      PACKAGE_MANAGER:$pm, OUTPUT_DIR:$outdir, STATIC_RECIPE:$recipe,
+      SERVER_COUPLING:$coupling, SUBSCRIBE_CANDIDATES:$candidates,
+      SUBSCRIBE_PROVIDER:$provider, SUBSCRIBE_URL:$suburl,
+      INSTALL_COMMAND:$install, BUILD_COMMAND:$build}')
+
+  prompt=$(dhm_transform_render_prompt "$daemon_dir" "$vars") || return 1
+  file=$(dhm_transform_write_prompt "$OPT_SITE" "$prompt") || return 1
+  dhm_log "prompt written to ${file}"
+
+  # The agent session replaces this process, so the phase is marked done before
+  # the handover. `dhm continue` is what proves the work actually landed.
+  dhm_phase_mark "$OPT_SITE" transform done
+  dhm_transform_launch "$launcher" "$prompt"
+}
+
+dhm_do_build() {
+  dhm_phase_banner build "install, build, prove the export is real"
+  local detected pm fw install build
+  detected=$(dhm_state_get "$OPT_SITE" '.detected')
+  pm=$(jq -r '.package_manager' <<<"$detected")
+  fw=$(jq -r '.framework' <<<"$detected")
+  install=${OPT_INSTALL_CMD:-$(dhm_build_install_command "$pm")}
+  build=${OPT_BUILD_CMD:-$(dhm_build_build_command "$pm" "$fw")}
+  dhm_build_run "$OPT_REPO" "$install" "$build" || return 1
+  dhm_build_verify_output "$OPT_REPO" "$OPT_OUTPUT_DIR" || return 1
+  return 0
+}
+
+dhm_do_publish() {
+  dhm_phase_banner publish "publish the export to here.now"
+  local slug existing client
+  existing=$(dhm_fact_get "$OPT_SITE" slug)
+  client="dhm-${OPT_AGENT}"
+  slug=$(dhm_hn_publish "${OPT_REPO}/${OPT_OUTPUT_DIR}" "$client" "$existing") || return 1
+  dhm_fact_set "$OPT_SITE" slug "$slug"
+  dhm_fact_set "$OPT_SITE" site_url "https://${slug}.here.now/"
+  return 0
+}
+
+dhm_do_domain() {
+  dhm_phase_banner domain "register the custom domain and apply DNS"
+  local inst rc
+  inst=$(dhm_hn_add_domain "$OPT_DOMAIN") || return 1
+  [[ -z "$inst" || "$inst" == "[]" ]] && inst=$(dhm_hn_domain_instructions "$OPT_DOMAIN")
+  if [[ -z "$inst" || "$inst" == "[]" ]]; then
+    dhm_error "here.now returned no DNS instructions for ${OPT_DOMAIN}"
+    return 1
+  fi
+  dhm_state_edit "$OPT_SITE" '.dns_instructions = $i' --argjson i "$inst"
+  dhm_dns_print_instructions "$OPT_DOMAIN" "$inst"
+
+  dhm_dns_apply "$OPT_DOMAIN" "$inst" "$OPT_TTL"; rc=$?
+  case $rc in
+    0) ;;
+    2) dhm_warn "apply the records above manually, then re-run: dhm domain --site ${OPT_SITE}" ;;
+    3) return 1 ;;
+    *) return 1 ;;
+  esac
+
+  dhm_dns_verify_propagation "$OPT_DOMAIN" "$inst" || dhm_warn "continuing despite incomplete propagation"
+  dhm_hn_wait_domain_active "$OPT_DOMAIN" || return 1
+  dhm_do_bind_domain
+}
+
+dhm_do_bind_domain() {
+  local slug
+  slug=$(dhm_fact_get "$OPT_SITE" slug)
+  [[ -n "$slug" ]] || { dhm_error "no published slug recorded; run 'dhm publish' first"; return 1 }
+  dhm_hn_bind_root "$OPT_DOMAIN" "$slug"
+}
+
+dhm_do_verify() {
+  dhm_phase_banner verify "production gate"
+  local slug origin inv
+  slug=$(dhm_fact_get "$OPT_SITE" slug)
+  [[ -n "$slug" ]] || { dhm_error "no published slug recorded"; return 1 }
+  inv=$(dhm_inventory_json)
+  origin=$(jq -r '.claimed.apps[0].ingress // ""' <<<"$inv" | sed -E 's#^https?://##; s#/$##')
+  dhm_verify_all "$OPT_DOMAIN" "$slug" "${OPT_REPO}/${OPT_OUTPUT_DIR}" \
+    "$OPT_SUBSCRIBE" "$OPT_SUB_URL" "$origin"
+}
+
+dhm_do_ci() {
+  dhm_phase_banner ci "push-to-deploy workflow"
+  if [[ -n "$OPT_NO_CI" ]]; then dhm_log "--no-ci: skipping"; return 0; fi
+
+  local slug detected vars content
+  slug=$(dhm_fact_get "$OPT_SITE" slug)
+  [[ -n "$slug" ]] || { dhm_error "no published slug recorded"; return 1 }
+  detected=$(dhm_state_get "$OPT_SITE" '.detected')
+
+  local pm fw
+  pm=$(jq -r '.package_manager' <<<"$detected")
+  fw=$(jq -r '.framework' <<<"$detected")
+  vars=$(jq -n \
+    --arg domain "$OPT_DOMAIN" --arg outdir "$OPT_OUTPUT_DIR" --arg pm "$pm" \
+    --arg cache "$(dhm_ci_node_cache "$pm")" \
+    --arg install "$(dhm_ci_step_command "${OPT_INSTALL_CMD:-$(dhm_build_install_command "$pm")}" install)" \
+    --arg build "$(dhm_ci_step_command "${OPT_BUILD_CMD:-$(dhm_build_build_command "$pm" "$fw")}" build)" \
+    --arg node "${DHM_CI_NODE_VERSION:-22}" \
+    '{DOMAIN:$domain, OUTPUT_DIR:$outdir, PACKAGE_MANAGER:$pm, NODE_CACHE:$cache,
+      INSTALL_COMMAND:$install, BUILD_COMMAND:$build, NODE_VERSION:$node}')
+
+  content=$(dhm_ci_render_workflow "${daemon_dir}/templates/deploy-here-now.yml" "$vars") || return 1
+  dhm_ci_write_workflow "$OPT_REPO" "$content" >/dev/null || return 1
+
+  if [[ -n "$OPT_REPO_SLUG" ]]; then
+    dhm_ci_configure_github "$OPT_REPO_SLUG" "$slug" || \
+      dhm_warn "set HERENOW_API_KEY and HERENOW_SLUG=${slug} on ${OPT_REPO_SLUG} manually"
+  else
+    dhm_warn "no GitHub repo slug resolved; set HERENOW_API_KEY and HERENOW_SLUG=${slug} manually"
+  fi
+
+  local backup
+  backup=$(dhm_fact_get "$OPT_SITE" backup_dir)
+  [[ -n "$backup" ]] && dhm_ci_report_gaps "${backup}/app-specs"/*.yaml(N[1])
+  return 0
+}
+
+dhm_do_decommission() {
+  dhm_phase_banner decommission "IRREVERSIBLE: remove the attributed DigitalOcean resources"
+  if [[ -n "$OPT_NO_DO" ]]; then dhm_log "--no-digitalocean: skipping"; return 0; fi
+  local inv backup
+  inv=$(dhm_inventory_json)
+  dhm_decom_run "$OPT_SITE" "$inv" || return 1
+  dhm_decom_sweep "$inv"
+  backup=$(dhm_fact_get "$OPT_SITE" backup_dir)
+  [[ -n "$backup" ]] && dhm_decom_secret_advice "$backup"
+  return 0
+}
+
+dhm_do_report() {
+  dhm_phase_banner report "write the migration record"
+  local inv
+  inv=$(dhm_inventory_json)
+  dhm_report_write_doc "$OPT_SITE" "$OPT_REPO" "$inv" >/dev/null || return 1
+  dhm_report_print "$OPT_SITE"
+  return 0
+}
+
+dhm_run_phase() {  # dhm_run_phase <phase>
+  local phase=$1 rc
+  case "$phase" in
+    preflight)     dhm_do_preflight ;;
+    inventory)     dhm_do_inventory ;;
+    backup)        dhm_do_backup ;;
+    account)       dhm_do_account ;;
+    transform)     dhm_do_transform ;;
+    build)         dhm_do_build ;;
+    publish)       dhm_do_publish ;;
+    domain)        dhm_do_domain ;;
+    verify)        dhm_do_verify ;;
+    ci)            dhm_do_ci ;;
+    decommission)  dhm_do_decommission ;;
+    report)        dhm_do_report ;;
+    *) dhm_error "unknown phase '${phase}'"; return 2 ;;
+  esac
+  rc=$?
+  if (( rc == 0 )); then
+    dhm_phase_mark "$OPT_SITE" "$phase" done
+  else
+    dhm_phase_mark "$OPT_SITE" "$phase" failed
+  fi
+  return $rc
+}
+
+# Run the pipeline from the first incomplete phase up to --through. The
+# decommission phase is skipped unless it was explicitly named, because it must
+# never happen as a side effect of "run everything".
+dhm_run_pipeline() {
+  local through_idx phase idx
+  through_idx=$(dhm_phase_index "$OPT_THROUGH")
+  for phase in "${DHM_PHASES[@]}"; do
+    idx=$(dhm_phase_index "$phase")
+    (( idx > through_idx )) && break
+    if [[ "$phase" == decommission && "$OPT_THROUGH" != decommission ]]; then
+      dhm_log "skipping decommission (run 'dhm decommission --site ${OPT_SITE}' when ready)"
+      continue
+    fi
+    dhm_phase_should_run "$OPT_SITE" "$phase" || continue
+    dhm_run_phase "$phase" || {
+      dhm_error "phase '${phase}' failed; stopping"
+      dhm_error "fix the problem then re-run: dhm continue --site ${OPT_SITE}"
+      return 1
+    }
+  done
+  dhm_report_print "$OPT_SITE"
+  return 0
+}
+
+dhm_do_doctor() {
+  dhm_phase_banner doctor "environment check"
+  DHM_PREFLIGHT_PROBLEMS=0
+  dhm_preflight_core_tools
+  dhm_preflight_digitalocean 0 >/dev/null
+  dhm_preflight_github "" 0
+
+  local agent launcher
+  for agent in claude cf codex devin; do
+    launcher=$(dhm_agent_launcher "$agent")
+    dhm_preflight_launcher "$launcher"
+  done
+
+  if dhm_hn_have_credentials; then
+    dhm_ok "here.now credentials present"
+    local n
+    n=$(dhm_hn_apex_domain_count 2>/dev/null) || n=""
+    [[ -n "$n" ]] && dhm_log "here.now apex custom domains in use: ${n} (Free plan allows 1)"
+  else
+    dhm_warn "no here.now credentials; 'dhm herenow-login' will create or sign in to an account"
+  fi
+
+  local tool
+  for tool in mongodump pg_dump mysqldump; do
+    if dhm_have "$tool"; then
+      dhm_ok "found ${tool}"
+    else
+      dhm_warn "missing ${tool} — needed only if a matching database must be backed up"
+      dhm_log "    install: $(dhm_backup_install_hint "$tool")"
+    fi
+  done
+  dhm_preflight_report
+}
+
+# ------------------------------------------------------------------ main ----
+
+main() {
+  dhm_load_env
+  (( $# == 0 )) && { dhm_usage; exit 0 }
+
+  local command=$1; shift
+  # Called directly, never in a subshell, so the OPT_* globals survive.
+  dhm_parse_args "$@" || exit 2
+
+  case "$command" in
+    help|-h|--help) dhm_usage; exit 0 ;;
+    doctor)
+      OPT_AGENT=$(dhm_agent_canonical "$OPT_AGENT") || exit 2
+      dhm_do_doctor; exit $? ;;
+    herenow-login)
+      dhm_hn_ensure_account "${DHM_POSITIONAL[1]:-$OPT_EMAIL}"; exit $? ;;
+  esac
+
+  dhm_resolve_context
+
+  case "$command" in
+    run|continue|resume) dhm_run_pipeline ;;
+    plan)
+      OPT_THROUGH=inventory
+      dhm_run_pipeline ;;
+    status)   dhm_report_print "$OPT_SITE" ;;
+    inventory|backup|account|transform|build|publish|domain|verify|ci|report)
+      OPT_FORCE=1
+      dhm_run_phase "$command" ;;
+    bind-domain)  dhm_do_bind_domain ;;
+    decommission)
+      OPT_FORCE=1
+      dhm_run_phase decommission ;;
+    *)
+      dhm_error "unknown command '${command}'"
+      print -ru2 -- "run 'dhm help' for usage"
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

@@ -34,6 +34,17 @@ dag() {
   "$daemon_entry" "$@"
 }
 
+dhm() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/do-here-now-migrator/bin/dhm"
+
+  if [[ ! -x "$daemon_entry" ]]; then
+    print -ru2 -- "dhm: missing daemon entrypoint at $daemon_entry"
+    return 127
+  fi
+
+  "$daemon_entry" "$@"
+}
+
 # Dotted shorthands: cx = base aicc (codex parent), cl = claude-parent aicc.
 alias cx.aicc='aicc'
 alias cl.aicc='aicc --claude'
@@ -45,3 +56,7 @@ aicc--devin()  { aicc --agent devin "$@" }
 dag--claude()  { dag --agent claude "$@" }
 dag--codex()   { dag --agent codex "$@" }
 dag--devin()   { dag --agent devin "$@" }
+dhm--claude()  { dhm --agent claude "$@" }
+dhm--cf()      { dhm --agent cf "$@" }
+dhm--codex()   { dhm --agent codex "$@" }
+dhm--devin()   { dhm --agent devin "$@" }

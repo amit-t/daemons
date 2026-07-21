@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-07-21T03:00:00Z",
+  "repo": "amit-t/amittiwari-me",
+  "domains": ["amittiwari.in"],
+  "claimed": {
+    "apps": [
+      {
+        "id": "c1d83b56-c46a-453f-8059-ef6fe539de7c",
+        "name": "amittiwari-me",
+        "matched_by": "repo",
+        "ingress": "https://amittiwari-me-7o6zj.ondigitalocean.app",
+        "domains": ["amittiwari.me", "www.amittiwari.me", "amittiwari.in"],
+        "databases": ["db-mongodb-amittiwar-me-blr"]
+      }
+    ],
+    "databases": [
+      {
+        "id": "746fca30-aa41-48f3-aefa-d8f3887116f9",
+        "name": "db-mongodb-amittiwar-me-blr",
+        "engine": "mongodb",
+        "size": "db-s-1vcpu-1gb",
+        "region": "blr1"
+      }
+    ]
+  },
+  "untouched": {
+    "apps": [{ "id": "00052d67-e71e-46ae-ac96-faedbdffd3fd", "name": "tiny-trauma" }],
+    "databases": [{ "id": "b41a2511-dc52-4033-b9b3-08eedc10098b", "name": "tt-pg", "engine": "pg" }],
+    "droplets": [],
+    "volumes": [],
+    "load_balancers": []
+  },
+  "dns_zones": []
+}
