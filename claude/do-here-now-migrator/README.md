@@ -99,7 +99,9 @@ dhm decommission --site example-site
 1. **DNS.** Only apex and `www` records of type `A`, `AAAA`, or `CNAME` are
    ever created or deleted. `MX`, `TXT`, `SPF`, `DKIM`, `DMARC`, `CAA`, `SRV`,
    `NS`, `SOA`, and every unrelated subdomain are preserved. There is a guard
-   immediately before each deletion, not only at the planning stage.
+   immediately before each deletion, not only at the planning stage. CNAME
+   targets are normalized to the fully qualified trailing-dot form required by
+   DigitalOcean before creation.
 2. **Attribution.** A DigitalOcean resource is destroyed only when its App spec
    names the repository being migrated or a domain being migrated. A database is
    claimed only when a claimed App references it. Everything else is listed as
@@ -128,9 +130,11 @@ So the authoritative test is not "does the apex return 200" but **"does the apex
 return the same bytes as the published Site"**. `dhm verify` compares SHA-256
 hashes of both homepages. The generated CI workflow does the same with `cmp`.
 
-`dhm verify` also checks: TLS validity, the root link binding via the API, every
-route derived from the built output, the `www` redirect, the subscribe CTA, and
-that the retired origin is no longer referenced.
+`dhm verify` also checks: TLS validity, the root mount reported by the custom
+domain API, every route derived from the built output, the `www` redirect, the
+subscribe CTA, and that the retired origin is no longer referenced.
+For apex domains, the domain phase waits for both the apex and here.now's
+automatically paired `www` domain to report active TLS before verification.
 
 ## Subscribe replacement
 
@@ -196,9 +200,9 @@ environment.env                  defaults; shell environment overrides
 zsh claude/do-here-now-migrator/test/run.zsh
 ```
 
-273 assertions across 8 files, all offline. Coverage focuses on the parts where
+293 assertions across 10 files, all offline. Coverage focuses on the parts where
 a defect costs data: the DNS allowlist, resource attribution, export validation,
-the destructive-phase preconditions, and agent selection.
+custom-domain state, the destructive-phase preconditions, and agent selection.
 
 Parse-check after any edit:
 

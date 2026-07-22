@@ -91,6 +91,23 @@ assert_not_contains "_next excluded"    "$routes" "_next"
 # degrades to a single check rather than silently checking nothing.
 assert_eq "missing output yields root only" "/" "$(dhm_verify_routes_from_output "${tmp}/nope")"
 
+# `path` is a special zsh parameter tied to PATH. Route verification must not
+# localize it, or curl becomes unresolvable and every healthy route reports 000.
+local route_fake_bin route_old_path
+route_fake_bin=$(mktemp -d)
+route_old_path=$PATH
+cat > "${route_fake_bin}/curl" <<'ZSH'
+#!/usr/bin/env zsh
+print -n -- 200
+ZSH
+chmod +x "${route_fake_bin}/curl"
+PATH="${route_fake_bin}:$PATH"
+dhm_verify_reset
+assert_ok "route verification preserves executable PATH" \
+  dhm_verify_route https://example.com /about/
+PATH=$route_old_path
+rm -rf -- "$route_fake_bin"
+
 # ---- CI helpers --------------------------------------------------------------
 
 assert_eq "pnpm cache" '"pnpm"' "$(dhm_ci_node_cache pnpm)"

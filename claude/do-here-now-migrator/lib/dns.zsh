@@ -112,6 +112,7 @@ dhm_dns_delete_record() {  # dhm_dns_delete_record <domain> <id> <label>
 
 dhm_dns_create_record() {  # dhm_dns_create_record <domain> <type> <name> <data> <ttl>
   local domain=$1 type=$2 name=$3 data=$4 ttl=${5:-600} out
+  [[ "${type:u}" == CNAME && "$data" != *. ]] && data="${data}."
   if dhm_dry "create ${type} ${name} -> ${data} (ttl ${ttl}) in ${domain}"; then return 0; fi
   if out=$(doctl compute domain records create "$domain" \
       --record-type "$type" --record-name "$name" --record-data "$data" \

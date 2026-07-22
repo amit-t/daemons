@@ -31,13 +31,13 @@ dhm_verify_routes_from_output() {  # dhm_verify_routes_from_output <out-dir> [li
 }
 
 dhm_verify_route() {  # dhm_verify_route <base-url> <path>
-  local base=${1%/} path=$2 code
-  code=$(dhm_http_status "${base}${path}")
+  local base=${1%/} route_path=$2 code
+  code=$(dhm_http_status "${base}${route_path}")
   if [[ "$code" == 200 ]]; then
-    dhm_vf_pass "200 ${path}"
+    dhm_vf_pass "200 ${route_path}"
     return 0
   fi
-  dhm_vf_fail "${code} ${path}"
+  dhm_vf_fail "${code} ${route_path}"
   return 1
 }
 

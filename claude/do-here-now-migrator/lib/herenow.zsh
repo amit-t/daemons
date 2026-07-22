@@ -259,12 +259,35 @@ dhm_hn_domain_status() {  # dhm_hn_domain_status <domain>
   jq -r '.status // "unknown"' <<<"$resp" 2>/dev/null || print -r -- unknown
 }
 
+# Apex registration automatically creates a paired www domain. Both must be
+# active before production verification, because each gets its own TLS state.
+dhm_hn_domain_family_status() {  # dhm_hn_domain_family_status <domain>
+  local domain=$1 json row is_apex name member_status
+  local -a names statuses
+  json=$(dhm_hn_domains_json) || { print -r -- unknown; return 1 }
+  row=$(jq -c --arg d "$domain" \
+    'first(.domains[]? | select(.domain == $d)) // empty' <<<"$json")
+  [[ -n "$row" ]] || { print -r -- unknown; return 1 }
+  is_apex=$(jq -r '.is_apex == true' <<<"$row")
+  names=("$domain")
+  [[ "$is_apex" == true ]] && names+=("www.${domain}")
+
+  for name in "${names[@]}"; do
+    member_status=$(dhm_hn_domain_status "$name")
+    statuses+=("$member_status")
+  done
+  for member_status in "${statuses[@]}"; do
+    [[ "$member_status" == active ]] || { print -r -- pending; return 0 }
+  done
+  print -r -- active
+}
+
 dhm_hn_wait_domain_active() {  # dhm_hn_wait_domain_active <domain> [attempts] [sleep]
   local domain=$1 attempts=${2:-20} nap=${3:-15} i domain_status
   if dhm_dry "wait for ${domain} to become active"; then return 0; fi
   for (( i = 1; i <= attempts; i++ )); do
-    domain_status=$(dhm_hn_domain_status "$domain")
-    dhm_log "domain ${domain} attempt ${i}/${attempts}: ${domain_status}"
+    domain_status=$(dhm_hn_domain_family_status "$domain")
+    dhm_log "domain family ${domain} attempt ${i}/${attempts}: ${domain_status}"
     [[ "$domain_status" == active ]] && { dhm_ok "${domain} is active"; return 0 }
     (( i < attempts )) && sleep "$nap"
   done
@@ -282,16 +305,24 @@ dhm_hn_wait_domain_active() {  # dhm_hn_wait_domain_active <domain> [attempts] [
 dhm_hn_root_link_slug() {  # dhm_hn_root_link_slug <domain> ; prints bound slug or empty
   local key resp
   key=$(dhm_hn_key) || return 1
-  resp=$(curl -sS --max-time 30 -G "${DHM_HN_API}/api/v1/links/__root__" \
-    -H "Authorization: Bearer ${key}" --data-urlencode "domain=${1}" 2>/dev/null)
+  if ! resp=$(curl -fsS --max-time 30 "${DHM_HN_API}/api/v1/domains/${1}" \
+      -H "Authorization: Bearer ${key}" 2>/dev/null); then
+    unset key
+    return 1
+  fi
   unset key
-  jq -r '.slug // empty' <<<"$resp" 2>/dev/null
+  jq -e '(.mounts | type) == "array"' <<<"$resp" >/dev/null 2>&1 || return 1
+  jq -r 'first(.mounts[]? | select(.mount_path == "") | .slug) // empty' \
+    <<<"$resp" 2>/dev/null
 }
 
 dhm_hn_bind_root() {  # dhm_hn_bind_root <domain> <slug>
   local domain=$1 slug=$2 key resp bound
 
-  bound=$(dhm_hn_root_link_slug "$domain")
+  if ! bound=$(dhm_hn_root_link_slug "$domain"); then
+    dhm_error "could not read the current root mount for ${domain}; refusing to modify it"
+    return 1
+  fi
   if [[ "$bound" == "$slug" ]]; then
     dhm_ok "${domain} is already mounted to ${slug}"
     return 0
@@ -314,7 +345,10 @@ dhm_hn_bind_root() {  # dhm_hn_bind_root <domain> <slug>
     return 1
   fi
 
-  bound=$(dhm_hn_root_link_slug "$domain")
+  if ! bound=$(dhm_hn_root_link_slug "$domain"); then
+    dhm_error "root link readback failed: could not read ${domain} after mount"
+    return 1
+  fi
   if [[ "$bound" != "$slug" ]]; then
     dhm_error "root link readback failed: ${domain} reports '${bound:-none}', expected '${slug}'"
     return 1

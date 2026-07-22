@@ -76,4 +76,31 @@ out=$(dhm_dns_apply example.invalid '[]' 600 2>&1); rc=$?
 assert_ne "empty instructions rejected" 0 "$rc"
 assert_contains "empty instruction message" "$out" "refusing to delete"
 
+# ---- DigitalOcean CNAME wire format -----------------------------------------
+# DigitalOcean requires CNAME targets to be fully qualified with a trailing
+# dot. here.now returns `fallback.here.now`, so the provider adapter must
+# normalize it before invoking doctl.
+local fake_bin doctl_args old_path
+fake_bin=$(mktemp -d)
+doctl_args="${fake_bin}/args"
+old_path=$PATH
+unset DHM_DRY_RUN
+cat > "${fake_bin}/doctl" <<'ZSH'
+#!/usr/bin/env zsh
+print -r -- "$@" > "$DHM_TEST_DOCTL_ARGS"
+print -r -- '{}'
+ZSH
+chmod +x "${fake_bin}/doctl"
+export DHM_TEST_DOCTL_ARGS=$doctl_args
+PATH="${fake_bin}:$PATH"
+
+assert_ok "CNAME record creation succeeds" \
+  dhm_dns_create_record example.com CNAME www fallback.here.now 600
+assert_contains "CNAME target is fully qualified" "$(<$doctl_args)" \
+  "--record-data fallback.here.now."
+
+PATH=$old_path
+unset DHM_TEST_DOCTL_ARGS
+rm -rf -- "$fake_bin"
+
 report
