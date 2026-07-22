@@ -490,7 +490,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | Variable | Default | Meaning |
 |---|---:|---|
 | `DAG_MONTHLY_ACU_POOL` | `24000` | Monthly ACU pool to distribute |
-| `DAG_LAUNCHER` | `clscb` | Agent launcher for playbook commands when no `--agent` flag is given |
+| `DAG_LAUNCHER` | `clscb` | Default agent launcher for playbook commands when no selector is given |
 | `DAG_LAUNCHER_CLAUDE` | `clscb` | Launcher used by `--agent claude` |
 | `DAG_LAUNCHER_CODEX` | `cxscb` | Launcher used by `--agent codex` |
 | `DAG_LAUNCHER_DEVIN` | `devin --permission-mode dangerous --` | Launcher used by `--agent devin`; prompt is appended after the trailing `--` |

@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # dag — Devin Enterprise ACU governor.
 # Thin launcher: resolves the Devin API keys, assembles a playbook prompt,
-# and hands the job to a Claude agent session (DAG_LAUNCHER, default clscb).
+# and hands the job to the selected agent session (DAG_LAUNCHER defaults to clscb).
 # Primary key: Devin API v3 service-user key (cog_..., api.devin.ai) — required.
 # Secondary: Windsurf service key (server.codeium.com) — optional, enables
 # per-model/IDE breakdown and roster activity analytics.
@@ -94,7 +94,7 @@ Examples:
 
 Config (environment.env; shell env vars override):
   DAG_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)
-  DAG_LAUNCHER               agent launcher command when no --agent given (default clscb)
+  DAG_LAUNCHER               default agent launcher when no selector is given (default clscb)
   DAG_LAUNCHER_CLAUDE        launcher for --agent claude (default clscb)
   DAG_LAUNCHER_CODEX         launcher for --agent codex (default cxscb)
   DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous --)
