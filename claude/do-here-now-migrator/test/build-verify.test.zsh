@@ -144,6 +144,7 @@ local tpl
 tpl=$(<"$(dhm_test_daemon_dir)/templates/deploy-here-now.yml")
 assert_contains "installer passes --yes"    "$tpl" "--yes --global"
 assert_contains "install step asserts the publisher exists" "$tpl" "publisher missing at"
+assert_contains "production route failures stop CI" "$tpl" '[[ $status == 200 ]]'
 
 # The bare form must not survive anywhere in the template.
 local bare

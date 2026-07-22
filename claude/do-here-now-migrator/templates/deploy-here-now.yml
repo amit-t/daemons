@@ -159,6 +159,10 @@ jobs:
 
           for path in / /404.html; do
             status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
-              "https://${SITE_DOMAIN}${path}" || echo 000)
+              "https://${SITE_DOMAIN}${path}") || status=000
             echo "$path -> $status"
+            [[ $status == 200 ]] || {
+              echo "::error::https://${SITE_DOMAIN}${path} returned $status, expected 200." >&2
+              exit 1
+            }
           done
