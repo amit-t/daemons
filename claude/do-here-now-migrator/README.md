@@ -200,7 +200,7 @@ environment.env                  defaults; shell environment overrides
 zsh claude/do-here-now-migrator/test/run.zsh
 ```
 
-294 assertions across 10 files, all offline. Coverage focuses on the parts where
+301 assertions across 10 files, all offline. Coverage focuses on the parts where
 a defect costs data: the DNS allowlist, resource attribution, export validation,
 custom-domain state, the destructive-phase preconditions, and agent selection.
 

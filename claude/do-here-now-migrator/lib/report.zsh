@@ -44,10 +44,11 @@ dhm_report_write_doc() {  # dhm_report_write_doc <site> <repo> <inventory-json>
   if dhm_dry "write ${file}"; then return 0; fi
   mkdir -p "${file:h}" || return 1
 
-  local domain slug backup provider suburl agent
+  local domain slug backup database_backup provider suburl agent
   domain=$(dhm_fact_get "$site" domain)
   slug=$(dhm_fact_get "$site" slug)
   backup=$(dhm_fact_get "$site" backup_dir)
+  database_backup=$(dhm_fact_get "$site" database_backup_dir)
   provider=$(dhm_fact_get "$site" subscribe_provider)
   suburl=$(dhm_fact_get "$site" subscribe_url)
   agent=$(dhm_state_get "$site" '.agent')
@@ -78,9 +79,11 @@ dhm_report_write_doc() {  # dhm_report_write_doc <site> <repo> <inventory-json>
       print -r -- "## Pending DigitalOcean decommission"
     fi
     print -r -- ""
-    local n; n=$(jq '.claimed.apps | length' <<<"$inv")
-    if (( n == 0 )); then
-      print -r -- "No App Platform apps were attributed to this site."
+    local napps ndbs
+    napps=$(jq '.claimed.apps | length' <<<"$inv")
+    ndbs=$(jq '.claimed.databases | length' <<<"$inv")
+    if (( napps == 0 && ndbs == 0 )); then
+      print -r -- "No DigitalOcean resources were attributed to this site."
     else
       print -r -- "| Resource | Type | ID |"
       print -r -- "| --- | --- | --- |"
@@ -90,10 +93,13 @@ dhm_report_write_doc() {  # dhm_report_write_doc <site> <repo> <inventory-json>
     print -r -- ""
     if [[ -n "$decommissioned" ]]; then
       print -r -- "The attributed resources above were removed only after production verification."
-    elif (( n > 0 )); then
+    elif (( napps > 0 )); then
       print -r -- "The attributed app remains active at its default DigitalOcean ingress as a rollback fallback."
       print -r -- "Its custom domain is detached; deleting it still requires the separate, exact-name-confirmed"
       print -r -- "\`dhm decommission --site ${site}\` command."
+    elif (( ndbs > 0 )); then
+      print -r -- "The attributed database remains active until the separate, exact-name-confirmed"
+      print -r -- "decommission command removes it."
     fi
     print -r -- ""
 
@@ -110,10 +116,14 @@ dhm_report_write_doc() {  # dhm_report_write_doc <site> <repo> <inventory-json>
     print -r -- "## Backups"
     print -r -- ""
     print -r -- "\`${backup:-—}\` — a sibling of this checkout, outside version control."
+    if [[ -n "$database_backup" ]]; then
+      print -r -- ""
+      print -r -- "Final database backup: \`${database_backup}\`."
+    fi
     print -r -- ""
     print -r -- "| File | Contents |"
     print -r -- "| --- | --- |"
-    print -r -- "| \`*/\*.bson\`, \`dump.pgcustom\`, \`dump.sql\` | database dumps, restorable with the engine's native tool |"
+    print -r -- "| \`*/\*.bson\`, \`*.pgcustom\`, \`dump.sql\` | database dumps, restorable with the engine's native tool |"
     print -r -- "| \`*/subscribers-import.csv\` | \`email,name,created_at\` — the shape newsletter platforms import |"
     print -r -- "| \`app-specs/*.yaml\` | archived App Platform specs (mode 600, secret-bearing) |"
     print -r -- "| \`dns/*.json\` | pre-migration DNS records, for rollback |"
@@ -133,12 +143,22 @@ dhm_report_write_doc() {  # dhm_report_write_doc <site> <repo> <inventory-json>
 
     print -r -- "## Rollback"
     print -r -- ""
-    if [[ -n "$decommissioned" ]]; then
+    if [[ -n "$decommissioned" && napps -gt 0 ]]; then
       print -r -- "The DigitalOcean origin has been destroyed, so recovery means re-publishing"
       print -r -- "a known-good export to the same slug:"
-    else
+    elif [[ -n "$decommissioned" && ndbs -gt 0 ]]; then
+      print -r -- "The DigitalOcean database has been destroyed; it was not a web origin."
+      print -r -- "The site recovery path is re-publishing a known-good export to the same slug:"
+    elif [[ -n "$decommissioned" ]]; then
+      print -r -- "The site recovery path is re-publishing a known-good export to the same slug:"
+    elif (( napps > 0 )); then
       print -r -- "The DigitalOcean app remains available at its default ingress until decommissioned."
       print -r -- "The primary recovery path is still re-publishing a known-good export to the same slug:"
+    elif (( ndbs > 0 )); then
+      print -r -- "The DigitalOcean database remains available until decommissioned, but it is not a web origin."
+      print -r -- "The site recovery path is re-publishing a known-good export to the same slug:"
+    else
+      print -r -- "The site recovery path is re-publishing a known-good export to the same slug:"
     fi
     print -r -- ""
     print -r -- '```zsh'
