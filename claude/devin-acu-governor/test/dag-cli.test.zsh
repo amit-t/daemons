@@ -52,7 +52,7 @@ cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
 - Never describe Borrow donor reductions as “negative ACUs.”
 EOF
 run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
-for agent_args in "" "--claude" "--codex" "--devin"; do
+for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def"; do
   if [[ -n "$agent_args" ]]; then
     out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
   else
@@ -291,6 +291,11 @@ assert_contains "shorthand codex launcher" "$out" "cxscb"
 out=$(run_dag_launcher --devin status); rc=$?
 assert_exit "shorthand devin rc" 0 $rc
 assert_contains "shorthand devin launcher" "$out" "devin --permission-mode dangerous --"
+for profile in co cf deo def; do
+  out=$(run_dag_launcher "--${profile}" status); rc=$?
+  assert_exit "profile ${profile} rc" 0 $rc
+  assert_eq "profile ${profile} launcher" "$profile" "$out"
+done
 
 # 13. Env overrides per-agent launchers; legacy DAG_LAUNCHER only applies without --agent.
 out=$(DAG_LAUNCHER_CODEX="my-codex" run_dag_launcher --codex status)
@@ -299,6 +304,14 @@ out=$(DAG_LAUNCHER="my-default" run_dag_launcher status)
 assert_contains "legacy launcher override" "$out" "my-default"
 out=$(DAG_LAUNCHER="my-default" run_dag_launcher --codex status)
 assert_contains "agent flag beats legacy launcher" "$out" "cxscb"
+out=$(DAG_LAUNCHER_CO="my-co" run_dag_launcher --co status)
+assert_eq "co launcher override" "my-co" "$out"
+out=$(DAG_LAUNCHER_CF="my-cf" run_dag_launcher --cf status)
+assert_eq "cf launcher override" "my-cf" "$out"
+out=$(DAG_LAUNCHER_DEO="my-deo" run_dag_launcher --deo status)
+assert_eq "deo launcher override" "my-deo" "$out"
+out=$(DAG_LAUNCHER_DEF="my-def" run_dag_launcher --def status)
+assert_eq "def launcher override" "my-def" "$out"
 
 # 14. Invalid agent -> exit 2; agent flags rejected after the command.
 out=$(run_dag_launcher --agent gemini status 2>&1); rc=$?
@@ -306,14 +319,25 @@ assert_exit "bad agent rc" 2 $rc
 assert_contains "bad agent message" "$out" "claude, codex, devin"
 out=$(run_dag_launcher --agent 2>&1); rc=$?
 assert_exit "missing agent rc" 2 $rc
+out=$(run_dag_launcher --agent co status 2>&1); rc=$?
+assert_exit "profile rejected as canonical agent rc" 2 $rc
+assert_contains "profile rejected as canonical agent message" "$out" "claude, codex, devin"
 
 # 15. Agent flag does not leak into the prompt or break command dispatch.
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" --agent codex set-limits); rc=$?
 assert_exit "agent prompt rc" 0 $rc
 assert_contains "agent prompt playbook" "$out" "# Playbook: set-limits"
 if [[ "$out" == *--agent* ]]; then _fail "--agent leaked into prompt"; else _ok; fi
+for profile in co cf deo def; do
+  out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" "--${profile}" status); rc=$?
+  assert_exit "profile prompt rc ${profile}" 0 $rc
+  assert_contains "profile prompt playbook ${profile}" "$out" "# Playbook: status"
+  if [[ "$out" == *"--${profile}"* ]]; then _fail "--${profile} leaked into prompt"; else _ok; fi
+done
 # Usage mentions agent selection.
 out=$(run_dag help)
 assert_contains "usage agent flag" "$out" "--agent claude|codex|devin"
+assert_contains "usage profile flags" "$out" "--co|--cf|--deo|--def"
+assert_contains "usage profile launcher config" "$out" "DAG_LAUNCHER_CO"
 
 report

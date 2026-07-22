@@ -29,10 +29,11 @@ dag_usage() {
 dag — Devin Enterprise ACU governor
 
 Usage:
-  dag [--agent claude|codex|devin] <command ...>
-                              Pick the parent agent that runs the playbook session
-                              (default claude via clscb); shorthands --claude/--codex/--devin;
-                              agent flags go before the command
+  dag [--agent claude|codex|devin] [--co|--cf|--deo|--def] <command ...>
+                              Pick the parent agent or model-pinned launcher profile
+                              that runs the playbook session. Agent shorthands:
+                              --claude/--codex/--devin. Profile flags:
+                              --co/--cf/--deo/--def. Selectors go before the command.
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
   dag set-limits <email>      Cap only one uncapped active user, funded zero-sum by Borrowing
                               headroom from active capped users
@@ -84,6 +85,10 @@ Examples:
   dag usage --group "Platform Eng" --top 5
   dag --agent codex status
   dag --devin boost alice@corp.com
+  dag --co status
+  dag --cf status
+  dag --deo status
+  dag --def status
   dag set-limits alice@corp.com
   dag boost over
 
@@ -93,6 +98,10 @@ Config (environment.env; shell env vars override):
   DAG_LAUNCHER_CLAUDE        launcher for --agent claude (default clscb)
   DAG_LAUNCHER_CODEX         launcher for --agent codex (default cxscb)
   DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous --)
+  DAG_LAUNCHER_CO            launcher for --co (default co)
+  DAG_LAUNCHER_CF            launcher for --cf (default cf)
+  DAG_LAUNCHER_DEO           launcher for --deo (default deo)
+  DAG_LAUNCHER_DEF           launcher for --def (default def)
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
@@ -223,11 +232,15 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   for line in "$@"; do print -r -- "- ${line}"; done
 }
 
-dag_resolve_launcher() {  # $1 = agent (claude|codex|devin|""); prints launcher command prefix.
+dag_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command prefix.
   case "$1" in
     claude) print -r -- "${DAG_LAUNCHER_CLAUDE:-clscb}" ;;
     codex)  print -r -- "${DAG_LAUNCHER_CODEX:-cxscb}" ;;
     devin)  print -r -- "${DAG_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    co)     print -r -- "${DAG_LAUNCHER_CO:-co}" ;;
+    cf)     print -r -- "${DAG_LAUNCHER_CF:-cf}" ;;
+    deo)    print -r -- "${DAG_LAUNCHER_DEO:-deo}" ;;
+    def)    print -r -- "${DAG_LAUNCHER_DEF:-def}" ;;
     "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
     *)      return 2 ;;
   esac
@@ -238,11 +251,12 @@ main() {
   : ${DAG_MONTHLY_ACU_POOL:=24000}
   : ${DAG_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
 
-  local agent=""
+  local agent="" selector_source=""
   while (( $# )); do
     case "${1:-}" in
       --agent=*)
         agent="${1#--agent=}"
+        selector_source="agent"
         shift
         ;;
       --agent)
@@ -251,10 +265,17 @@ main() {
           print -ru2 -- "dag: --agent expects one of claude, codex, devin"
           exit 2
         fi
+        selector_source="agent"
         shift 2
         ;;
       --claude|--codex|--devin)
         agent="${1#--}"
+        selector_source="shorthand"
+        shift
+        ;;
+      --co|--cf|--deo|--def)
+        agent="${1#--}"
+        selector_source="shorthand"
         shift
         ;;
       *)
@@ -262,8 +283,12 @@ main() {
         ;;
     esac
   done
-  if [[ -n "$agent" && "$agent" != (claude|codex|devin) ]]; then
+  if [[ "$selector_source" == "agent" && -n "$agent" && "$agent" != (claude|codex|devin) ]]; then
     print -ru2 -- "dag: --agent expects one of claude, codex, devin (got: ${agent})"
+    exit 2
+  fi
+  if [[ -n "$agent" && "$agent" != (claude|codex|devin|co|cf|deo|def) ]]; then
+    print -ru2 -- "dag: unknown launcher selector: ${agent}"
     exit 2
   fi
   local launcher
