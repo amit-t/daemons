@@ -97,7 +97,8 @@ Config (environment.env; shell env vars override):
   DAG_LAUNCHER               default agent launcher when no selector is given (default clscb)
   DAG_LAUNCHER_CLAUDE        launcher for --agent claude (default clscb)
   DAG_LAUNCHER_CODEX         launcher for --agent codex (default cxscb)
-  DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous --)
+  DAG_LAUNCHER_DEVIN         launcher for --agent devin (default: devin --permission-mode dangerous)
+                             (dag appends `--` before the prompt for devin-family launchers)
   DAG_LAUNCHER_CO            launcher for --co (default co)
   DAG_LAUNCHER_CF            launcher for --cf (default cf)
   DAG_LAUNCHER_DEO           launcher for --deo (default deo)
@@ -236,13 +237,28 @@ dag_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command
   case "$1" in
     claude) print -r -- "${DAG_LAUNCHER_CLAUDE:-clscb}" ;;
     codex)  print -r -- "${DAG_LAUNCHER_CODEX:-cxscb}" ;;
-    devin)  print -r -- "${DAG_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    devin)  print -r -- "${DAG_LAUNCHER_DEVIN:-devin --permission-mode dangerous}" ;;
     co)     print -r -- "${DAG_LAUNCHER_CO:-co}" ;;
     cf)     print -r -- "${DAG_LAUNCHER_CF:-cf}" ;;
     deo)    print -r -- "${DAG_LAUNCHER_DEO:-deo}" ;;
     def)    print -r -- "${DAG_LAUNCHER_DEF:-def}" ;;
     "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
     *)      return 2 ;;
+  esac
+}
+
+# Devin-family launchers require the prompt after a `--` separator (devin's
+# parser only accepts a positional PROMPT past `--`). Claude/Codex launchers
+# take a bare positional prompt. Returns 0 (needs `--`) for the devin family.
+dag_launcher_needs_dashdash() {  # $1 = selector
+  case "$1" in
+    devin|deo|def) return 0 ;;
+    claude|codex|co|cf) return 1 ;;
+    "")
+      local l="${DAG_LAUNCHER:-clscb}"
+      [[ "$l" == (deo|def|dey|devin|devinc)* || "$l" == *devin* ]] && return 0
+      return 1 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -291,8 +307,9 @@ main() {
     print -ru2 -- "dag: unknown launcher selector: ${agent}"
     exit 2
   fi
-  local launcher
+  local launcher sep=""
   launcher=$(dag_resolve_launcher "$agent") || exit 2
+  dag_launcher_needs_dashdash "$agent" && sep="--"
 
   local cmd="${1:-}"
   if [[ -z "$cmd" ]]; then
@@ -540,7 +557,7 @@ main() {
   prompt=$(dag_build_prompt "$cmd" "${context_lines[@]}")
 
   if [[ -n "${DAG_PRINT_LAUNCHER:-}" ]]; then
-    print -r -- "$launcher"
+    print -r -- "${launcher}${sep:+ ${sep}}"
     exit 0
   fi
 
@@ -551,7 +568,7 @@ main() {
 
   [[ -n "$_dag_have_cog_key" ]] && export DEVIN_COG_KEY="$cog_key"
   [[ -n "$_dag_have_windsurf_key" ]] && export DEVIN_SERVICE_KEY="$windsurf_key"
-  exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
+  exec zsh -ic "${launcher} ${sep:+${sep} }$(printf '%q' "$prompt")"
 }
 
 main "$@"

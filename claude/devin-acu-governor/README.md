@@ -4,7 +4,7 @@
 
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
-- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>`.
+- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`), since devin only accepts the prompt as a positional past `--`.
 - Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, and `--def` launches Devin Fable through `def`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only.
 - The assembled playbook prompt is identical for every agent and launcher profile.
 - Every agent prompt also includes Amit's durable global instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. That file carries shell preferences only — all DAG policy lives in `playbooks/_common.md`, which is injected into every dag session for every engine.
@@ -493,7 +493,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_LAUNCHER` | `clscb` | Default agent launcher for playbook commands when no selector is given |
 | `DAG_LAUNCHER_CLAUDE` | `clscb` | Launcher used by `--agent claude` |
 | `DAG_LAUNCHER_CODEX` | `cxscb` | Launcher used by `--agent codex` |
-| `DAG_LAUNCHER_DEVIN` | `devin --permission-mode dangerous --` | Launcher used by `--agent devin`; prompt is appended after the trailing `--` |
+| `DAG_LAUNCHER_DEVIN` | `devin --permission-mode dangerous` | Launcher used by `--agent devin` (dag appends `--` before the prompt for devin-family launchers) |
 | `DAG_LAUNCHER_CO` | `co` | Claude Opus profile launcher used by `--co` |
 | `DAG_LAUNCHER_CF` | `cf` | Claude Fable profile launcher used by `--cf` |
 | `DAG_LAUNCHER_DEO` | `deo` | Devin Opus profile launcher used by `--deo` |

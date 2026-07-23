@@ -291,10 +291,17 @@ assert_contains "shorthand codex launcher" "$out" "cxscb"
 out=$(run_dag_launcher --devin status); rc=$?
 assert_exit "shorthand devin rc" 0 $rc
 assert_contains "shorthand devin launcher" "$out" "devin --permission-mode dangerous --"
-for profile in co cf deo def; do
+for profile in co cf; do
   out=$(run_dag_launcher "--${profile}" status); rc=$?
   assert_exit "profile ${profile} rc" 0 $rc
   assert_eq "profile ${profile} launcher" "$profile" "$out"
+done
+# devin-family profiles get a `--` separator so the prompt lands as devin's
+# positional PROMPT (devin only accepts the prompt past `--`).
+for profile in deo def; do
+  out=$(run_dag_launcher "--${profile}" status); rc=$?
+  assert_exit "profile ${profile} rc" 0 $rc
+  assert_eq "profile ${profile} launcher" "${profile} --" "$out"
 done
 
 # 13. Env overrides per-agent launchers; legacy DAG_LAUNCHER only applies without --agent.
@@ -309,9 +316,17 @@ assert_eq "co launcher override" "my-co" "$out"
 out=$(DAG_LAUNCHER_CF="my-cf" run_dag_launcher --cf status)
 assert_eq "cf launcher override" "my-cf" "$out"
 out=$(DAG_LAUNCHER_DEO="my-deo" run_dag_launcher --deo status)
-assert_eq "deo launcher override" "my-deo" "$out"
+assert_eq "deo launcher override" "my-deo --" "$out"
 out=$(DAG_LAUNCHER_DEF="my-def" run_dag_launcher --def status)
-assert_eq "def launcher override" "my-def" "$out"
+assert_eq "def launcher override" "my-def --" "$out"
+# Devin-ness of the default launcher is detected from its command text.
+out=$(DAG_LAUNCHER="deo" run_dag_launcher status)
+assert_eq "devin-like default launcher gets --" "deo --" "$out"
+out=$(DAG_LAUNCHER="my-default" run_dag_launcher status)
+assert_eq "non-devin default launcher no --" "my-default" "$out"
+# Single `--`, never doubled, for the canonical devin agent.
+out=$(run_dag_launcher --devin status)
+assert_eq "devin launcher single dashdash" "devin --permission-mode dangerous --" "$out"
 
 # 14. Invalid agent -> exit 2; agent flags rejected after the command.
 out=$(run_dag_launcher --agent gemini status 2>&1); rc=$?
