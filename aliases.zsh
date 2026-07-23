@@ -45,6 +45,17 @@ dhm() {
   "$daemon_entry" "$@"
 }
 
+cas() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/claude-agent-scout/bin/cas"
+
+  if [[ ! -x "$daemon_entry" ]]; then
+    print -ru2 -- "cas: missing daemon entrypoint at $daemon_entry"
+    return 127
+  fi
+
+  "$daemon_entry" "$@"
+}
+
 # Dotted shorthands: cx = base aicc (codex parent), cl = claude-parent aicc.
 alias cx.aicc='aicc'
 alias cl.aicc='aicc --claude'
@@ -60,3 +71,10 @@ dhm--claude()  { dhm --agent claude "$@" }
 dhm--cf()      { dhm --agent cf "$@" }
 dhm--codex()   { dhm --agent codex "$@" }
 dhm--devin()   { dhm --agent devin "$@" }
+
+# cas `ask` launcher selectors: pick which agent explains the target session.
+cas--claude()  { cas --agent claude "$@" }
+cas--codex()   { cas --agent codex "$@" }
+cas--devin()   { cas --agent devin "$@" }
+cas--deo()     { cas --deo "$@" }
+cas--def()     { cas --def "$@" }

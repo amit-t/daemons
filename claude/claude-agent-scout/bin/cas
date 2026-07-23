@@ -1,0 +1,191 @@
+#!/usr/bin/env zsh
+# cas — Claude Agent Scout.
+#
+# Scans every Claude-related process that could consume your Claude usage —
+# Claude Code CLI sessions, the Claude Desktop app + its chat/cowork/remote
+# renderer surfaces, and MCP tool servers spawned for them — and reports them
+# in a categorized table. Can deep-dive one target locally, or launch an agent
+# session to interrogate "what is this agent doing".
+#
+# Division of responsibility, deliberately:
+#   deterministic zsh  — process scan, classification, transcript inspection
+#                        (`list`, `show`, `doctor`) — read-only, no agent, no cost
+#   an AI agent        — `ask`: interpret a target's live state and transcript
+#                        and explain it, launched via a thin handoff (deo default)
+set -u
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+source "${daemon_dir}/lib/transcript.zsh"
+source "${daemon_dir}/lib/scan.zsh"
+source "${daemon_dir}/lib/show.zsh"
+source "${daemon_dir}/lib/prompt.zsh"
+
+cas_load_env() {
+  local env_file="${daemon_dir}/environment.env" line key value
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == \#* || "$line" != *=* ]] && continue
+    key=${line%%=*}
+    value=${line#*=}
+    if [[ -z "${(P)key:-}" ]]; then
+      typeset -gx "$key"="$value"
+    fi
+  done < "$env_file"
+}
+
+cas_usage() {
+  cat <<'EOF'
+cas — Claude Agent Scout
+
+Usage:
+  cas [list] [--all] [--json]     Scan + print every Claude-related process,
+                                  grouped by kind (default command).
+                                    --all   also list infra helper processes
+                                    --json  machine-readable array (needs jq)
+  cas show <pid|session-id>       Local read-only deep-dive of one target:
+                                  full command, cwd, transcript, token usage,
+                                  and recent conversation turns.
+  cas ask [selector] [pid|session|cwd|all] [question...]
+                                  Launch an agent session to explain what the
+                                  target agent is doing, grounded in its live
+                                  state + transcript. No target ⇒ all agents.
+  cas doctor                      Check prerequisites (claude dir, jq, launcher).
+  cas help                        Show this help.
+
+Selectors for `ask` (before the target), pick the agent/launcher profile:
+  --agent claude|codex|devin   |   --claude --codex --devin
+  --co --cf --deo --def        (model-pinned launcher profiles)
+
+Examples:
+  cas                             # scan
+  cas list --all                  # include desktop helper processes
+  cas list --json | jq '.[]|select(.consumes=="API")'
+  cas show 23994
+  cas show 45ddba05-ab3a-47d5-833e-2215052d0a18
+  cas ask 23994 what is it working on right now?
+  cas ask                         # investigate every live agent
+  cas --deo ask 23994             # force the deo launcher
+
+Config (environment.env; shell env vars override):
+  CAS_LAUNCHER          default launcher for `ask` (default deo)
+  CAS_LAUNCHER_CLAUDE   launcher for --agent claude (default clscb)
+  CAS_LAUNCHER_CODEX    launcher for --agent codex  (default cxscb)
+  CAS_LAUNCHER_DEVIN    launcher for --agent devin  (default: devin --permission-mode dangerous --)
+  CAS_LAUNCHER_CO/CF/DEO/DEF   launchers for the --co/--cf/--deo/--def profiles
+  CAS_PROJECTS_DIR      Claude Code transcript root (default ~/.claude/projects)
+
+Dry-run (no agent launched):
+  CAS_PRINT_PROMPT=1 cas ask 23994     # print the assembled prompt
+  CAS_PRINT_LAUNCHER=1 cas ask 23994   # print the resolved launcher
+EOF
+}
+
+cas_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command prefix.
+  case "$1" in
+    claude) print -r -- "${CAS_LAUNCHER_CLAUDE:-clscb}" ;;
+    codex)  print -r -- "${CAS_LAUNCHER_CODEX:-cxscb}" ;;
+    devin)  print -r -- "${CAS_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    co)     print -r -- "${CAS_LAUNCHER_CO:-co}" ;;
+    cf)     print -r -- "${CAS_LAUNCHER_CF:-cf}" ;;
+    deo)    print -r -- "${CAS_LAUNCHER_DEO:-deo}" ;;
+    def)    print -r -- "${CAS_LAUNCHER_DEF:-def}" ;;
+    "")     print -r -- "${CAS_LAUNCHER:-deo}" ;;
+    *)      return 2 ;;
+  esac
+}
+
+cas_doctor() {
+  local ok=0
+  print -r -- "cas doctor"
+  if (( $+commands[claude] )); then
+    print -r -- "  [ok] claude binary: $(command -v claude)"
+  else
+    print -r -- "  [--] claude binary not on PATH (CLI-session detection still works via ps)"
+  fi
+  if [[ -d "${CAS_PROJECTS_DIR}" ]]; then
+    print -r -- "  [ok] transcripts dir: ${CAS_PROJECTS_DIR} ($(ls -1 "${CAS_PROJECTS_DIR}" 2>/dev/null | wc -l | tr -d ' ') projects)"
+  else
+    print -r -- "  [!!] transcripts dir missing: ${CAS_PROJECTS_DIR}"; ok=1
+  fi
+  if (( $+commands[jq] )); then
+    print -r -- "  [ok] jq: $(command -v jq)"
+  else
+    print -r -- "  [!!] jq not found — --json, token totals, and turn extraction disabled"; ok=1
+  fi
+  if (( $+commands[lsof] )); then
+    print -r -- "  [ok] lsof: $(command -v lsof)"
+  else
+    print -r -- "  [!!] lsof not found — cwd resolution disabled"; ok=1
+  fi
+  local launcher; launcher=$(cas_resolve_launcher "")
+  local lbin="${launcher%% *}"
+  # `ask` execs through `zsh -ic`, so probe the launcher in an interactive shell
+  # too (it is typically a shell function / alias, not a PATH binary).
+  if zsh -ic "command -v ${lbin}" >/dev/null 2>&1; then
+    print -r -- "  [ok] default ask launcher: ${launcher}"
+  else
+    print -r -- "  [--] default ask launcher '${lbin}' not resolvable in an interactive shell (set CAS_LAUNCHER)"
+  fi
+  return $ok
+}
+
+main() {
+  cas_load_env
+
+  # --- optional launcher selector (only meaningful for `ask`) ---
+  local agent=""
+  while (( $# )); do
+    case "${1:-}" in
+      --agent=*) agent="${1#--agent=}"; shift ;;
+      --agent)
+        agent="${2:-}"
+        [[ -z "$agent" ]] && { print -ru2 -- "cas: --agent expects claude|codex|devin"; exit 2; }
+        shift 2 ;;
+      --claude|--codex|--devin|--co|--cf|--deo|--def) agent="${1#--}"; shift ;;
+      *) break ;;
+    esac
+  done
+  if [[ -n "$agent" && "$agent" != (claude|codex|devin|co|cf|deo|def) ]]; then
+    print -ru2 -- "cas: unknown launcher selector: ${agent}"; exit 2
+  fi
+
+  local cmd="${1:-list}"
+  (( $# )) && shift
+
+  case "$cmd" in
+    help|-h|--help) cas_usage; exit 0 ;;
+    doctor)         cas_doctor; exit $? ;;
+    list|ls|scan)   cas_scan_report "$@"; exit $? ;;
+    show|inspect)   cas_show "$@"; exit $? ;;
+    ask)
+      local launcher
+      launcher=$(cas_resolve_launcher "$agent") || { print -ru2 -- "cas: bad launcher selector"; exit 2; }
+
+      # First non-flag arg is the target; the rest is the free-text question.
+      local target=""
+      if (( $# )) && [[ "$1" != -* ]]; then
+        target="$1"; shift
+      fi
+
+      local prompt
+      prompt=$(cas_build_ask_prompt "$target" "$@")
+
+      if [[ -n "${CAS_PRINT_LAUNCHER:-}" ]]; then print -r -- "$launcher"; exit 0; fi
+      if [[ -n "${CAS_PRINT_PROMPT:-}" ]];   then print -r -- "$prompt";   exit 0; fi
+
+      exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
+      ;;
+    *)
+      # Bare-flag invocation like `cas --all` / `cas --json` ⇒ treat as list.
+      if [[ "$cmd" == -* ]]; then
+        cas_scan_report "$cmd" "$@"; exit $?
+      fi
+      print -ru2 -- "cas: unknown command '${cmd}'"
+      cas_usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
