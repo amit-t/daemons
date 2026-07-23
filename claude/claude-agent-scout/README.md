@@ -35,8 +35,13 @@ Claude Code writes one JSONL transcript per session at:
 ```
 
 e.g. cwd `/Users/amit/Projects/x` → `~/.claude/projects/-Users-amit-Projects-x/<sid>.jsonl`.
-`cas` uses this both ways: from a live pid it derives the transcript; from a bare
-session-id it locates the transcript (so `show`/`ask` work for **ended** sessions too).
+`cas` resolves the transcript in three ways, in order:
+
+1. explicit `--session-id` from the process command line + cwd;
+2. a bare session-id located across all project dirs (so `show`/`ask` work for **ended** sessions);
+3. **newest `.jsonl` in the cwd's project dir** — the common case, since most sessions
+   run *without* `--session-id` (Claude Code auto-generates one); the session-id is then
+   read back from the transcript filename.
 
 ## Usage
 
@@ -81,7 +86,7 @@ Shorthands (from `aliases.zsh`): `cas--claude`, `cas--codex`, `cas--devin`,
 | `CAS_LAUNCHER` | `deo` | default launcher for `ask` |
 | `CAS_LAUNCHER_CLAUDE` | `clscb` | launcher for `--agent claude` |
 | `CAS_LAUNCHER_CODEX` | `cxscb` | launcher for `--agent codex` |
-| `CAS_LAUNCHER_DEVIN` | `devin --permission-mode dangerous --` | launcher for `--agent devin` |
+| `CAS_LAUNCHER_DEVIN` | `devin --permission-mode dangerous` | launcher for `--agent devin` (cas appends `--` before the prompt for devin-family launchers) |
 | `CAS_LAUNCHER_CO/CF/DEO/DEF` | `co`/`cf`/`deo`/`def` | model-pinned profile launchers |
 | `CAS_PROJECTS_DIR` | `~/.claude/projects` | Claude Code transcript root |
 

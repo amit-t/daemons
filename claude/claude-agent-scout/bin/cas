@@ -71,7 +71,8 @@ Config (environment.env; shell env vars override):
   CAS_LAUNCHER          default launcher for `ask` (default deo)
   CAS_LAUNCHER_CLAUDE   launcher for --agent claude (default clscb)
   CAS_LAUNCHER_CODEX    launcher for --agent codex  (default cxscb)
-  CAS_LAUNCHER_DEVIN    launcher for --agent devin  (default: devin --permission-mode dangerous --)
+  CAS_LAUNCHER_DEVIN    launcher for --agent devin  (default: devin --permission-mode dangerous)
+                        (cas appends `--` before the prompt for devin-family launchers)
   CAS_LAUNCHER_CO/CF/DEO/DEF   launchers for the --co/--cf/--deo/--def profiles
   CAS_PROJECTS_DIR      Claude Code transcript root (default ~/.claude/projects)
 
@@ -85,13 +86,28 @@ cas_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command
   case "$1" in
     claude) print -r -- "${CAS_LAUNCHER_CLAUDE:-clscb}" ;;
     codex)  print -r -- "${CAS_LAUNCHER_CODEX:-cxscb}" ;;
-    devin)  print -r -- "${CAS_LAUNCHER_DEVIN:-devin --permission-mode dangerous --}" ;;
+    devin)  print -r -- "${CAS_LAUNCHER_DEVIN:-devin --permission-mode dangerous}" ;;
     co)     print -r -- "${CAS_LAUNCHER_CO:-co}" ;;
     cf)     print -r -- "${CAS_LAUNCHER_CF:-cf}" ;;
     deo)    print -r -- "${CAS_LAUNCHER_DEO:-deo}" ;;
     def)    print -r -- "${CAS_LAUNCHER_DEF:-def}" ;;
     "")     print -r -- "${CAS_LAUNCHER:-deo}" ;;
     *)      return 2 ;;
+  esac
+}
+
+# Devin-family launchers require the prompt after a `--` separator (their clap
+# parser only accepts a positional PROMPT past `--`). Claude/Codex launchers
+# take a bare positional prompt. Returns 0 (needs `--`) for the devin family.
+cas_launcher_needs_dashdash() {  # $1 = selector
+  case "$1" in
+    devin|deo|def) return 0 ;;
+    co|cf|claude|codex) return 1 ;;
+    "")
+      local l="${CAS_LAUNCHER:-deo}"
+      [[ "$l" == (deo|def|dey|devin|devinc)* || "$l" == *devin* ]] && return 0
+      return 1 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -171,10 +187,13 @@ main() {
       local prompt
       prompt=$(cas_build_ask_prompt "$target" "$@")
 
-      if [[ -n "${CAS_PRINT_LAUNCHER:-}" ]]; then print -r -- "$launcher"; exit 0; fi
+      local sep=""
+      cas_launcher_needs_dashdash "$agent" && sep="--"
+
+      if [[ -n "${CAS_PRINT_LAUNCHER:-}" ]]; then print -r -- "${launcher} ${sep}"; exit 0; fi
       if [[ -n "${CAS_PRINT_PROMPT:-}" ]];   then print -r -- "$prompt";   exit 0; fi
 
-      exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
+      exec zsh -ic "${launcher} ${sep} $(printf '%q' "$prompt")"
       ;;
     *)
       # Bare-flag invocation like `cas --all` / `cas --json` ⇒ treat as list.

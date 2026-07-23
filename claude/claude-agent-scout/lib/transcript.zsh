@@ -67,6 +67,35 @@ cas_find_transcript_by_sid() {
   return 1
 }
 
+# Newest transcript in a cwd's project dir, for sessions started WITHOUT an
+# explicit --session-id (Claude Code auto-generates one). Prints path or empty.
+cas_transcript_for_cwd() {
+  local cwd="$1" dir hit
+  [[ -n "$cwd" ]] || return 1
+  dir="${CAS_PROJECTS_DIR}/$(cas_escape_cwd "$cwd")"
+  for hit in "$dir"/*.jsonl(Nom); do print -r -- "$hit"; return 0; done
+  return 1
+}
+
+# Session-id encoded in a transcript filename.
+cas_sid_from_transcript() { local f="$1"; print -r -- "${${f:t}%.jsonl}" }
+
+# Resolve (session-id, transcript) for a target, trying in order:
+#   explicit sid+cwd  ->  find-by-sid anywhere  ->  newest transcript in cwd.
+# Prints "sid<TAB>transcript"; either field may be empty.
+cas_resolve_transcript() {
+  local sid="$1" cwd="$2" tp=""
+  if [[ -n "$cwd" && -n "$sid" ]]; then
+    tp=$(cas_transcript_path "$cwd" "$sid"); [[ -f "$tp" ]] || tp=""
+  fi
+  [[ -z "$tp" && -n "$sid" ]] && tp=$(cas_find_transcript_by_sid "$sid")
+  if [[ -z "$tp" && -n "$cwd" ]]; then
+    tp=$(cas_transcript_for_cwd "$cwd")
+    [[ -n "$tp" && -z "$sid" ]] && sid=$(cas_sid_from_transcript "$tp")
+  fi
+  print -r -- "${sid}	${tp}"
+}
+
 # Find the pid of a running claude CLI session by its session-id, or empty.
 cas_pid_for_session() {
   local want="$1" line

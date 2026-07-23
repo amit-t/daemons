@@ -23,9 +23,7 @@ cas_build_ask_prompt() {
       pid=$(cas_pid_for_session "$sid") || pid=""
       [[ -n "$pid" ]] && { cmd=$(ps -ww -o command= -p "$pid" 2>/dev/null); cwd=$(cas_cwd_of_pid "$pid"); }
     fi
-    [[ -n "$cwd" && -n "$sid" ]] && tp=$(cas_transcript_path "$cwd" "$sid")
-    # Ended session (no live pid): still locate its transcript by session-id.
-    [[ -z "$tp" && -n "$sid" ]] && tp=$(cas_find_transcript_by_sid "$sid")
+    local rt; rt=$(cas_resolve_transcript "$sid" "$cwd"); sid="${rt%%$'\t'*}"; tp="${rt#*$'\t'}"
     [[ -z "$cwd" && -n "$tp" ]] && cwd="${${tp:h:t}//-//}"
     scope="target ${target}"
   fi

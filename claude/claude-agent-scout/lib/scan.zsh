@@ -110,17 +110,13 @@ cas_scan_report() {
     printf '    %-7s %-13s %-10s %-34s %s\n' PID STARTED SESSION DIR "LAST ACTIVITY"
     for r in "${cli[@]}"; do
       IFS=$'\t' read -r class pid started consumes detail cmd <<< "$r"
-      local sid cwd tp shortsid dir="?" last="—"
+      local sid cwd tp rt shortsid dir="?" last="—"
       sid=$(cas_session_from_cmd "$cmd") || sid=""
       cwd=$(cas_cwd_of_pid "$pid") || cwd=""
+      rt=$(cas_resolve_transcript "$sid" "$cwd"); sid="${rt%%$'\t'*}"; tp="${rt#*$'\t'}"
       shortsid="${sid[1,8]:-????????}"
       [[ -n "$cwd" ]] && dir="${cwd/#${HOME}\/Projects\//}"
-      if [[ -n "$cwd" && -n "$sid" ]]; then
-        tp=$(cas_transcript_path "$cwd" "$sid")
-        if [[ -f "$tp" ]]; then
-          last="$(cas_file_mtime "$tp") (idle $(cas_fmt_age $(cas_file_age_secs "$tp")))"
-        fi
-      fi
+      [[ -f "$tp" ]] && last="$(cas_file_mtime "$tp") (idle $(cas_fmt_age $(cas_file_age_secs "$tp")))"
       printf '    %-7s %-13s %-10s %-34s %s\n' "$pid" "$started" "$shortsid" "${dir[1,34]}" "$last"
     done
   fi
@@ -205,7 +201,7 @@ cas_scan_json() {
     if [[ "$class" == cli-agent ]]; then
       sid=$(cas_session_from_cmd "$cmd") || sid=""
       cwd=$(cas_cwd_of_pid "$pid") || cwd=""
-      [[ -n "$cwd" && -n "$sid" ]] && tp=$(cas_transcript_path "$cwd" "$sid")
+      local rt; rt=$(cas_resolve_transcript "$sid" "$cwd"); sid="${rt%%$'\t'*}"; tp="${rt#*$'\t'}"
     fi
     (( first )) || print -r -- ","
     first=0

@@ -71,11 +71,9 @@ cas_show() {
   class=${ci%%|*}; detail=${ci#*|}; consumes=${detail##*|}; detail=${detail%%|*}
 
   [[ -z "$sid" && -n "$cmd" ]] && sid=$(cas_session_from_cmd "$cmd")
-  local cwd="" tp=""
+  local cwd="" tp="" rt
   [[ -n "$pid" ]] && cwd=$(cas_cwd_of_pid "$pid")
-  [[ -n "$cwd" && -n "$sid" ]] && tp=$(cas_transcript_path "$cwd" "$sid")
-  # Ended session (no live pid ⇒ no cwd): locate the transcript by session-id.
-  [[ -z "$tp" && -n "$sid" ]] && tp=$(cas_find_transcript_by_sid "$sid")
+  rt=$(cas_resolve_transcript "$sid" "$cwd"); sid="${rt%%$'\t'*}"; tp="${rt#*$'\t'}"
   # If we found a transcript for a non-running target, it was a CLI session.
   if [[ -z "$pid" && -n "$tp" ]]; then
     class="cli-agent"; detail="Claude Code CLI session (ended)"; consumes="API"
