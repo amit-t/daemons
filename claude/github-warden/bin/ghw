@@ -114,6 +114,18 @@ main() {
       ghw_members "$account" "$@"
       exit $?
       ;;
+    audit)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/audit.zsh"
+      ghw_audit "$account" "$@"
+      exit $?
+      ;;
+    stale)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/stale.zsh"
+      ghw_stale "$account" "$@"
+      exit $?
+      ;;
     import)
       local org="" script_mode=0
       local -a engine_args
