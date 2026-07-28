@@ -25,5 +25,22 @@ assert_contains "target in context" "$out" "INVENCO-GROUP/some-repo"
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP 2>&1); rc=$?
 assert_exit "import without csv exits 2" 2 $rc
 
-rm -rf "$work"
+# --script must export GH_TOKEN/GITHUB_TOKEN before handing off to the
+# gh-repo-mirror skill script, which authenticates via the gh CLI reading
+# those env vars — separate from the GHW_DRY_LAUNCH prompt assertions above.
+fake_home=$(mktemp -d)
+mkdir -p "${fake_home}/.claude/skills/gh-repo-mirror/scripts"
+cat > "${fake_home}/.claude/skills/gh-repo-mirror/scripts/mirror-repo.zsh" <<'EOF'
+#!/usr/bin/env zsh
+print -r -- "GH_TOKEN=${GH_TOKEN:-} GITHUB_TOKEN=${GITHUB_TOKEN:-} ARGS=$*"
+exit 0
+EOF
+
+out=$(HOME="$fake_home" zsh "$ghw_bin" mirror INVENCO-GROUP/some-repo --script --new-repo X 2>&1); rc=$?
+assert_exit "mirror --script launch ok" 0 $rc
+assert_contains "mirror --script exports GH_TOKEN" "$out" "GH_TOKEN=tok"
+assert_contains "mirror --script exports GITHUB_TOKEN" "$out" "GITHUB_TOKEN=tok"
+assert_contains "mirror --script passes ref-repo" "$out" "--ref-repo INVENCO-GROUP/some-repo"
+
+rm -rf "$work" "$fake_home"
 report

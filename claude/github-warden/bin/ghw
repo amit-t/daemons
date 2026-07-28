@@ -97,14 +97,14 @@ main() {
       exit 0
       ;;
     import)
-      local org="" team="" script_mode=0
+      local org="" script_mode=0
       local -a engine_args
       engine_args=()
       while (( $# )); do
         case "$1" in
           --script) script_mode=1; shift ;;
           --org) org="${2:-}"; engine_args+=(--org "${2:-}"); shift 2 ;;
-          --team) team="${2:-}"; engine_args+=(--team "${2:-}"); shift 2 ;;
+          --team) engine_args+=(--team "${2:-}"); shift 2 ;;
           --csv|--column|--role|--org-role) engine_args+=("$1" "${2:-}"); shift 2 ;;
           --dry-run) engine_args+=(--dry-run); shift ;;
           *) print -ru2 -- "ghw import: unknown flag: $1"; exit 2 ;;
@@ -117,6 +117,7 @@ main() {
       local profile
       profile=$(ghw_resolve_profile "$account" "$org") || exit 2
       ghw_token_for "$profile" || exit 2
+      typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
       engine_args+=(--account "$profile")
       if (( script_mode )); then
         exec zsh "${daemon_dir}/lib/import-engine.zsh" "${engine_args[@]}"
@@ -153,6 +154,7 @@ main() {
       local profile
       profile=$(ghw_resolve_profile "$account" "$owner") || exit 2
       ghw_token_for "$profile" || exit 2
+      typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
       if (( script_mode )); then
         exec zsh "${HOME}/.claude/skills/gh-repo-mirror/scripts/mirror-repo.zsh" --ref-repo "$target" "${passthru[@]}"
       fi
