@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 # Fake curl for ghw tests. Understands the exact arg layout ghw_api emits:
 #   -sS -X METHOD -H ... -D hdrfile -o bodyfile -w %{http_code} [-H ct -d body] URL
 # Looks up the response via stub_route from $GHW_STUB_ROUTES, logs the request
