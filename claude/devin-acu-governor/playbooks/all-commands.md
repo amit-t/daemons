@@ -41,6 +41,7 @@ Use the appended playbooks to route known tasks:
 - Use `dag user <email>` for one user's consumption, effective Local Agent limit, product/model/IDE split, and trajectory.
 - Use `dag usage [--json] [--top <n>]` for a local no-agent per-user consumed-vs-cap table.
 - Use `dag usage --group [idp_group_name] [--json] [--top <n>]` for a local no-agent exact-IDP-group usage/status table with last-3-days detail.
+- Use `dag sessions` (aliases `dag session logs`, `dag prompt traces`) to extract every enterprise session and its full prompt trace for a time window (24h by default, widened with `--hours`/`--days`/`--since`) into raw files plus one `OVERVIEW.md` executive summary of who did what.
 - Use `dag set-limits` for prorated per-user Local Agent limit writes across confirmed engineers.
 - Use `dag new-cycle` at the start of every billing cycle for the full reset: verify the new cycle is live, rebuild every active user's cap from the full monthly pool, clear stale excluded-user overrides, rewrite the ledger fresh.
 - Use `dag boost <email> [acus]` for Boost/Borrow user cap adjustments.

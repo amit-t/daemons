@@ -59,6 +59,9 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag status` | ❌ read-only | Enterprise burn, projection, org Local Agent caps, default user limit, top users/models |
 | `dag status --group [idp_group_name]` | ❌ read-only | Agent status report scoped to one exact IDP group; prompts when name is omitted; emphasizes last-3-days user patterns |
 | `dag status--group [idp_group_name]` | ❌ read-only | Alias-style compact spelling for `dag status --group` |
+| `dag sessions [flags…]` | ❌ read-only + local artifacts | Pull every enterprise session and its full prompt trace from Devin API v3 for a time window (24h default), write raw session data + per-session traces to files, then generate one `OVERVIEW.md` executive summary of who did what |
+| `dag session logs` / `dag session-logs` | ❌ read-only + local artifacts | Alias for `dag sessions` |
+| `dag prompt traces` / `dag prompt-traces` | ❌ read-only + local artifacts | Alias for `dag sessions` |
 | `dag models [file\|names…]` | ❌ report | Per-model burn + Admin Portal allowlist walkthrough |
 | `dag all commands [task…]` | ⚠️ gated by task | Generic Devin API/DAG command lab: fetches live docs index, seeds ACU/UsageConfig docs plus all DAG playbooks, handles ad hoc tasks, and turns good tasks into exact `dag ...` commands/specs when asked to "spin it up" |
 | `dag all-commands [task…]` | ⚠️ gated by task | Alias for `dag all commands` |
@@ -334,6 +337,81 @@ dag status--group Core Eng      # compact spelling
 
 `dag status --group` keeps `dag status` agent-driven, but seeds the playbook with the exact IDP group name and a GET-only scope. The agent must resolve membership through `/v3/enterprise/members/idp-users`, then report only those users with current-cycle usage/status and a detailed last-3-days pattern. It does not write.
 
+## `dag sessions` — session logs + prompt traces
+
+Read-only forensic extraction of what the enterprise actually ran. It pulls every Devin Cloud session inside a time window, pulls each session's full chronological prompt trace, writes the raw API responses to disk as a series of files, and then writes one `OVERVIEW.md` executive summary on top of them.
+
+Aliases: `dag session logs`, `dag session-logs`, `dag prompt traces`, `dag prompt-traces` — identical behavior, they only change the `requested shell command` line in the prompt.
+
+```zsh
+dag sessions                                        # last 24 hours, all orgs, with traces
+dag sessions --hours 72                             # widen the window
+dag sessions --days 7 --insights                    # a week, plus Devin's AI session analysis
+dag sessions --since 2026-07-01 --until 2026-07-07  # explicit calendar window
+dag sessions --since 1784000000                     # explicit epoch, running up to now
+dag session logs --org "Platform Eng" --no-traces   # metadata only, one org
+dag prompt-traces --user alice@corp.com --out ./audit
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--hours <n>` | `24` | Window length in hours, 1–8760 |
+| `--days <n>` | — | Window length in days, 1–365 (converted to hours) |
+| `--since <d>` | — | Window start: `YYYY-MM-DD` (00:00:00 local) or a Unix epoch |
+| `--until <d>` | now | Window end: `YYYY-MM-DD` (the **following** local midnight — the API window is half-open, so `--since 07-01 --until 07-07` covers all seven days with the 7th included) or a Unix epoch. Requires `--since` |
+| `--org <id\|name>` | all orgs | Scope to one org; names resolve through `/v3/enterprise/organizations` |
+| `--user <email>` | all users | Scope to one user; the email resolves through `/v3/enterprise/members/users` |
+| `--origin <o>` | all origins | One of `webapp, slack, teams, api, linear, jira, automation, cli, desktop, code_scan, other` |
+| `--out <dir>` | `$DAG_STATE_DIR/sessions/<run id>` | Artifact directory |
+| `--no-traces` | traces on | Session metadata only; skip the per-session message fetch |
+| `--insights` | off | Also read `/v3/enterprise/sessions/insights` for message counts, session size, and Devin's AI analysis |
+| `--max-sessions <n>` | unlimited | Keep the highest-ACU `n` sessions; the dropped count is recorded in the manifest **and** the overview |
+
+`--hours`, `--days`, and `--since` are mutually exclusive. The window is resolved to exact epochs by `lib/sessions.zsh` before the agent starts, so the agent never does date arithmetic — it receives `created_after`/`created_before` values and a fixed artifact layout in Run context. `DAG_SESSIONS_NOW` pins "now" for deterministic tests and replays.
+
+### Verified API semantics
+
+These were curl-verified live against the enterprise on 2026-07-28 and drive the playbook's flow:
+
+- `GET /v3/enterprise/sessions` returns **every org in one cursor stream** (`first=N`, opaque URL-encoded `after`, loop while `has_next_page`), newest-first by `created_at`. The per-org endpoint exists but costs N calls for the same data.
+- The window filter is `created_after`/`created_before`, Unix epoch seconds, **half-open `[created_after, created_before)`** — lower bound inclusive, upper exclusive. That is why a bare `--until` date resolves to the following midnight.
+- `time_after`/`time_before` are **accepted and silently ignored** — HTTP 200 with a byte-identical unfiltered body. The playbook forbids them; sending one would quietly report all of history as if it were the window.
+- Window membership is by `created_at` only. A session created before the window but updated inside it is not included; the overview says so and points at `--since`/`--hours`.
+- Every other documented filter (`user_ids`, `org_ids`, `origins`, …) is unverified here, and unknown parameters are ignored rather than rejected — so `--org`/`--user`/`--origin` are applied **client-side** on the fetched window. Correctness over one saved round trip.
+- Session **detail** (`/v3/organizations/{org_id}/sessions/{session_id}`) returns byte-for-byte the list item — metadata only, no prompts. The playbook does not call it.
+- Prompt traces come from `GET /v3/organizations/{org_id}/sessions/{session_id}/messages`, using the raw `session_id` with **no `devin-` prefix**. Events are oldest-first, `total` is always `null` (loop on `has_next_page`, never a count), and cursors must be URL-encoded.
+- Session rows carry an opaque `user_id` (containing `|`) and no email, so the roster from `/v3/enterprise/members/users` is what turns the report into "who did what". Unmatched ids are reported under `service_user_id` or the raw id rather than dropped.
+
+### What a prompt trace does *not* contain
+
+The messages endpoint exposes the **visible conversation only** — user prompts and Devin's chat replies. Devin API v3 exposes no tool calls, shell commands, command output, code edits, browser actions, or internal reasoning; the `/events` and `/logs` subresources both return `404`. A coding session that burned thousands of ACUs still exposes only its handful of chat events. `OVERVIEW.md` is required to state this, so nobody mistakes the output for a full execution log. Attachments appear inline inside the message string as `ATTACHMENT:{"url":…,"fileSize":…}`; there is no separate attachment field.
+
+### Artifacts
+
+Everything lands in the output directory under fixed names:
+
+| Path | Content |
+|---|---|
+| `manifest.json` | Run metadata: window and its basis, filters, endpoints called, page counts, pre/post-filter item counts, per-session trace status, truncation record, error count |
+| `sessions.json` | The enterprise-stream session index for the window, session objects verbatim from the API |
+| `sessions.ndjson` | The same objects, one per line, for `jq`/`grep` streaming |
+| `insights.json` | `/v3/enterprise/sessions/insights` output — only when `--insights` was passed and the call succeeded |
+| `traces/<session_id>.json` | Self-contained raw record: `{session_id, org_id, session: <list metadata>, messages: [<verbatim, oldest-first>]}` |
+| `traces/<session_id>.md` | Readable transcript of the same trace |
+| `users.json` / `organizations.json` | Roster snapshots used for the `user_id` → email and `org_id` → name maps |
+| `errors.log` | One line per failed call: timestamp, status, endpoint, exact response body. Empty on a clean run |
+| `OVERVIEW.md` | The executive summary, written last |
+
+`OVERVIEW.md` follows a fixed template: executive summary, at-a-glance metrics, **who did what** (per-user table plus a short narrative of each person's actual tasks, drawn from session titles and opening prompts), org breakdown, work themes, notable sessions, prompt-trace observations, risks and anomalies, recommended next `dag` commands, and a coverage/caveats section that states every gap.
+
+### Safety notes
+
+- **API-read-only.** No PATCH/POST/PUT/DELETE against any Devin endpoint. `--insights` reads existing analysis; it never calls `insights/generate`.
+- **Raw before summary.** `sessions.json` and every `traces/*.json` are verbatim API output; the overview is derived from them, never the reverse. A failed fetch goes to `errors.log` — it is never filled in with an estimate.
+- **No silent truncation.** Any cap, fetch failure, or missing trace appears in both `manifest.json` and the overview's caveats section. So do the two structural limits: the `created_at` window basis and the visible-conversation-only trace depth.
+- **The output directory is sensitive.** It contains full prompt text, which can include user-pasted credentials. The playbook `chmod 700`s the directory, flags any session whose trace looks like it holds a secret, and never reproduces the secret in `OVERVIEW.md`.
+- Requires the enterprise session-view scope on the `cog_` service user — `ViewOrgSessions` in `dag doctor`, `ViewAccountSessions` in the current API reference — plus `ViewAccountMembership` for the roster map that turns opaque `user_id`s into names. The configured DAG key held both at verification time. A `403` stops the run with the exact response body and the permission to add.
+
 ## `dag models [file | names…]`
 
 Read-only model governance. Requires the optional Windsurf key for model-level ACU burn.
@@ -505,6 +583,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit; useful for verifying included playbooks, run context, and global instructions |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |
+| `DAG_SESSIONS_NOW` | unset | Pin `dag sessions` "now" epoch for deterministic tests and replayed runs |
 | `DAG_API_BASE_V3` | `https://api.devin.ai` | Devin v3/v3beta1 base URL |
 | `DAG_API_BASE` | `https://server.codeium.com` | Windsurf base URL |
 | `DAG_FETCH_RETRIES` | `3` | Dashboard: retries for transient fetch failures (429/502/503/504, transport) |
@@ -526,7 +605,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 - Math lives in jq, not agent mental arithmetic.
 - Direct cap headroom policy in every flow: default plans pass `max_headroom: 250` to the jq programs; 250–500 only on explicit in-session user request; above 500 never — the jq built-in 500 default is the backstop clamp, and raising it means changing repository policy, not a session instruction.
 - Writes require the exact in-session token `CONFIRM DAG WRITE` after the preview; shell commands, scope confirmations, and requested increments are planning input only.
-- `playbooks/_common.md` carries a DAG execution contract: the assembled prompt is the complete DAG policy for the session, conflicting saved memories/global instructions are ignored, and dag sessions never modify, commit, or push repository files.
+- `playbooks/_common.md` carries a DAG execution contract: the assembled prompt is the complete DAG policy for the session, conflicting saved memories/global instructions are ignored, and dag sessions never modify, commit, or push repository files. The one carve-out is report artifacts: a playbook that names a Run-context output directory (currently only `sessions`) may write its report files there without a `CONFIRM DAG WRITE` token, because those are local read-only reporting artifacts rather than API or ledger state.
+- `dag sessions` is API-read-only and writes only into its own output directory; that directory holds verbatim prompt text and is `chmod 700`ed, with suspected credentials flagged by session id and never reproduced in the overview.
 - Windsurf consumption calls are rate-limit aware.
 - Keys never appear in prompts, stdout, generated dashboard files, or ledgers.
 
@@ -549,7 +629,9 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` | GET/PATCH | set-limits, boost, user, dashboard, usage |
 | `/v3beta1/enterprise/users/consumption/acu-limits` | GET | status, user, dashboard, usage, doctor |
 | `/v3/enterprise/metrics/usage` | GET | doctor |
-| `/v3/enterprise/sessions` | GET | dashboard (per-user Devin Cloud session stats; degrades if unavailable) |
+| `/v3/enterprise/sessions` | GET | sessions (all-org stream, `created_after`/`created_before` window), dashboard (per-user Devin Cloud session stats; degrades if unavailable) |
+| `/v3/organizations/{org_id}/sessions/{session_id}/messages` | GET | sessions (prompt traces; raw `session_id`, oldest-first, `total` always null) |
+| `/v3/enterprise/sessions/insights` | GET | sessions `--insights` (message counts, session size, AI analysis; documented, not live-verified) |
 | `/api/v2alpha/analytics/consumption` | GET | set-limits, boost, user, status, models, dashboard (per-user model/IDE split; TTL-cached) |
 | `/api/v1/UserPageAnalytics` | POST | user, doctor |
 | `https://docs.devin.ai/llms.txt` | GET | all commands, models doc re-check |
@@ -566,13 +648,14 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `lib/doctor.zsh` | Local capability probe |
 | `lib/dashboard.zsh` / `lib/dashboard.jq` | Dashboard data fetch + forecast math, one-time app build, localhost server |
 | `lib/usage.zsh` / `lib/usage.jq` | Local `dag usage` per-user consumed-vs-cap fetch + ratio table math |
+| `lib/sessions.zsh` | `dag sessions` flag parsing, time-window resolution, artifact-path planning, Run-context lines (no API calls, no writes) |
 | `web/dashboard-app/` | React dashboard app (Vite + recharts); `dist/` and `node_modules/` are gitignored, built on first `dag dashboard` run |
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,new-cycle,boost,over,user,status,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,new-cycle,boost,over,user,status,sessions,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
@@ -596,10 +679,14 @@ DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --def status
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits alice@corp.com
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag new-cycle
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag sessions                # default 24h window
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag sessions --hours 72
+DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag prompt traces --insights
+DAG_SESSIONS_NOW=1785000000 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag sessions   # pinned, reproducible epochs
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math (including the consumed+500 headroom clamp with and without an explicit increment, donor `run_rate` projected floors, and projected-surplus donor ranking), zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation), CLI prompt assembly (`new-cycle` guard/ledger context and no-arg validation included), all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, and `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards.
+Test coverage spans key resolution, setup-extract command generation, cap math, Boost/Borrow math (including the consumed+500 headroom clamp with and without an explicit increment, donor `run_rate` projected floors, and projected-surplus donor ranking), zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation), CLI prompt assembly (`new-cycle` guard/ledger context and no-arg validation included), all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery and graceful per-user/default ACU-limit degradation, `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards, and `dag sessions` dispatch across all four aliases, window resolution (default 24h, `--hours`/`--days`/epoch/date forms, half-open `--until` boundary, mutual-exclusion and range validation), filter/option flag validation, artifact-path planning, key-leak and launcher-selection guards, and prompt assembly of the output-file contract, executive-summary template, and the live-verified API semantics (half-open `created_at` window, banned `time_after`/`time_before`, client-side filtering, visible-conversation-only trace depth).
 
 ## Troubleshooting
 

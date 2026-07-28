@@ -67,6 +67,17 @@ Usage:
   dag status --group [idp_group_name]
   dag status--group [idp_group_name]
                               Agent status report scoped to one IDP group; prompts if omitted
+  dag sessions [--hours <n>|--days <n>|--since <d> [--until <d>]] [--org <o>]
+               [--user <email>] [--origin <o>] [--out <dir>] [--no-traces]
+               [--insights] [--max-sessions <n>]
+                              Pull every org session and its prompt trace from Devin API v3
+                              for the last 24 hours (default), write the raw session data and
+                              per-session traces to files, then generate one OVERVIEW.md
+                              executive summary of who did what (read-only)
+  dag session logs [flags...]      Alias for: dag sessions
+  dag session-logs [flags...]      Alias for: dag sessions
+  dag prompt traces [flags...]     Alias for: dag sessions
+  dag prompt-traces [flags...]     Alias for: dag sessions
   dag models [file|names...]  Per-model burn report + Admin Portal allowlist walkthrough
   dag all commands [task...]  Open a generic Devin API/DAG lab seeded with docs + all playbooks
   dag all-commands [task...]  Alias for: dag all commands
@@ -91,6 +102,10 @@ Examples:
   dag --def status
   dag set-limits alice@corp.com
   dag boost over
+  dag sessions
+  dag sessions --hours 72 --insights
+  dag session logs --days 7 --org "Platform Eng"
+  dag prompt-traces --user alice@corp.com --out ./audit
 
 Config (environment.env; shell env vars override):
   DAG_MONTHLY_ACU_POOL       monthly ACU pool (default 24000)
@@ -106,10 +121,11 @@ Config (environment.env; shell env vars override):
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
+  DAG_SESSIONS_NOW           pin `dag sessions` "now" epoch (deterministic tests/replays)
 
 Keys, one-time setup:
   Required — Devin API v3 service-user key (app.devin.ai > Settings > Service users,
-  enterprise-scoped, permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions + ViewAccountMetrics + ViewAccountMembership):
+  enterprise-scoped, permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions/ViewAccountSessions + ViewAccountMetrics + ViewAccountMembership):
     security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_...'
     Fallback: export DEVIN_COG_KEY=cog_...
   Optional — Windsurf service key (windsurf.com/team/settings; Analytics Read +
@@ -202,7 +218,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new new-cycle boost over user status models; do
+    for playbook in set-limits set-limits-new new-cycle boost over user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -441,6 +457,33 @@ main() {
         "usage focus: detailed per-user current-cycle usage/status, plus last 3 days daily/product pattern"
         "no writes: GET-only status mode"
       )
+      ;;
+    sessions|session-logs|prompt-traces)
+      local sessions_invoked="$cmd"
+      cmd="sessions"
+      source "${daemon_dir}/lib/sessions.zsh"
+      dag_sessions_parse "$sessions_invoked" "$@" || exit $?
+      dag_sessions_context
+      context_lines=("${_dag_sessions_context[@]}")
+      ;;
+    session|prompt)
+      # Two-word spellings: `dag session logs`, `dag prompt traces`.
+      local sessions_invoked=""
+      if [[ "$cmd" == "session" && "${1:-}" == "logs" ]]; then
+        sessions_invoked="session logs"
+      elif [[ "$cmd" == "prompt" && "${1:-}" == "traces" ]]; then
+        sessions_invoked="prompt traces"
+      else
+        print -ru2 -- "dag: unknown command '${cmd} ${1:-}' (expected: dag session logs, or dag prompt traces)"
+        dag_usage >&2
+        exit 2
+      fi
+      shift
+      cmd="sessions"
+      source "${daemon_dir}/lib/sessions.zsh"
+      dag_sessions_parse "$sessions_invoked" "$@" || exit $?
+      dag_sessions_context
+      context_lines=("${_dag_sessions_context[@]}")
       ;;
     all)
       if [[ "${1:-}" != "commands" ]]; then
