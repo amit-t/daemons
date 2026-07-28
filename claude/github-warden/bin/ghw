@@ -102,6 +102,18 @@ main() {
       ghw_doctor "$@"
       exit $?
       ;;
+    status)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/status.zsh"
+      ghw_status "$account" "$@"
+      exit $?
+      ;;
+    members)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/members.zsh"
+      ghw_members "$account" "$@"
+      exit $?
+      ;;
     import)
       local org="" script_mode=0
       local -a engine_args
