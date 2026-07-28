@@ -176,7 +176,7 @@ aico --events --unread
 # {"type":"aico_event","version":1,"agent":"Devin","state":"needs_input","severity":"action_required",...}
 ```
 
-When new unread events exist, the daemon sends Codex a fixed control notice, not raw agent output:
+When new unread events exist, the daemon sends Codex a fixed control notice (written with `cmux send`, then submitted with `cmux send-key ... Enter`), not raw agent output:
 
 ```text
 <<<AICO_DAEMON_NOTICE_V1

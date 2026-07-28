@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { detectClaudeUsageLimit } from "./claude-auto-resume.ts";
-import { defaultRunner, type CommandResult, type CommandRunner, type OrchestratorContext } from "./orchestrator.ts";
+import { defaultRunner, sendCmuxTextAndEnter, type CommandResult, type CommandRunner, type OrchestratorContext } from "./orchestrator.ts";
 import { isManagedAgentSurfaceTitle, type ManagedAgentName } from "./panel-titles.ts";
 
 export const DEVIN_POLL_DISABLE_FLAG = "AICO_DEVIN_POLL_DAEMON";
@@ -331,17 +331,13 @@ export async function scanDevinSurfacesOnce(
           noticeId: daemonNoticeId(registration.workspaceId, now),
           createdAt: now.toISOString(),
         });
-        const result = await runner("cmux", [
-          "send",
-          "--workspace",
-          registration.workspaceId,
-          ...windowArgs(registration.windowId),
-          "--surface",
-          orchestratorSurfaceId,
-          "--",
-          notice,
-        ]);
-        if (result.code !== 0) throw new Error(exactFailure("cmux send", result));
+        await sendCmuxTextAndEnter({
+          runner,
+          workspaceId: registration.workspaceId,
+          windowId: registration.windowId,
+          surfaceId: orchestratorSurfaceId,
+          text: notice,
+        });
         registration.lastNotifiedAt = now.toISOString();
       }
     } catch (error) {

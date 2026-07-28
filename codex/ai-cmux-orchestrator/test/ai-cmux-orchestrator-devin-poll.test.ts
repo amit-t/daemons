@@ -17,6 +17,16 @@ function commandKey(args: string[]): string {
   return args.join(" ");
 }
 
+const noticeEnterKey = commandKey(["cmux", "send-key", "--workspace", "workspace-uuid", "--window", "window-uuid", "--surface", "surface:codex", "Enter"]);
+
+function expectNoticeSubmitted(calls: string[][], sendCount: number): void {
+  const sendIndexes = calls.map((call, index) => (call[1] === "send" ? index : -1)).filter((index) => index >= 0);
+  const enterIndexes = calls.map((call, index) => (call[1] === "send-key" && call.at(-1) === "Enter" ? index : -1)).filter((index) => index >= 0);
+  expect(sendIndexes).toHaveLength(sendCount);
+  expect(enterIndexes).toHaveLength(sendCount);
+  for (let i = 0; i < sendCount; i += 1) expect(enterIndexes[i]).toBeGreaterThan(sendIndexes[i]);
+}
+
 function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerResponse[]>): { runner: CommandRunner; calls: string[][] } {
   const calls: string[][] = [];
   const queues = new Map(
@@ -300,13 +310,14 @@ Waiting for your input before continuing.
           createdAt: "2026-06-02T15:05:00.000Z",
         }),
       ])]: { stdout: "sent" },
+      [noticeEnterKey]: { stdout: "sent" },
     });
 
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:05:00.000Z"));
     const jsonl = formatUnreadDevinPollEventsJsonl(state);
     const parsed = JSON.parse(jsonl.trim());
 
-    expect(calls.filter((call) => call[1] === "send")).toHaveLength(1);
+    expectNoticeSubmitted(calls, 1);
     expect(parsed.agent).toBe("Codex");
     expect(parsed.state).toBe("needs_input");
     expect(parsed.summary).toContain("Codex needs user input");
@@ -378,12 +389,13 @@ Waiting for your input before I continue.
           createdAt: "2026-06-02T15:05:00.000Z",
         }),
       ])]: { stdout: "sent" },
+      [noticeEnterKey]: { stdout: "sent" },
     });
 
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:05:00.000Z"));
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:06:00.000Z"));
 
-    expect(calls.filter((call) => call[1] === "send")).toHaveLength(1);
+    expectNoticeSubmitted(calls, 1);
     expect(calls.find((call) => call[1] === "send")?.at(-1)).toContain("<<<AICO_DAEMON_NOTICE_V1");
     expect(calls.find((call) => call[1] === "send")?.at(-1)).not.toContain("Plan prepared from the handoff");
     expect(state.registrations[0].lastInputRequestFingerprint).toBeTruthy();
@@ -458,13 +470,14 @@ Waiting for your input before I continue.
           createdAt: "2026-06-02T15:05:00.000Z",
         }),
       ])]: { stdout: "sent" },
+      [noticeEnterKey]: { stdout: "sent" },
     });
 
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:05:00.000Z"));
     const jsonl = formatUnreadDevinPollEventsJsonl(state);
     const parsed = JSON.parse(jsonl.trim());
 
-    expect(calls.filter((call) => call[1] === "send")).toHaveLength(1);
+    expectNoticeSubmitted(calls, 1);
     expect(parsed.agent).toBe("Claude");
     expect(parsed.state).toBe("usage_limited");
     expect(parsed.summary).toContain("Claude usage-limited");
@@ -527,13 +540,14 @@ Waiting for your input before I continue.
           createdAt: "2026-06-02T15:10:00.000Z",
         }),
       ])]: { stdout: "sent" },
+      [noticeEnterKey]: [{ stdout: "sent" }, { stdout: "sent" }],
     });
 
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:00:00.000Z"));
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:05:00.000Z"));
     await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:10:00.000Z"));
 
-    expect(calls.filter((call) => call[1] === "send")).toHaveLength(2);
+    expectNoticeSubmitted(calls, 2);
     expect(state.events.filter((event) => event.type === "aico_event" && event.state === "blocked")).toHaveLength(2);
   });
 });
