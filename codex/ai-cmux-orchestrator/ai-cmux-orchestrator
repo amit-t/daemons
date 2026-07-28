@@ -1,0 +1,94 @@
+#!/usr/bin/env bun
+import { parseAiCmuxOrchestratorArgs } from "./src/ai-cmux-orchestrator/args.ts";
+import { loadAiCmuxOrchestratorEnv } from "./src/ai-cmux-orchestrator/config.ts";
+import { runAgentLauncher } from "./src/ai-cmux-orchestrator/agent-launch.ts";
+import { runAiCmuxOrchestratorDaemon } from "./src/ai-cmux-orchestrator/watcher-daemon.ts";
+import { buildOrchestratorPrompt, orchestratorHelpText, prepareOrchestrator } from "./src/ai-cmux-orchestrator/orchestrator.ts";
+import { buildResetStatusText, resetAiCmuxWorkspace } from "./src/ai-cmux-orchestrator/reset.ts";
+import {
+  FileClaudeAutoResumeStore,
+  claudeAutoResumeStatePath,
+  ensureClaudeAutoResumeDaemon,
+  loadClaudeAutoResumeStatus,
+  registerClaudeSurfaceFromOrchestratorContext,
+  stopClaudeAutoResumeDaemon,
+} from "./src/ai-cmux-orchestrator/claude-auto-resume.ts";
+import {
+  FileDevinPollStore,
+  devinPollStatePath,
+  loadDevinPollStatus,
+  loadUnreadDevinPollEvents,
+  registerDevinPollFromOrchestratorContext,
+} from "./src/ai-cmux-orchestrator/devin-poll.ts";
+
+const args = parseAiCmuxOrchestratorArgs(process.argv);
+
+if (args.help) {
+  console.log(orchestratorHelpText());
+  process.exit(0);
+}
+
+if (args.agentError) {
+  console.error(`aico: ${args.agentError}`);
+  process.exit(2);
+}
+
+const orchestratorEnv = loadAiCmuxOrchestratorEnv(process.env);
+const autoResumeStore = new FileClaudeAutoResumeStore(claudeAutoResumeStatePath(orchestratorEnv));
+const devinPollStore = new FileDevinPollStore(devinPollStatePath(orchestratorEnv));
+
+if (args.status) {
+  console.log(`${await loadClaudeAutoResumeStatus(autoResumeStore)}\n\n${await loadDevinPollStatus(devinPollStore)}`);
+  process.exit(0);
+}
+
+if (args.events) {
+  process.stdout.write(await loadUnreadDevinPollEvents(devinPollStore, { markRead: args.unread, now: new Date() }));
+  process.exit(0);
+}
+
+if (args.stopDaemon) {
+  const stopped = await stopClaudeAutoResumeDaemon(orchestratorEnv);
+  console.log(stopped.stopped ? `Stopped AICO watcher daemon pid ${stopped.pid}.` : `AICO watcher daemon not stopped: ${stopped.reason || "not running"}.`);
+  process.exit(stopped.stopped || stopped.reason === "not running" ? 0 : 1);
+}
+
+if (args.reset) {
+  const result = await resetAiCmuxWorkspace({
+    env: orchestratorEnv,
+    beforeClose: async () => {
+      await stopClaudeAutoResumeDaemon(orchestratorEnv);
+    },
+  });
+  console.log(buildResetStatusText(result));
+  process.exit(result.mode === "reset" ? 0 : result.mode === "blocked" ? 2 : 1);
+}
+
+if (args.daemon) {
+  await runAiCmuxOrchestratorDaemon({ claudeStore: autoResumeStore, devinStore: devinPollStore, env: orchestratorEnv });
+}
+
+const prepared = await prepareOrchestrator({ cwd: process.cwd(), env: orchestratorEnv });
+
+if (prepared.mode === "handoff") {
+  console.log(prepared.message);
+  process.exit(0);
+}
+
+if (prepared.mode === "error") {
+  console.error(prepared.message);
+  if (prepared.stderr) console.error(prepared.stderr.trim());
+  process.exit(1);
+}
+
+try {
+  await registerClaudeSurfaceFromOrchestratorContext(prepared.context, orchestratorEnv.CMUX_WINDOW_ID, autoResumeStore);
+  await registerDevinPollFromOrchestratorContext(prepared.context, orchestratorEnv.CMUX_WINDOW_ID, devinPollStore);
+  await ensureClaudeAutoResumeDaemon(orchestratorEnv);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`AICO watcher daemon warning: ${message}`);
+}
+
+const prompt = `${buildOrchestratorPrompt(prepared.context, args.agent)}${args.prompt ? `\n\n## Initial user request\n${args.prompt}` : ""}`;
+await runAgentLauncher(args.agent, prompt, process.cwd());

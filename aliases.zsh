@@ -1,22 +1,22 @@
 #!/usr/bin/env zsh
 # Global daemon entrypoints sourced by Profiles.
 
-ai-cmux-conductor() {
-  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/codex/ai-cmux-conductor/bin/ai-cmux-conductor"
+ai-cmux-orchestrator() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/codex/ai-cmux-orchestrator/bin/ai-cmux-orchestrator"
 
   if [[ ! -x "$daemon_entry" ]]; then
-    print -ru2 -- "ai-cmux-conductor: missing daemon entrypoint at $daemon_entry"
+    print -ru2 -- "ai-cmux-orchestrator: missing daemon entrypoint at $daemon_entry"
     return 127
   fi
 
   "$daemon_entry" "$@"
 }
 
-aicc() {
-  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/codex/ai-cmux-conductor/bin/aicc"
+aico() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/codex/ai-cmux-orchestrator/bin/aico"
 
   if [[ ! -x "$daemon_entry" ]]; then
-    print -ru2 -- "aicc: missing daemon entrypoint at $daemon_entry"
+    print -ru2 -- "aico: missing daemon entrypoint at $daemon_entry"
     return 127
   fi
 
@@ -56,14 +56,14 @@ cas() {
   "$daemon_entry" "$@"
 }
 
-# Dotted shorthands: cx = base aicc (codex parent), cl = claude-parent aicc.
-alias cx.aicc='aicc'
-alias cl.aicc='aicc --claude'
+# Dotted shorthands: cx = base aico (codex parent), cl = claude-parent aico.
+alias cx.aico='aico'
+alias cl.aico='aico --claude'
 
 # Parent-agent shorthands: same daemons, different base agent. Kid agents unchanged.
-aicc--claude() { aicc --agent claude "$@" }
-aicc--codex()  { aicc --agent codex "$@" }
-aicc--devin()  { aicc --agent devin "$@" }
+aico--claude() { aico --agent claude "$@" }
+aico--codex()  { aico --agent codex "$@" }
+aico--devin()  { aico --agent devin "$@" }
 dag--claude()  { dag --agent claude "$@" }
 dag--codex()   { dag --agent codex "$@" }
 dag--devin()   { dag --agent devin "$@" }

@@ -8,7 +8,7 @@ This repository owns daemon source code for Amit.
 - `/Users/amittiwari/Profiles` is only a global exposure layer: PATH wrappers and shell sourcing may delegate here.
 - Codex-related daemons live under `codex/<daemon-name>/`.
 - Claude-powered daemons live under `claude/<daemon-name>/`; their runtime is a Claude agent session launched from a thin zsh wrapper.
-- Namespace each daemon's source under its own name, for example `src/ai-cmux-conductor/`.
+- Namespace each daemon's source under its own name, for example `src/ai-cmux-orchestrator/`.
 - Do not introduce generic daemon-runtime directory names for Codex daemons; use daemon-specific names.
 
 ## Documentation rule

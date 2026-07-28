@@ -1,0 +1,19 @@
+{
+  "name": "ai-cmux-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "cMUX AI orchestrator that launches a base Codex orchestrator with configurable Claude, Codex, and Devin side panes",
+  "type": "module",
+  "bin": {
+    "ai-cmux-orchestrator": "./ai-cmux-orchestrator",
+    "aico": "./ai-cmux-orchestrator"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
