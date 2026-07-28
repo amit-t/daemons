@@ -96,6 +96,12 @@ main() {
       ghw_usage
       exit 0
       ;;
+    doctor)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/doctor.zsh"
+      ghw_doctor "$@"
+      exit $?
+      ;;
     import)
       local org="" script_mode=0
       local -a engine_args
