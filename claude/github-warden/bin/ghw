@@ -42,9 +42,32 @@ Config (env):
 EOF
 }
 
+ghw_build_prompt() {  # $1 playbook name, rest = run-context lines
+  local playbook="$1"; shift
+  cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${playbook}.md"
+  print -r -- ""
+  print -r -- "## Run context"
+  print -r -- "- today: $(date +%F)"
+  print -r -- "- daemon dir: ${daemon_dir}"
+  print -r -- "- state dir: ${GHW_STATE_DIR}"
+  local line
+  for line in "$@"; do print -r -- "- ${line}"; done
+}
+
+ghw_launch() {  # $1 prompt — exports token for gh CLI, hands off to launcher
+  local prompt="$1"
+  typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+  if [[ -n "${GHW_DRY_LAUNCH:-}" ]]; then
+    print -r -- "$prompt"
+    return 0
+  fi
+  exec ${=GHW_LAUNCHER:-clscb} "$prompt"
+}
+
 main() {
   : ${GHW_STATE_DIR:=${HOME}/.local/state/github-warden}
   typeset -gx GHW_STATE_DIR
+  source "${daemon_dir}/lib/auth.zsh"
   local account=""
   while (( $# )); do
     case "${1:-}" in
@@ -72,6 +95,74 @@ main() {
     help|-h|--help)
       ghw_usage
       exit 0
+      ;;
+    import)
+      local org="" team="" script_mode=0
+      local -a engine_args
+      engine_args=()
+      while (( $# )); do
+        case "$1" in
+          --script) script_mode=1; shift ;;
+          --org) org="${2:-}"; engine_args+=(--org "${2:-}"); shift 2 ;;
+          --team) team="${2:-}"; engine_args+=(--team "${2:-}"); shift 2 ;;
+          --csv|--column|--role|--org-role) engine_args+=("$1" "${2:-}"); shift 2 ;;
+          --dry-run) engine_args+=(--dry-run); shift ;;
+          *) print -ru2 -- "ghw import: unknown flag: $1"; exit 2 ;;
+        esac
+      done
+      if [[ -z "$org" || " ${engine_args[*]} " != *" --csv "* ]]; then
+        print -ru2 -- "ghw import: --org and --csv are required"
+        exit 2
+      fi
+      local profile
+      profile=$(ghw_resolve_profile "$account" "$org") || exit 2
+      ghw_token_for "$profile" || exit 2
+      engine_args+=(--account "$profile")
+      if (( script_mode )); then
+        exec zsh "${daemon_dir}/lib/import-engine.zsh" "${engine_args[@]}"
+      fi
+      local prompt
+      prompt=$(ghw_build_prompt import \
+        "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))" \
+        "engine command: zsh ${daemon_dir}/lib/import-engine.zsh ${engine_args[*]}" \
+        "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it.")
+      ghw_launch "$prompt"
+      ;;
+    mirror)
+      local target="" script_mode=0
+      local -a passthru
+      passthru=()
+      while (( $# )); do
+        case "$1" in
+          --script) script_mode=1; shift ;;
+          --*) passthru+=("$1" "${2:-}"); shift 2 ;;
+          *) target="$1"; shift ;;
+        esac
+      done
+      local owner=""
+      if [[ -n "$target" ]]; then
+        owner="${${target#https://github.com/}%%/*}"
+      elif git -C "$PWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        target=$(git -C "$PWD" remote get-url origin 2>/dev/null)
+        owner="${${${target#https://github.com/}#git@github.com:}%%/*}"
+      fi
+      if [[ -z "$target" ]]; then
+        print -ru2 -- "ghw mirror: pass a repo/URL or run inside a git repo with an origin remote"
+        exit 2
+      fi
+      local profile
+      profile=$(ghw_resolve_profile "$account" "$owner") || exit 2
+      ghw_token_for "$profile" || exit 2
+      if (( script_mode )); then
+        exec zsh "${HOME}/.claude/skills/gh-repo-mirror/scripts/mirror-repo.zsh" --ref-repo "$target" "${passthru[@]}"
+      fi
+      local prompt
+      prompt=$(ghw_build_prompt mirror \
+        "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))" \
+        "reference target: ${target}" \
+        "pass-through flags: ${passthru[*]:-'(none — interview Amit)'}" \
+        "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it.")
+      ghw_launch "$prompt"
       ;;
     *)
       print -ru2 -- "ghw: unknown command: ${cmd}"
