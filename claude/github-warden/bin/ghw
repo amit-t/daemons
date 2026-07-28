@@ -1,0 +1,84 @@
+#!/usr/bin/env zsh
+# ghw — github-warden: GitHub org/repo management daemon.
+# Thin launcher: resolves the account profile + token, runs deterministic
+# read-only commands locally, and hands mutating flows (mirror, import) to a
+# clscb playbook session whose writes go only through lib/ engine scripts.
+set -u
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+ghw_usage() {
+  cat <<'EOF'
+ghw — github-warden: GitHub org/repo management daemon
+
+Usage:
+  ghw [--account personal|inv] <command ...>
+                              --account picks the credential profile; omitted, ghw
+                              infers it from the target org/owner via config/accounts.json.
+  ghw mirror [<repo|url>] [flags...]
+                              Launch an agent that scaffolds a new repo mirroring a
+                              reference repo (gh-repo-mirror skill). Bare inside a git
+                              repo: reference = origin. --script runs
+                              mirror-repo.zsh directly (pass its flags through).
+  ghw import --org <org> [--team <slug>] --csv <file> [--column login]
+             [--role member|maintainer] [--org-role member] [--dry-run] [--script]
+                              Reconcile logins into an org/team. Add-only, idempotent,
+                              never demotes an existing member. --script skips the agent
+                              and runs the deterministic engine directly.
+  ghw doctor                  Check every profile: token, login, scopes, org admin role.
+  ghw status [--org <org>]    Org overview: repos, members, teams (read-only).
+  ghw audit --org <org> [--ref <owner/repo>]
+                              Settings/security/branch-protection drift vs reference repo.
+  ghw stale --org <org> [--months <n>]
+                              Archive candidates: inactive/empty repos (read-only).
+  ghw members --org <org> [--csv <out>] [--json]
+                              Membership report: roles, teams, 2FA, outside collaborators.
+  ghw help                    Show this help.
+
+Config (env):
+  GHW_TOKEN_PERSONAL / GHW_TOKEN_INV   tokens per profile (see config/accounts.json)
+  GHW_LAUNCHER                         agent launcher for mirror/import (default clscb)
+  GHW_STATE_DIR                        reports/state dir (default ~/.local/state/github-warden)
+EOF
+}
+
+main() {
+  : ${GHW_STATE_DIR:=${HOME}/.local/state/github-warden}
+  typeset -gx GHW_STATE_DIR
+  local account=""
+  while (( $# )); do
+    case "${1:-}" in
+      --account=*) account="${1#--account=}"; shift ;;
+      --account)
+        account="${2:-}"
+        if [[ -z "$account" ]]; then
+          print -ru2 -- "ghw: --account expects a profile name"
+          exit 2
+        fi
+        shift 2
+        ;;
+      *) break ;;
+    esac
+  done
+
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    ghw_usage >&2
+    exit 2
+  fi
+  shift
+
+  case "$cmd" in
+    help|-h|--help)
+      ghw_usage
+      exit 0
+      ;;
+    *)
+      print -ru2 -- "ghw: unknown command: ${cmd}"
+      ghw_usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
