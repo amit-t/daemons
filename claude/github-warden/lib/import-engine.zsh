@@ -50,18 +50,44 @@ ghw_precheck "$profile" "$org" "$team" || exit 5
 job_id="$(date +%Y%m%dT%H%M%S)-${org}${team:+-${team}}"
 ghw_report_init "$job_id"
 
-fetch_org_members() { ghw_api_paged "/orgs/${org}/members" | jq -r '.[].login' }
-fetch_team_members() { ghw_api_paged "/orgs/${org}/teams/${team}/members" | jq -r '.[].login' }
+fetch_org_members() { ghw_api_paged "/orgs/${org}/members" }
+fetch_team_members() { ghw_api_paged "/orgs/${org}/teams/${team}/members" }
 
 typeset -A in_org in_team
 # ADAPTATION: brief said `local u` — again top-level script body, not a
 # function; `local` would error/be meaningless there. Use `typeset`.
-typeset u
-for u in ${(f)"$(fetch_org_members)"}; do in_org[$u]=1; done
+typeset u lu
+
+# Import spec §4: "Read-then-diff-then-write. Never blind-write." Guard the
+# pre-write reads explicitly — ghw_api_paged's underlying `ghw_api GET` can
+# fail (5xx retries exhausted, network, etc.); an unguarded failure here
+# would leave in_org/in_team empty, and every CSV login — including
+# existing Owners/maintainers — would then look "new" and get upsert-PUT'd:
+# the exact silent-demotion scenario §4.2's set-difference exists to
+# prevent. `var=$(func)` propagates func's own $? via command substitution
+# (GHW_LAST_STATUS isn't needed here, just pass/fail), so fetch and parse
+# are split into two separate steps rather than a `fetch | jq` pipeline — a
+# pipeline's $? reflects only the last stage (jq) by default in zsh, which
+# would silently mask a failed fetch.
+org_json=$(fetch_org_members) || { print -ru2 -- "MEMBER_LIST_READ_FAILED: could not read org member list for ${org}"; exit 1; }
+org_logins=$(print -r -- "$org_json" | jq -r '.[].login') || { print -ru2 -- "MEMBER_LIST_READ_FAILED: could not parse org member list for ${org}"; exit 1; }
+for u in ${(f)org_logins}; do in_org[${(L)u}]=1; done
 org_before=${#in_org}
+
+# Cheap invariant: the authenticated login (already confirmed an org admin
+# by ghw_precheck) must appear in the org member list we just read. Catches
+# a silently-empty or truncated read that a bare non-2xx check would miss.
+me_login=$(ghw_profile_login "$profile")
+if [[ -z "${in_org[${(L)me_login}]:-}" ]]; then
+  print -ru2 -- "MEMBER_LIST_READ_FAILED: authenticated login '${me_login}' not found in org member list for ${org} — refusing to write against a possibly-truncated read"
+  exit 1
+fi
+
 team_before=0
 if [[ -n "$team" ]]; then
-  for u in ${(f)"$(fetch_team_members)"}; do in_team[$u]=1; done
+  team_json=$(fetch_team_members) || { print -ru2 -- "MEMBER_LIST_READ_FAILED: could not read team member list for ${org}/${team}"; exit 1; }
+  team_logins=$(print -r -- "$team_json" | jq -r '.[].login') || { print -ru2 -- "MEMBER_LIST_READ_FAILED: could not parse team member list for ${org}/${team}"; exit 1; }
+  for u in ${(f)team_logins}; do in_team[${(L)u}]=1; done
   team_before=${#in_team}
 fi
 
@@ -77,8 +103,15 @@ add_org=(); add_team=()
 # via the "org owner auto-elevated" note below, not suppressed as an error).
 # This is also the daemon's primary use case: adding EXISTING org members to
 # a team. Cross-phase exclusion was tried and reverted — it broke that case.
+#
+# Case normalization: GitHub logins are case-insensitive but zsh associative
+# array keys are not, so every membership-map key/lookup uses `${(L)u}`
+# (`lu`) below and throughout the write/verify phases. `logins`/`add_org`/
+# `add_team` keep the ORIGINAL CSV casing — that's what's written to report
+# rows and used in PUT URLs.
 for u in "${logins[@]}"; do
-  if [[ -n "${in_org[$u]:-}" ]]; then
+  lu=${(L)u}
+  if [[ -n "${in_org[$lu]:-}" ]]; then
     ghw_report_row "$u" org skipped active "" "already a member"
   else
     add_org+=("$u")
@@ -86,7 +119,8 @@ for u in "${logins[@]}"; do
 done
 if [[ -n "$team" ]]; then
   for u in "${logins[@]}"; do
-    if [[ -n "${in_team[$u]:-}" ]]; then
+    lu=${(L)u}
+    if [[ -n "${in_team[$lu]:-}" ]]; then
       ghw_report_row "$u" team skipped active "" "already a member"
     else
       add_team+=("$u")
@@ -103,7 +137,7 @@ if (( dry_run )); then
   exit 0
 fi
 
-typeset -A org_failed   # logins that failed/404'd in phase 1 — excluded from phase 2
+typeset -A org_failed team_failed   # phase-1/phase-2 failures — excluded from later phases/verify
 errors=0
 
 # Phase 1: org membership (fully completes before team phase — §4.1). Serial.
@@ -115,6 +149,7 @@ errors=0
 # use the established idiom: redirect to a temp file, then read it back.
 tmp=$(mktemp)
 for u in "${add_org[@]}"; do
+  lu=${(L)u}
   ghw_api PUT "/orgs/${org}/memberships/${u}" "{\"role\":\"${org_role}\"}" >"$tmp"; rc=$?
   body=$(<"$tmp")
   case $rc in
@@ -126,11 +161,11 @@ for u in "${add_org[@]}"; do
       ;;
     4)
       ghw_report_row "$u" org not_found "" "" "account does not exist on github.com"
-      org_failed[$u]=1; (( errors++ )) || true
+      org_failed[$lu]=1; (( errors++ )) || true
       ;;
     *)
       ghw_report_row "$u" org failed "" "" "HTTP ${GHW_LAST_STATUS}: $(print -r -- "$body" | jq -r '.message // ""' 2>/dev/null)"
-      org_failed[$u]=1; (( errors++ )) || true
+      org_failed[$lu]=1; (( errors++ )) || true
       ;;
   esac
 done
@@ -138,7 +173,8 @@ done
 # Phase 2: team membership.
 if [[ -n "$team" ]]; then
   for u in "${add_team[@]}"; do
-    [[ -n "${org_failed[$u]:-}" ]] && continue
+    lu=${(L)u}
+    [[ -n "${org_failed[$lu]:-}" ]] && continue
     # ADAPTATION: same tmp-file idiom as phase 1, for the same reason.
     ghw_api PUT "/orgs/${org}/teams/${team}/memberships/${u}" "{\"role\":\"${role}\"}" >"$tmp"; rc=$?
     body=$(<"$tmp")
@@ -153,11 +189,11 @@ if [[ -n "$team" ]]; then
         ;;
       4)
         ghw_report_row "$u" team not_found "" "" "account does not exist on github.com"
-        (( errors++ )) || true
+        team_failed[$lu]=1; (( errors++ )) || true
         ;;
       *)
         ghw_report_row "$u" team failed "" "" "HTTP ${GHW_LAST_STATUS}: $(print -r -- "$body" | jq -r '.message // ""' 2>/dev/null)"
-        (( errors++ )) || true
+        team_failed[$lu]=1; (( errors++ )) || true
         ;;
     esac
   done
@@ -165,23 +201,54 @@ fi
 rm -f "$tmp"
 
 # §4 step 8: verify against LIVE state, membership not role equality (§7).
+# Post-write reads are guarded too, but unlike the pre-write reads above we
+# do NOT abort on failure here — the writes already landed, so aborting
+# would just hide a (partially) successful import behind a crash instead of
+# reporting it. A read failure means we can't confirm ANY membership, so
+# every still-relevant login gets an explicit `verify failed` row rather
+# than a silent gap, and the run still ends up `completed_with_errors`.
 typeset -A org_after_map team_after_map
-for u in ${(f)"$(fetch_org_members)"}; do org_after_map[$u]=1; done
+org_after_ok=1
+if org_after_json=$(fetch_org_members) && org_after_logins=$(print -r -- "$org_after_json" | jq -r '.[].login'); then
+  for u in ${(f)org_after_logins}; do org_after_map[${(L)u}]=1; done
+else
+  org_after_ok=0
+fi
 org_after=${#org_after_map}
+
 team_after=0
+team_after_ok=1
 if [[ -n "$team" ]]; then
-  for u in ${(f)"$(fetch_team_members)"}; do team_after_map[$u]=1; done
-  team_after=${#team_after_map}
+  if team_after_json=$(fetch_team_members) && team_after_logins=$(print -r -- "$team_after_json" | jq -r '.[].login'); then
+    for u in ${(f)team_after_logins}; do team_after_map[${(L)u}]=1; done
+    team_after=${#team_after_map}
+  else
+    team_after_ok=0
+  fi
 fi
 for u in "${logins[@]}"; do
-  [[ -n "${org_failed[$u]:-}" ]] && continue
-  if [[ -z "${org_after_map[$u]:-}" ]]; then
+  lu=${(L)u}
+  [[ -n "${org_failed[$lu]:-}" ]] && continue
+  if (( ! org_after_ok )); then
+    ghw_report_row "$u" verify failed "" "" "org member list unreadable post-write — cannot verify"
+    (( errors++ )) || true
+  elif [[ -z "${org_after_map[$lu]:-}" ]]; then
     ghw_report_row "$u" verify failed "" "" "not in live org member list after import"
     (( errors++ )) || true
   fi
-  if [[ -n "$team" && -z "${team_after_map[$u]:-}" ]]; then
-    ghw_report_row "$u" verify failed "" "" "not in live team member list after import"
-    (( errors++ )) || true
+  # Skip the team-membership verify check for logins that already failed in
+  # phase 2 (team_failed) — they already have an explicit team failed/
+  # not_found row from that phase; a generic "not in live team list" verify
+  # row on top would just duplicate the same fact under a different label.
+  # The org check above still runs for them regardless.
+  if [[ -n "$team" && -z "${team_failed[$lu]:-}" ]]; then
+    if (( ! team_after_ok )); then
+      ghw_report_row "$u" verify failed "" "" "team member list unreadable post-write — cannot verify"
+      (( errors++ )) || true
+    elif [[ -z "${team_after_map[$lu]:-}" ]]; then
+      ghw_report_row "$u" verify failed "" "" "not in live team member list after import"
+      (( errors++ )) || true
+    fi
   fi
 done
 

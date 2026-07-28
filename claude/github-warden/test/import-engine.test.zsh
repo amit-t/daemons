@@ -17,9 +17,11 @@ print -r -- '{"profiles":{"inv":{"token_env":"T_I","login":"amit_vnt","orgs":["I
 
 csv="${work}/src.csv"
 
-# Routes: org has owner1+existing1; team has maint1. PUTs echo membership JSON.
-# ghost_vnt 404s on org PUT. Org/team member lists re-read includes adds
-# (stub keeps it simple: after any PUT for login X, member lists include X via state file).
+# Routes: org has amit_vnt (the caller — required by the engine's post-fetch
+# invariant: the authenticated login must appear in the org member list)
+# +owner1+existing1; team has maint1. PUTs echo membership JSON. ghost_vnt
+# 404s on org PUT. Org/team member lists re-read includes adds (stub keeps
+# it simple: after any PUT for login X, member lists include X via state file).
 base_routes() {
 cat > "$GHW_STUB_ROUTES" <<EOF
 stub_route() {
@@ -35,7 +37,7 @@ stub_route() {
     "GET "*/orgs/INVENCO-GROUP/members*)
       local extra=""
       [[ -f "\$added" ]] && extra=\$(awk '/^org /{printf ",{\"login\":\"%s\"}", \$2}' "\$added")
-      RESP_STATUS=200; RESP_BODY="[{\"login\":\"owner1_vnt\"},{\"login\":\"existing1_vnt\"}\${extra}]"; RESP_HEADERS='' ;;
+      RESP_STATUS=200; RESP_BODY="[{\"login\":\"amit_vnt\"},{\"login\":\"owner1_vnt\"},{\"login\":\"existing1_vnt\"}\${extra}]"; RESP_HEADERS='' ;;
     "GET "*/orgs/INVENCO-GROUP) RESP_STATUS=200; RESP_BODY='{"login":"INVENCO-GROUP"}'; RESP_HEADERS='' ;;
     "PUT "*/orgs/INVENCO-GROUP/memberships/ghost_vnt) RESP_STATUS=404; RESP_BODY='{"message":"Not Found"}'; RESP_HEADERS='' ;;
     "PUT "*/orgs/INVENCO-GROUP/memberships/*)
@@ -78,7 +80,7 @@ rcsv=$(<${rdir}/report.csv)
 assert_contains "A4 ghost not_found" "$rcsv" "ghost_vnt,org,not_found"
 assert_contains "A4 batch continued" "$rcsv" "newuser_vnt,org,added"
 assert_contains "owner skipped row" "$rcsv" "owner1_vnt,org,skipped"
-assert_contains "summary counts" "$out" "org: 2 -> 4 (+2)"
+assert_contains "summary counts" "$out" "org: 3 -> 5 (+2)"
 
 # A1 idempotent re-run: everyone already present → zero PUTs, all skipped, exit 0
 cat > "$GHW_STUB_ROUTES" <<'EOF'
@@ -88,7 +90,7 @@ stub_route() {
     "GET "*/memberships/amit_vnt) RESP_STATUS=200; RESP_BODY='{"role":"admin"}'; RESP_HEADERS='' ;;
     "GET "*/teams/ppna/members*) RESP_STATUS=200; RESP_BODY='[{"login":"newuser_vnt"},{"login":"maint1_vnt"}]'; RESP_HEADERS='' ;;
     "GET "*/teams/ppna) RESP_STATUS=200; RESP_BODY='{"slug":"ppna"}'; RESP_HEADERS='' ;;
-    "GET "*/orgs/INVENCO-GROUP/members*) RESP_STATUS=200; RESP_BODY='[{"login":"newuser_vnt"},{"login":"maint1_vnt"}]'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/members*) RESP_STATUS=200; RESP_BODY='[{"login":"amit_vnt"},{"login":"newuser_vnt"},{"login":"maint1_vnt"}]'; RESP_HEADERS='' ;;
     "GET "*/orgs/INVENCO-GROUP) RESP_STATUS=200; RESP_BODY='{"login":"INVENCO-GROUP"}'; RESP_HEADERS='' ;;
     *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
   esac
@@ -99,6 +101,41 @@ print -rl -- "login" "newuser_vnt" "maint1_vnt" > "$csv"
 out=$(zsh "$engine" --account inv --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
 assert_exit "A1 re-run exit 0" 0 $rc
 assert_not_contains "A1 zero writes" "$(<$GHW_STUB_LOG)" "PUT "
+
+# Guarded read: org members GET 500s (retries exhausted) → engine must
+# refuse to write anything rather than treat an unreadable list as "empty,
+# everyone is new". Zero PUTs, non-zero exit.
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$1 $2" in
+    "GET "*/user) RESP_STATUS=200; RESP_BODY='{"login":"amit_vnt"}'; RESP_HEADERS='x-oauth-scopes: admin:org' ;;
+    "GET "*/memberships/amit_vnt) RESP_STATUS=200; RESP_BODY='{"role":"admin"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/teams/ppna) RESP_STATUS=200; RESP_BODY='{"slug":"ppna"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP) RESP_STATUS=200; RESP_BODY='{"login":"INVENCO-GROUP"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/members*) RESP_STATUS=500; RESP_BODY='{"message":"boom"}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+: > "$GHW_STUB_LOG"
+print -rl -- "login" "newuser_vnt" > "$csv"
+out=$(zsh "$engine" --account inv --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "member-list read failure: expected non-zero exit, got 0"; fi
+assert_not_contains "member-list read failure zero writes" "$(<$GHW_STUB_LOG)" "PUT "
+
+# Case-insensitive membership matching: CSV login differs only in case from
+# an already-existing org member. GitHub logins are case-insensitive; the
+# set-difference must still recognize the login as already present and
+# refuse to write, or the safety mechanism can be defeated by casing alone.
+base_routes; : > "$GHW_STUB_LOG"; rm -f "${work}/added"
+print -rl -- "login" "OWNER1_VNT" > "$csv"
+out=$(zsh "$engine" --account inv --org INVENCO-GROUP --csv "$csv" 2>&1); rc=$?
+assert_exit "case-insensitive skip exit 0" 0 $rc
+log=$(<$GHW_STUB_LOG)
+assert_not_contains "case-insensitive no PUT (CSV casing)" "$log" "memberships/OWNER1_VNT"
+assert_not_contains "case-insensitive no PUT (org casing)" "$log" "PUT https://api.github.example/orgs/INVENCO-GROUP/memberships/owner1_vnt"
+rdir=$(print -r -- "$out" | awk '/^report: /{print $2}')
+assert_contains "case-insensitive skipped row" "$(<${rdir}/report.csv)" "OWNER1_VNT,org,skipped"
 
 rm -rf "$work"
 report
