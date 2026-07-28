@@ -4,3 +4,4 @@ node_modules/
 claude/devin-acu-governor/web/dashboard-app/dist/
 
 /.grills/
+/.wayfinder/
