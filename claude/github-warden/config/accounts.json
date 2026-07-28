@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "personal": {
+      "token_env": "GHW_TOKEN_PERSONAL",
+      "login": "amit-t",
+      "orgs": ["amit-t"]
+    },
+    "inv": {
+      "token_env": "GHW_TOKEN_INV",
+      "login": "FILL_AT_SETUP",
+      "orgs": ["INVENCO-GROUP", "Invenco-Cloud-Systems-ICS"]
+    }
+  }
+}
