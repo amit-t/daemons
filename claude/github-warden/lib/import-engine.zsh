@@ -70,22 +70,15 @@ fi
 # again; use `typeset -a`.
 typeset -a add_org add_team
 add_org=(); add_team=()
-# ADAPTATION (behavioral, not a listed pitfall — see report for full
-# rationale): the brief's literal per-phase check (`in_org[$u]` alone gates
-# org eligibility, `in_team[$u]` alone gates team eligibility) lets a login
-# already present in ONE phase get PUT in the OTHER — e.g. an existing org
-# Owner not yet on the target team would still receive a team PUT. That
-# contradicts this same brief's acceptance test: A2 ("existing Owner
-# untouched") asserts zero PUTs of any kind for owner1_vnt, and the A7 count
-# assertion ("org: 2 -> 3 (+1)") only holds if an already-team-member
-# (maint1_vnt) is also excluded from the org phase. Both are satisfied only
-# by a holistic already-a-member check: presence in EITHER map excludes a
-# login from BOTH phases. This is the direct expression of the global
-# constraint "never PUT a principal already a member" — upsert PUTs can
-# silently demote/reset an Owner or maintainer, so any login with existing
-# standing anywhere in org/team is left untouched everywhere.
+# Per-phase set difference, independently: skip the org PUT iff already an
+# org member; skip the team PUT iff already a team member. An existing org
+# Owner who isn't yet on the target team MUST still receive a team PUT
+# (GitHub auto-elevates org Owners added to a team to maintainer — reported
+# via the "org owner auto-elevated" note below, not suppressed as an error).
+# This is also the daemon's primary use case: adding EXISTING org members to
+# a team. Cross-phase exclusion was tried and reverted — it broke that case.
 for u in "${logins[@]}"; do
-  if [[ -n "${in_org[$u]:-}" || -n "${in_team[$u]:-}" ]]; then
+  if [[ -n "${in_org[$u]:-}" ]]; then
     ghw_report_row "$u" org skipped active "" "already a member"
   else
     add_org+=("$u")
@@ -93,7 +86,7 @@ for u in "${logins[@]}"; do
 done
 if [[ -n "$team" ]]; then
   for u in "${logins[@]}"; do
-    if [[ -n "${in_org[$u]:-}" || -n "${in_team[$u]:-}" ]]; then
+    if [[ -n "${in_team[$u]:-}" ]]; then
       ghw_report_row "$u" team skipped active "" "already a member"
     else
       add_team+=("$u")

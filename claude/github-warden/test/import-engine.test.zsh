@@ -65,7 +65,8 @@ print -rl -- "login" "newuser_vnt" "owner1_vnt" "maint1_vnt" "ghost_vnt" > "$csv
 out=$(zsh "$engine" --account inv --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
 assert_exit "live run completed_with_errors (ghost)" 1 $rc
 log=$(<$GHW_STUB_LOG)
-assert_not_contains "A2 no org PUT for owner" "$log" "memberships/owner1_vnt"
+assert_not_contains "A2 no org PUT for owner" "$log" "PUT https://api.github.example/orgs/INVENCO-GROUP/memberships/owner1_vnt"
+assert_contains "owner still gets team PUT" "$log" "PUT https://api.github.example/orgs/INVENCO-GROUP/teams/ppna/memberships/owner1_vnt"
 assert_not_contains "A3 no team PUT for maintainer" "$log" "teams/ppna/memberships/maint1_vnt"
 assert_contains "new user org PUT" "$log" "PUT https://api.github.example/orgs/INVENCO-GROUP/memberships/newuser_vnt"
 assert_contains "new user team PUT" "$log" "PUT https://api.github.example/orgs/INVENCO-GROUP/teams/ppna/memberships/newuser_vnt"
@@ -77,7 +78,7 @@ rcsv=$(<${rdir}/report.csv)
 assert_contains "A4 ghost not_found" "$rcsv" "ghost_vnt,org,not_found"
 assert_contains "A4 batch continued" "$rcsv" "newuser_vnt,org,added"
 assert_contains "owner skipped row" "$rcsv" "owner1_vnt,org,skipped"
-assert_contains "summary counts" "$out" "org: 2 -> 3 (+1)"
+assert_contains "summary counts" "$out" "org: 2 -> 4 (+2)"
 
 # A1 idempotent re-run: everyone already present → zero PUTs, all skipped, exit 0
 cat > "$GHW_STUB_ROUTES" <<'EOF'
