@@ -12,8 +12,9 @@ ghw_doctor() {  # $1 optional --strict
   local strict=0
   [[ "${1:-}" == "--strict" ]] && strict=1
 
-  local file profile env_name expected me scopes org role body rc
+  local file profile env_name expected me scopes org role body rc user_ns
   local -i broken=0
+  local -a member_only
   local tmp; tmp=$(mktemp)
   file=$(ghw_accounts_file)
 
@@ -42,12 +43,20 @@ ghw_doctor() {  # $1 optional --strict
     if [[ "$me" != "$expected" ]]; then login_disp="MISMATCH(${me})"; (( broken++ )); fi
     print -r -- "profile ${profile}: token=ok(${GHW_TOKEN_SOURCE:-unknown}) login=${login_disp} scopes=${scopes:-fine-grained}"
 
-    local user_ns
+    # user_ns/member_only are declared once at the top of the function, not
+    # here: a BARE `local var` (no assignment in the same statement) that
+    # re-executes on a later loop iteration, with the variable already
+    # holding a value from a prior iteration, makes zsh print `var=<value>`
+    # to stdout as a side effect of the redeclaration — corrupting this
+    # command's output on the second+ profile. Declarations that assign a
+    # value on the same statement (`local login_disp="ok"`, `local -i
+    # org_total=0 org_admin=0`) don't trigger this; only bare ones do. Only
+    # ASSIGN here, never re-declare.
     user_ns=$(jq -r --arg p "$profile" '.profiles[$p].user_namespace // ""' "$file")
     [[ -n "$user_ns" ]] && print -r -- "  user ${user_ns}: own namespace"
 
     local -i org_total=0 org_admin=0
-    local -a member_only; member_only=()
+    member_only=()
     for org in ${(f)"$(jq -r --arg p "$profile" '.profiles[$p].orgs[]?' "$file")"}; do
       (( org_total++ ))
       ghw_api GET "/orgs/${org}/memberships/${me}" >"$tmp"; rc=$?
