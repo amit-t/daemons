@@ -67,5 +67,27 @@ assert_not_contains "no zsh bare-local pushed_epoch leak" "$out" "pushed_epoch="
 assert_contains "report row for drifty intact" "$out" $'drifty\t2020-01-01T00:00:00Z\tinactive >6mo (last push 2020-01-01)'
 assert_contains "report row for emptyrepo intact" "$out" $'emptyrepo\tnull\tempty'
 
+# --- Regression guard: masked paged-fetch failure must not degrade
+# silently. Same class as the status/members fixes: `ghw_api_paged | jq`'s
+# `$?` reflects only jq's exit status in plain zsh (no `pipefail` set
+# anywhere in this codebase), and `ghw_api_paged` prints nothing on
+# failure, so jq sees empty stdin and exits 0 — the repo loop below would
+# then simply not execute, printing "0 repos audited, 0 drift lines" as if
+# the org genuinely had no other repos rather than surfacing a failed read.
+cat > "$GHW_STUB_ROUTES" <<EOF
+stub_route() {
+  case "\$2" in
+    */orgs/ORG1/repos*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */repos/ORG1/ref-repo/branches/main/protection) RESP_STATUS=200; RESP_BODY='{"required_pull_request_reviews":{}}'; RESP_HEADERS='' ;;
+    */repos/ORG1/ref-repo) RESP_STATUS=200; RESP_BODY='$(repo_json ref-repo true enabled)'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" audit --org ORG1 --ref ORG1/ref-repo 2>&1); rc=$?
+assert_exit "audit: repos fetch failure is non-zero" 1 $rc
+assert_contains "audit: repos fetch failure named" "$out" "ghw audit: /orgs/ORG1/repos read failed"
+assert_not_contains "audit: no summary line on repos fetch failure" "$out" "repos audited"
+
 rm -rf "$work"
 report
