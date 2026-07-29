@@ -75,6 +75,39 @@ assert_contains "slept retry-after" "$(<$sleep_log)" "7"
 calls=$(wc -l < "$GHW_STUB_LOG")
 assert_eq "retried once" 2 "${calls// /}"
 
+# TWO consecutive secondary-rate-limit 403s then success. Regression guard
+# for hoisting `remaining/retry_after/reset/now/wait` out of the 403 case
+# arm: those were bare `local` declarations inside the retry loop, so a
+# SECOND pass through the 403 branch used to make zsh print
+# `remaining=<value>` etc. to stdout as a side effect of the redeclaration —
+# and ghw_api's stdout IS the response body every caller captures. Proving
+# the body is exactly the untouched 200 JSON (not just "doesn't contain a
+# substring") is what actually proves the body is uncorrupted.
+cat > "$GHW_STUB_ROUTES" <<EOF
+stub_route() {
+  local n_file="${work}/n2"; local n=0
+  [[ -f "\$n_file" ]] && n=\$(<"\$n_file")
+  (( n++ )); print -rn -- \$n > "\$n_file"
+  if (( n <= 2 )); then
+    RESP_STATUS=403; RESP_BODY='{"message":"secondary rate limit"}'; RESP_HEADERS='retry-after: 3'
+  else
+    RESP_STATUS=200; RESP_BODY='{"state":"active","role":"member","id":99}'; RESP_HEADERS=''
+  fi
+}
+EOF
+: > "$GHW_STUB_LOG"; : > "$sleep_log"; rm -f "${work}/n2"
+ghw_api PUT /orgs/o/memberships/u '{"role":"member"}' > "$out_file"; rc=$?
+out=$(<"$out_file")
+assert_exit "two secondary rate limits then success" 0 $rc
+assert_eq "captured body is exactly the 200 JSON, uncorrupted" '{"state":"active","role":"member","id":99}' "$out"
+assert_not_contains "no leaked remaining=" "$out" "remaining="
+assert_not_contains "no leaked retry_after=" "$out" "retry_after="
+assert_not_contains "no leaked reset=" "$out" "reset="
+print -r -- "$out" | jq -e . >/dev/null
+assert_exit "captured body parses as JSON" 0 $?
+calls=$(wc -l < "$GHW_STUB_LOG")
+assert_eq "retried twice then succeeded" 3 "${calls// /}"
+
 # pagination: 100-item page then 1-item page
 # Note: page=2 must be matched before page=1 — every request also carries
 # per_page=100, whose "page=1" substring would otherwise shadow the real

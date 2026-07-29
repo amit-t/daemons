@@ -47,5 +47,171 @@ assert_contains "2fa flag" "$body" "bob,member,,true,false"
 assert_contains "outside collab" "$body" "contractor1,,,false,true"
 assert_not_contains "read-only" "$(<$GHW_STUB_LOG)" "PUT "
 
+# --- Regression guard: masked paged-fetch failures must not degrade
+# silently. A `ghw_api_paged | jq` pipeline's `$?` reflects only jq's exit
+# status in plain zsh (no `pipefail` set anywhere in this codebase), and
+# `ghw_api_paged` prints nothing on failure, so jq sees empty stdin and
+# exits 0 — masking the read failure behind a bare `|| return N` and
+# letting the caller print a report/summary as if the result were
+# complete. Force each affected fetch to 500 and assert: non-zero exit, a
+# stderr line naming the specific failing endpoint, and no output implying
+# a complete result.
+
+# status: org members fetch fails
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/members*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1) RESP_STATUS=200; RESP_BODY='{"login":"ORG1","public_repos":3,"total_private_repos":5,"plan":{"name":"free"}}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" status --org ORG1 2>&1); rc=$?
+assert_exit "status: members fetch failure is non-zero" 1 $rc
+assert_contains "status: members fetch failure named" "$out" "ghw status: /orgs/ORG1/members read failed"
+assert_not_contains "status: no summary line on members fetch failure" "$out" "org ORG1: repos="
+
+# status: org teams fetch fails (members succeeds)
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[{"login":"alice"}]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/teams*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1) RESP_STATUS=200; RESP_BODY='{"login":"ORG1","public_repos":3,"total_private_repos":5,"plan":{"name":"free"}}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" status --org ORG1 2>&1); rc=$?
+assert_exit "status: teams fetch failure is non-zero" 1 $rc
+assert_contains "status: teams fetch failure named" "$out" "ghw status: /orgs/ORG1/teams read failed"
+assert_not_contains "status: no summary line on teams fetch failure" "$out" "org ORG1: repos="
+
+# members: org teams fetch fails. Also proves no CSV is written on failure —
+# `--csv` is documented to round-trip into `ghw import`, so a truncated file
+# masquerading as complete could drive a write from incomplete data.
+csv_fail_out="${work}/members-teams-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[{"login":"alice"}]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_out" 2>&1); rc=$?
+assert_exit "members: org teams fetch failure is non-zero" 1 $rc
+assert_contains "members: org teams fetch failure named" "$out" "ghw members: /orgs/ORG1/teams read failed"
+if [[ -f "$csv_fail_out" ]]; then _fail "members: no CSV written when org teams fetch fails"; else _ok; fi
+
+# members: per-team member fetch fails (org teams list itself succeeds,
+# returns one team, t1). Same no-CSV-written proof.
+csv_fail_out2="${work}/members-team-members-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams/t1/members*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[{"slug":"t1"}]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[{"login":"alice"}]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_out2" 2>&1); rc=$?
+assert_exit "members: per-team fetch failure is non-zero" 1 $rc
+assert_contains "members: per-team fetch failure named" "$out" "ghw members: /orgs/ORG1/teams/t1/members read failed"
+if [[ -f "$csv_fail_out2" ]]; then _fail "members: no CSV written when a per-team fetch fails"; else _ok; fi
+
+# members: the remaining four reads (org members, org admins, org
+# 2FA-disabled, outside collaborators) are not masked-pipe cases — no `|
+# jq` before their `|| return 1` — but were bare, exiting 1 with ZERO
+# stderr output. Each gets its own block: exactly one endpoint fails, the
+# rest succeed, so the assertion proves the message names the RIGHT one.
+
+# members: org members fetch fails
+csv_fail_members="${work}/members-members-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_members" 2>&1); rc=$?
+assert_exit "members: org members fetch failure is non-zero" 1 $rc
+assert_contains "members: org members fetch failure named" "$out" "ghw members: /orgs/ORG1/members read failed"
+if [[ -f "$csv_fail_members" ]]; then _fail "members: no CSV written when org members fetch fails"; else _ok; fi
+
+# members: org admins fetch fails
+csv_fail_admins="${work}/members-admins-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_admins" 2>&1); rc=$?
+assert_exit "members: org admins fetch failure is non-zero" 1 $rc
+assert_contains "members: org admins fetch failure named" "$out" "ghw members: /orgs/ORG1/members?role=admin read failed"
+if [[ -f "$csv_fail_admins" ]]; then _fail "members: no CSV written when org admins fetch fails"; else _ok; fi
+
+# members: org 2FA-disabled fetch fails
+csv_fail_twofa="${work}/members-twofa-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_twofa" 2>&1); rc=$?
+assert_exit "members: org 2FA-disabled fetch failure is non-zero" 1 $rc
+assert_contains "members: org 2FA-disabled fetch failure named" "$out" "ghw members: /orgs/ORG1/members?filter=2fa_disabled read failed"
+if [[ -f "$csv_fail_twofa" ]]; then _fail "members: no CSV written when org 2FA-disabled fetch fails"; else _ok; fi
+
+# members: outside collaborators fetch fails
+csv_fail_outside="${work}/members-outside-fail.csv"
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/teams*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*role=admin*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*2fa_disabled*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/members*) RESP_STATUS=200; RESP_BODY='[]'; RESP_HEADERS='' ;;
+    */orgs/ORG1/outside_collaborators*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" members --org ORG1 --csv "$csv_fail_outside" 2>&1); rc=$?
+assert_exit "members: outside collaborators fetch failure is non-zero" 1 $rc
+assert_contains "members: outside collaborators fetch failure named" "$out" "ghw members: /orgs/ORG1/outside_collaborators read failed"
+if [[ -f "$csv_fail_outside" ]]; then _fail "members: no CSV written when outside collaborators fetch fails"; else _ok; fi
+
 rm -rf "$work"
 report

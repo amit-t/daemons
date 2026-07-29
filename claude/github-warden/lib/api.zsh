@@ -12,12 +12,25 @@ _ghw_hdr() {  # $1 header-name (lowercase), $2 header-file — prints value or "
 ghw_api() {  # $1 METHOD, $2 endpoint, $3 optional JSON body
   local method="$1" endpoint="$2" body="${3:-}"
   local url="${GHW_API_ROOT}${endpoint}"
-  local hdr_file body_file http_code
+  # remaining/retry_after/reset/now/wait (403 branch) and args (curl argv) are
+  # declared here, once, rather than as bare `local` statements inside the
+  # retry loop below: a BARE `local var` (no assignment in the same
+  # statement) that re-executes on a later loop iteration, with the variable
+  # already holding a value from a prior iteration, makes zsh print
+  # `var=<value>` to stdout as a side effect of the redeclaration. This
+  # function's stdout IS the API response body every caller captures
+  # (`body=$(ghw_api ...)` and the temp-file idiom both read it) — a second
+  # 403 within one call would otherwise inject `remaining=0`-style lines
+  # into what callers feed to `jq`. Only ASSIGN these inside the loop, never
+  # re-declare. (`backoff` below keeps its bare-looking `local backoff=$((
+  # ... ))` form because it assigns a value on the same statement — that
+  # shape does not trigger the leak, confirmed by direct repro.)
+  local hdr_file body_file http_code remaining retry_after reset now wait
   local -i attempt=0 rl_attempt=0
+  local -a args
   hdr_file=$(mktemp); body_file=$(mktemp)
   while true; do
     (( attempt++ ))
-    local -a args
     args=(-sS -X "$method" -H "Authorization: Bearer ${GHW_TOKEN}" \
           -H "Accept: application/vnd.github+json" \
           -D "$hdr_file" -o "$body_file" -w '%{http_code}')
@@ -31,7 +44,6 @@ ghw_api() {  # $1 METHOD, $2 endpoint, $3 optional JSON body
       2*)
         cat "$body_file"; rm -f "$hdr_file" "$body_file"; return 0 ;;
       403)
-        local remaining retry_after reset now wait
         remaining=$(_ghw_hdr x-ratelimit-remaining "$hdr_file")
         retry_after=$(_ghw_hdr retry-after "$hdr_file")
         if [[ "$remaining" == 0 ]]; then            # primary limit: sleep to reset

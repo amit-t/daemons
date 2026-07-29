@@ -32,8 +32,8 @@ ghw_audit() {  # $1 account, remaining flags
   profile=$(ghw_resolve_profile "$account" "$org") || return 2
   ghw_token_for "$profile" || return 2
 
-  local ref_json ref_branch ref_prot repo repo_json branch prot f exp got rc
-  local -i repos=0 drift=0
+  local ref_json ref_branch ref_prot repo repo_json branch prot f exp got rc repos_json summary
+  local -i repos=0 drift=0 skipped=0
   # NOTE (adaptation, not in brief's literal listing): `ref_json=$(ghw_api ...)
   # || { ... $GHW_LAST_STATUS ... }` would fork a subshell for the command
   # substitution, so `typeset -g GHW_LAST_STATUS` set inside ghw_api never
@@ -51,10 +51,32 @@ ghw_audit() {  # $1 account, remaining flags
   ref_branch=$(print -r -- "$ref_json" | jq -r .default_branch)
   ref_prot=$(_ghw_protection_state "$ref" "$ref_branch")
 
-  for repo in ${(f)"$(ghw_api_paged "/orgs/${org}/repos" | jq -r '.[].name')"}; do
+  # Fetch and parse are split into separate statements (not a `ghw_api_paged
+  # | jq` pipeline) deliberately: a pipeline's `$?` in plain zsh (no
+  # `pipefail` set anywhere in this codebase) reflects only its LAST stage.
+  # `ghw_api_paged` prints nothing on failure, so `jq` would see empty stdin
+  # and exit 0 — the `for repo in ...` loop below would then simply not
+  # execute, and the summary line would print "0 repos audited, 0 drift
+  # lines" as if the org genuinely had no other repos, rather than surfacing
+  # that the listing itself failed. Same pitfall `lib/import-engine.zsh`'s
+  # pre-write reads are already guarded against, for the same reason.
+  repos_json=$(ghw_api_paged "/orgs/${org}/repos") || { print -ru2 -- "ghw audit: /orgs/${org}/repos read failed"; return 1 }
+  for repo in ${(f)"$(print -r -- "$repos_json" | jq -r '.[].name')"}; do
     [[ "${org}/${repo}" == "$ref" ]] && continue
+    # A repo whose detail fetch fails must not be counted in `repos` or
+    # silently contribute zero drift lines — before this fix, `(( repos++
+    # ))` ran before the fetch, so a failed repo looked identical to one
+    # that matched the reference exactly. Name it on stderr, count it as
+    # `skipped` instead, and keep auditing the rest. `audit`'s exit-0
+    # semantics are unchanged — drift/skip counts are the signal here, not
+    # the exit code (see the summary line below).
+    repo_json=$(ghw_api GET "/repos/${org}/${repo}")
+    if (( $? != 0 )); then
+      print -ru2 -- "ghw audit: /repos/${org}/${repo} read failed — skipped"
+      (( skipped++ ))
+      continue
+    fi
     (( repos++ ))
-    repo_json=$(ghw_api GET "/repos/${org}/${repo}") || continue
     for f in "${_GHW_AUDIT_FIELDS[@]}"; do
       exp=$(print -r -- "$ref_json" | jq -r --arg f "$f" '.[$f]')
       got=$(print -r -- "$repo_json" | jq -r --arg f "$f" '.[$f]')
@@ -78,5 +100,7 @@ ghw_audit() {  # $1 account, remaining flags
       (( drift++ ))
     fi
   done
-  print -r -- "${repos} repos audited, ${drift} drift lines (reference: ${ref})"
+  summary="${repos} repos audited, ${drift} drift lines (reference: ${ref})"
+  (( skipped > 0 )) && summary+=", ${skipped} skipped (unreadable — see stderr)"
+  print -r -- "$summary"
 }

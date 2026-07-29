@@ -94,5 +94,52 @@ out=$(zsh "$ghw_bin" doctor --strict 2>&1); rc=$?
 assert_exit "doctor --strict also exits 1 on overlapping config" 1 $rc
 assert_contains "overlap message surfaced in doctor --strict" "$out" "ACCOUNT_OVERLAP"
 
+
+# ---- Block D: zsh loop-body-local regression guard.
+# Two profiles, BOTH with a `user_namespace` set and at least one member-only
+# org each — this exercises the profile for-loop and its inner org for-loop
+# across MORE THAN ONE iteration with non-empty prior values in scope. A bare
+# `local var` (no assignment on the same statement) re-executed on a later
+# iteration, with the variable already holding a value from a prior
+# iteration, makes zsh print `var=<value>` to stdout as a side effect of the
+# redeclaration — this is exactly what happened with `user_ns` before it was
+# hoisted out of the loop body in lib/doctor.zsh. Assert the full output is
+# pristine: no such line anywhere, for either variable that was hoisted.
+cat > "$GHW_ACCOUNTS_FILE" <<'JSON'
+{"profiles":{"aaa":{"token_env":"T_A","login":"userA","user_namespace":"nsA","orgs":["OrgA1","OrgA2"]},
+"bbb":{"token_env":"T_B","login":"userB","user_namespace":"nsB","orgs":["OrgB1"]}}}
+JSON
+export T_A="toka" T_B="tokb"
+# jq keys sorts alphabetically, so "aaa" is the first /user call, "bbb" the second.
+call_count_file="${work}/user_call_count_d"
+print -rn -- "0" > "$call_count_file"
+cat > "$GHW_STUB_ROUTES" <<EOF
+stub_route() {
+  case "\$2" in
+    */user)
+      n=\$(<"$call_count_file")
+      if (( n == 0 )); then
+        RESP_STATUS=200; RESP_BODY='{"login":"userA"}'; RESP_HEADERS='x-oauth-scopes: admin:org, repo'
+      else
+        RESP_STATUS=200; RESP_BODY='{"login":"userB"}'; RESP_HEADERS='x-oauth-scopes: admin:org, repo'
+      fi
+      print -rn -- \$((n+1)) > "$call_count_file"
+      ;;
+    */orgs/OrgA1/memberships/userA) RESP_STATUS=200; RESP_BODY='{"role":"member"}'; RESP_HEADERS='' ;;
+    */orgs/OrgA2/memberships/userA) RESP_STATUS=200; RESP_BODY='{"role":"admin"}'; RESP_HEADERS='' ;;
+    */orgs/OrgB1/memberships/userB) RESP_STATUS=200; RESP_BODY='{"role":"member"}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=404; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" doctor 2>&1); rc=$?
+assert_exit "Block D: both profiles credential-healthy, member-only informational -> exit 0" 0 $rc
+assert_contains "Block D: both user_namespace lines present" "$out" "  user nsA: own namespace"
+assert_contains "Block D: both user_namespace lines present (bbb)" "$out" "  user nsB: own namespace"
+assert_contains "Block D: aaa summary correct" "$out" "summary: admin on 1/2 orgs (member-only: OrgA1)"
+assert_contains "Block D: bbb summary correct" "$out" "summary: admin on 0/1 orgs (member-only: OrgB1)"
+assert_not_contains "Block D: no zsh bare-local user_ns leak anywhere in output" "$out" "user_ns="
+assert_not_contains "Block D: no zsh bare-local member_only leak anywhere in output" "$out" "member_only="
+
 rm -rf "$work"
 report
