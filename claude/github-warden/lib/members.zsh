@@ -18,10 +18,17 @@ ghw_members() {  # $1 account, remaining flags
   ghw_token_for "$profile" || return 2
 
   local members admins twofa teams team outside u teams_json team_json
-  members=$(ghw_api_paged "/orgs/${org}/members") || return 1
-  admins=$(ghw_api_paged "/orgs/${org}/members?role=admin") || return 1
-  twofa=$(ghw_api_paged "/orgs/${org}/members?filter=2fa_disabled") || return 1
-  outside=$(ghw_api_paged "/orgs/${org}/outside_collaborators") || return 1
+  # Every fetch below names the exact endpoint on failure — these four are
+  # not masked-pipe cases (no `| jq` before the check), but a bare
+  # `|| return 1` still exits with zero stderr output, leaving an operator
+  # to guess which of five possible reads failed. Same reasoning as the
+  # teams-list/per-team messages below: this command's output is documented
+  # to round-trip into `ghw import`, so a silent failure here is not
+  # acceptable even where it isn't also a data-corruption risk.
+  members=$(ghw_api_paged "/orgs/${org}/members") || { print -ru2 -- "ghw members: /orgs/${org}/members read failed"; return 1 }
+  admins=$(ghw_api_paged "/orgs/${org}/members?role=admin") || { print -ru2 -- "ghw members: /orgs/${org}/members?role=admin read failed"; return 1 }
+  twofa=$(ghw_api_paged "/orgs/${org}/members?filter=2fa_disabled") || { print -ru2 -- "ghw members: /orgs/${org}/members?filter=2fa_disabled read failed"; return 1 }
+  outside=$(ghw_api_paged "/orgs/${org}/outside_collaborators") || { print -ru2 -- "ghw members: /orgs/${org}/outside_collaborators read failed"; return 1 }
   # Fetch and parse are split into separate statements (not a `ghw_api_paged
   # | jq` pipeline) deliberately: a pipeline's `$?` in plain zsh (no
   # `pipefail` set anywhere in this codebase) reflects only its LAST stage.

@@ -25,7 +25,12 @@ ghw_stale() {  # $1 account, remaining flags
   # the loop, never re-declare.
   local cutoff repos line name pushed size is_fork reason pushed_epoch
   cutoff=$(date -v-"${months}"m +%s 2>/dev/null || date -d "-${months} months" +%s)
-  repos=$(ghw_api_paged "/orgs/${org}/repos") || return 1
+  # Not a masked-pipe case (no `| jq` before the check — the jq parse below
+  # runs later, inside the `while read ... done < <(...)` construct, only
+  # after this read already succeeded), but a bare `|| return 1` still
+  # exits with zero stderr output. Name the endpoint so a failure here
+  # isn't indistinguishable from "org has no repos".
+  repos=$(ghw_api_paged "/orgs/${org}/repos") || { print -ru2 -- "ghw stale: /orgs/${org}/repos read failed"; return 1 }
   local -i count=0
   while IFS=$'\t' read -r name pushed size is_fork; do
     reason=""

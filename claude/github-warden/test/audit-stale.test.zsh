@@ -89,5 +89,22 @@ assert_exit "audit: repos fetch failure is non-zero" 1 $rc
 assert_contains "audit: repos fetch failure named" "$out" "ghw audit: /orgs/ORG1/repos read failed"
 assert_not_contains "audit: no summary line on repos fetch failure" "$out" "repos audited"
 
+# stale: org repos fetch fails. Not a masked-pipe case (no `| jq` before the
+# check — the jq parse runs later, inside the `while read` construct, only
+# after this read already succeeded), but the bare `|| return 1` still
+# exited with zero stderr output.
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$2" in
+    */orgs/ORG1/repos*) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" stale --org ORG1 --months 6 2>&1); rc=$?
+assert_exit "stale: repos fetch failure is non-zero" 1 $rc
+assert_contains "stale: repos fetch failure named" "$out" "ghw stale: /orgs/ORG1/repos read failed"
+assert_not_contains "stale: no candidate count line on repos fetch failure" "$out" "archive candidate(s)"
+
 rm -rf "$work"
 report

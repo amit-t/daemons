@@ -321,7 +321,7 @@ old-poc	2024-11-02T10:03:00Z	inactive >12mo (last push 2024-11-02)
 1 archive candidate(s) in INVENCO-GROUP (nothing archived — commands above are for you to run)
 ```
 
-**Exit codes:** `0` success, `1` `GET /orgs/{org}/repos` failed, `2` missing `--org` or account/token resolution failure.
+**Exit codes:** `0` success, `1` if `GET /orgs/{org}/repos` fails — prints `ghw stale: /orgs/{org}/repos read failed` and aborts before the candidate loop runs, rather than printing "0 archive candidate(s)" as if the org genuinely had none, `2` missing `--org` or account/token resolution failure.
 
 ---
 
@@ -354,6 +354,7 @@ The CSV this produces round-trips directly into `ghw import --csv ... --column l
 Every read is guarded, and a failure names the exact endpoint and aborts the run before any output is produced — because this command's `--csv` output is documented to round-trip into `ghw import`, a silently-incomplete `teams` column here could otherwise drive a write from incomplete data. Two of these reads need calling out, because the obvious way to guard a paged fetch doesn't actually work for them:
 - The **org-level teams-list** fetch and the **per-team** member fetch (inside the `for team in ...` loop) both used to be vulnerable to the same failure mode: piping `ghw_api_paged` straight into `jq` before checking the exit status. Plain zsh (no `pipefail` set anywhere in this codebase) reports a pipeline's `$?` from its **last** stage only, and `ghw_api_paged` prints nothing on any failure path — so `jq` would see empty input and exit `0`, silently masking the read failure. The per-team fetch additionally had no guard at all in its original form.
 - Both are now fixed the same way `lib/import-engine.zsh`'s pre-write reads already were: fetch and parse are two separate statements, each with its own exit-status check. A failed org teams-list read prints `ghw members: /orgs/{org}/teams read failed`; a failed per-team read prints `ghw members: /orgs/{org}/teams/{slug}/members read failed` and aborts immediately — it does not continue to other teams with that one silently empty.
+- The other four reads (org members, org admins, org 2FA-disabled, outside collaborators) never had the pipe-masking problem — no `| jq` before their check — but were silent in a plainer way: a bare `|| return 1` with zero stderr output on failure. Each now names its endpoint too: `ghw members: /orgs/{org}/members read failed`, `.../members?role=admin read failed`, `.../members?filter=2fa_disabled read failed`, `.../outside_collaborators read failed`.
 
 **Exit codes:** `0` success, `1` if any of the org members/admins/2FA/outside-collaborators reads, the org teams-list read, or any per-team member read fails — each names the specific failing endpoint on stderr, and no CSV/JSON/table output (nor a `wrote <n> lines to <out>` line) is produced unless every read that contributed to it succeeded, `2` missing `--org` or account/token resolution failure.
 
@@ -508,7 +509,7 @@ See [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md) for the real values and rationale.
 zsh claude/github-warden/test/run.zsh
 ```
 
-Current: **11 test files, 224 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
+Current: **11 test files, 239 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
 
 **Stub architecture — hermetic by design, no live network in tests:**
 - `test/fixtures/curl-stub.zsh` — a fake `curl` that understands the exact arg layout `ghw_api` emits (`-sS -X METHOD -H ... -D hdrfile -o bodyfile -w %{http_code}`), routes requests via `$GHW_STUB_ROUTES`, and logs every call to `$GHW_STUB_LOG` so tests can assert exactly what was (or wasn't) sent — including asserting the **absence** of a `PUT`, which is how A1/A2/A3/A6 are proven.
@@ -521,7 +522,7 @@ Current: **11 test files, 224 assertions, all passing.** Each file is independen
 |---|---:|---|
 | `airgap.test.zsh` | 39 | Cross-account guard, `user_namespace` resolution, config-overlap invariant, case-insensitive target matching |
 | `api.test.zsh` | 19 | `ghw_api`: happy path, plain 403, 404, secondary rate-limit retry (A8), a second consecutive secondary-limit retry proving the captured body stays uncorrupted, pagination, malformed-body failure |
-| `audit-stale.test.zsh` | 18 | `audit` drift detection, `stale` candidate ranking, a loop-body-local regression guard on the stale report output, a masked-pipe regression guard on the org repo-list read |
+| `audit-stale.test.zsh` | 21 | `audit` drift detection, `stale` candidate ranking, a loop-body-local regression guard on the stale report output, a masked-pipe regression guard on the org repo-list read (`audit`), a silent-failure regression guard on the org repo-list read (`stale`) |
 | `auth-resolve.test.zsh` | 24 | Profile resolution (explicit/org-map/unmapped/unknown), token source precedence (gh keyring → env fallback → failure) |
 | `doctor.test.zsh` | 23 | Credential health reporting, `--strict` vs non-strict exit semantics, overlap always failing both modes, a loop-body-local regression guard across two profiles both carrying a `user_namespace` |
 | `ghw-cli.test.zsh` | 8 | Top-level dispatch: help, missing command, unknown command, `--account` with no value |
@@ -529,7 +530,7 @@ Current: **11 test files, 224 assertions, all passing.** Each file is independen
 | `launch.test.zsh` | 24 | Dry-launch prompt assembly, target normalization (SSH/HTTPS forms), `--script` mode, trailing-flag hang guards |
 | `precheck.test.zsh` | 10 | P1–P5 precondition gate, each failure mode |
 | `report.test.zsh` | 15 | CSV column parsing, quoted-field refusal, dedup, missing-column/empty-source failures |
-| `status-members.test.zsh` | 20 | `status` and `members` read paths, masked-pipe regression guards on the org members/teams reads (`status`) and the org teams / per-team members reads (`members`, including proving no CSV is written on a failed fetch) |
+| `status-members.test.zsh` | 32 | `status` and `members` read paths, masked-pipe regression guards on the org members/teams reads (`status`) and the org teams / per-team members reads (`members`), plus silent-failure regression guards on the remaining four `members` reads (org members, org admins, org 2FA-disabled, outside collaborators) — every case proving no CSV is written on a failed fetch |
 
 `api.test.zsh`'s malformed-body test prints a `jq: error (...) cannot be added` line to stderr during the run — that's expected noise from the test asserting the engine fails closed on a non-array API body, not a broken test.
 
