@@ -8,39 +8,45 @@ ghw_accounts_file() {
 
 # Air-gap: a target org/owner belongs to exactly one profile, matched
 # against that profile's orgs[] OR its user_namespace (a missing
-# user_namespace key is absent, never the literal string "null").
-_ghw_profile_owning() {  # $1 target, $2 accounts file -> owning profile or ""
-  jq -r --arg o "$1" '
+# user_namespace key is absent, never the literal string "null"). GitHub
+# org/user names are case-insensitive, so the comparison is done on a
+# lowercased copy of the target — callers keep the ORIGINAL casing in
+# every message, return value, and downstream API path; only this internal
+# comparison is case-folded.
+_ghw_profile_owning() {  # $1 target (original casing), $2 accounts file -> owning profile or ""
+  local target_lc="${(L)1}"
+  jq -r --arg o "$target_lc" '
     .profiles | to_entries[]
-    | select( ((.value.orgs // []) | index($o)) != null
-              or ((.value.user_namespace // "") == $o) )
+    | select( ((.value.orgs // []) | map(ascii_downcase) | index($o)) != null
+              or (((.value.user_namespace // "") | ascii_downcase) == $o) )
     | .key' "$2" | head -1
 }
 
 # Config invariant: no org/user_namespace may be listed under more than one
-# profile. Cheap jq pass, called by ghw_resolve_profile before any matching
-# so every command inherits the check; also surfaced by `ghw doctor`.
+# profile (case-insensitively — a name differing only in case across two
+# profiles is still a collision). Cheap jq pass, called by
+# ghw_resolve_profile before any matching so every command inherits the
+# check; also surfaced by `ghw doctor`. Message joins ALL colliding
+# profiles uniformly (comma-separated), for any count >= 2.
 ghw_check_airgap() {
-  local file overlap name profiles a b
+  local file overlap name profiles
   file=$(ghw_accounts_file)
   overlap=$(jq -r '
     [ .profiles | to_entries[] | .key as $p
       | ((.value.orgs // [])
          + (if ((.value.user_namespace // "") != "") then [.value.user_namespace] else [] end))[] as $n
       | {name: $n, profile: $p} ]
-    | group_by(.name)
+    | group_by(.name | ascii_downcase)
     | map(select(length > 1))
     | .[0]
     | select(. != null)
-    | [.[0].name, ([.[].profile] | join(","))]
+    | [.[0].name, ([.[].profile] | join(", "))]
     | @tsv
   ' "$file" 2>/dev/null)
   if [[ -n "$overlap" ]]; then
     name="${overlap%%$'\t'*}"
     profiles="${overlap#*$'\t'}"
-    a="${profiles%%,*}"
-    b="${profiles#*,}"
-    print -ru2 -- "ACCOUNT_OVERLAP: '${name}' is listed under profiles ${a} and ${b} — accounts must be air-gapped."
+    print -ru2 -- "ACCOUNT_OVERLAP: '${name}' is listed under profiles ${profiles} — accounts must be air-gapped."
     return 2
   fi
   return 0
