@@ -89,6 +89,35 @@ assert_exit "audit: repos fetch failure is non-zero" 1 $rc
 assert_contains "audit: repos fetch failure named" "$out" "ghw audit: /orgs/ORG1/repos read failed"
 assert_not_contains "audit: no summary line on repos fetch failure" "$out" "repos audited"
 
+# audit: one of several repos 500s on its own /repos/<org>/<repo> detail GET
+# (the per-repo fetch, distinct from the org repo-list fetch above). Before
+# this fix, `(( repos++ ))` ran before that fetch, so a failed repo was
+# still counted "audited" and contributed zero drift — indistinguishable
+# from a repo that genuinely matched the reference. "good" has real drift
+# (has_wiki) so this also proves a skip doesn't stop other repos' drift
+# from being reported. Exit stays 0 (drift/skip counts are the signal, not
+# the exit code) — only "audit: repos fetch failure" above (the org-level
+# listing) aborts with exit 1.
+cat > "$GHW_STUB_ROUTES" <<EOF
+stub_route() {
+  case "\$2" in
+    */repos/ORG1/ref-repo/branches/main/protection|*/repos/ORG1/good/branches/main/protection)
+      RESP_STATUS=200; RESP_BODY='{"required_pull_request_reviews":{}}'; RESP_HEADERS='' ;;
+    */repos/ORG1/ref-repo) RESP_STATUS=200; RESP_BODY='$(repo_json ref-repo true enabled)'; RESP_HEADERS='' ;;
+    */repos/ORG1/good) RESP_STATUS=200; RESP_BODY='$(repo_json good false enabled)'; RESP_HEADERS='' ;;
+    */repos/ORG1/drifty) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+    */orgs/ORG1/repos*)
+      RESP_STATUS=200; RESP_BODY='[{"name":"good"},{"name":"drifty"}]'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+out=$(zsh "$ghw_bin" audit --org ORG1 --ref ORG1/ref-repo 2>&1); rc=$?
+assert_exit "audit: unreadable repo is skipped, exit stays 0" 0 $rc
+assert_contains "audit: unreadable repo named on stderr" "$out" "ghw audit: /repos/ORG1/drifty read failed — skipped"
+assert_contains "audit: good's drift still reported despite drifty being skipped" "$out" $'good\thas_wiki\ttrue\tfalse'
+assert_contains "audit: summary shows reduced audited count + skipped count" "$out" "1 repos audited, 1 drift lines (reference: ORG1/ref-repo), 1 skipped (unreadable — see stderr)"
+
 # stale: org repos fetch fails. Not a masked-pipe case (no `| jq` before the
 # check — the jq parse runs later, inside the `while read` construct, only
 # after this read already succeeded), but the bare `|| return 1` still

@@ -275,6 +275,8 @@ The reference repo itself is skipped if it happens to live inside the audited or
 
 **What it reads:** `GET /repos/{ref}`, `GET /orgs/{org}/repos` (paged), `GET /repos/{org}/{repo}` per repo, plus a branch-protection check per repo and for the reference. Writes nothing — output is a tab-separated drift table to stdout.
 
+**A repo whose own detail fetch fails is not silently counted as audited.** `(( repos++ ))` only happens *after* `GET /repos/{org}/{repo}` succeeds — a failed fetch used to be counted before the fetch even ran, which meant an unreadable repo contributed zero drift lines and looked exactly like a repo that matched the reference perfectly. Now a failure prints `ghw audit: /repos/{org}/{repo} read failed — skipped` to stderr, increments a separate `skipped` counter instead of `repos`, and auditing continues with the next repo — it does not abort the run (contrast with the org-level repo-*list* read failing, which does abort; see Exit codes below).
+
 **Worked example:**
 
 ```zsh
@@ -289,7 +291,9 @@ some-repo	branch_protection	protected	unprotected
 2 repos audited, 2 drift lines (reference: INVENCO-GROUP/reference-repo)
 ```
 
-**Exit codes:** `0` success, `1` if the reference repo `GET /repos/{ref}` fails (`→ HTTP {status}`) or the org repo-list read fails (`ghw audit: /orgs/{org}/repos read failed`) — the latter aborts before the repo loop runs, so a failed listing never prints a "0 repos audited" summary as if the org genuinely had none, `2` missing `--org`/`--ref` or account/token resolution failure.
+If any per-repo fetch failed, the summary gains a trailing clause — `N repos audited, M drift lines (reference: <ref>), K skipped (unreadable — see stderr)` — so an incomplete audit can never read as a clean one just because the drift count looks low or zero.
+
+**Exit codes:** `0` success — this includes runs where one or more repos were `skipped` per the note above; drift and skip counts are the signal for those, not the exit code. `1` if the reference repo `GET /repos/{ref}` fails (`→ HTTP {status}`) or the **org-level** repo-list read fails (`ghw audit: /orgs/{org}/repos read failed`) — the latter aborts before the repo loop runs at all, so a failed listing never prints a "0 repos audited" summary as if the org genuinely had none. `2` missing `--org`/`--ref` or account/token resolution failure.
 
 ---
 
@@ -509,7 +513,9 @@ See [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md) for the real values and rationale.
 zsh claude/github-warden/test/run.zsh
 ```
 
-Current: **11 test files, 239 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
+Current: **11 test files, 243 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
+
+Two fetch-succeeded-but-parse-failed guards (`lib/status.zsh`'s two `jq 'length'` parses, `lib/members.zsh`'s teams-slug `jq -r '.[].slug'` parse) got a named stderr message but no dedicated fixture: `ghw_api_paged` already validates its own output is a well-formed JSON array before returning success (proven by `api.test.zsh`'s existing "malformed page body" case, which shows a non-array 200 body makes `ghw_api_paged` itself fail — the *read*-failure guard one line above the parse, not the parse guard). Reaching the parse-failure branch specifically would need `ghw_api_paged` to succeed with data no real GitHub response shape produces; constructing that through the stub was judged contrived rather than a genuine regression scenario.
 
 **Stub architecture — hermetic by design, no live network in tests:**
 - `test/fixtures/curl-stub.zsh` — a fake `curl` that understands the exact arg layout `ghw_api` emits (`-sS -X METHOD -H ... -D hdrfile -o bodyfile -w %{http_code}`), routes requests via `$GHW_STUB_ROUTES`, and logs every call to `$GHW_STUB_LOG` so tests can assert exactly what was (or wasn't) sent — including asserting the **absence** of a `PUT`, which is how A1/A2/A3/A6 are proven.
@@ -522,7 +528,7 @@ Current: **11 test files, 239 assertions, all passing.** Each file is independen
 |---|---:|---|
 | `airgap.test.zsh` | 39 | Cross-account guard, `user_namespace` resolution, config-overlap invariant, case-insensitive target matching |
 | `api.test.zsh` | 19 | `ghw_api`: happy path, plain 403, 404, secondary rate-limit retry (A8), a second consecutive secondary-limit retry proving the captured body stays uncorrupted, pagination, malformed-body failure |
-| `audit-stale.test.zsh` | 21 | `audit` drift detection, `stale` candidate ranking, a loop-body-local regression guard on the stale report output, a masked-pipe regression guard on the org repo-list read (`audit`), a silent-failure regression guard on the org repo-list read (`stale`) |
+| `audit-stale.test.zsh` | 25 | `audit` drift detection, `stale` candidate ranking, a loop-body-local regression guard on the stale report output, a masked-pipe regression guard on the org repo-list read (`audit`), a silent-failure regression guard on the org repo-list read (`stale`), a per-repo unreadable-skip regression guard proving a failed repo detail fetch is named, excluded from the audited count, and doesn't stop other repos' drift from being reported |
 | `auth-resolve.test.zsh` | 24 | Profile resolution (explicit/org-map/unmapped/unknown), token source precedence (gh keyring → env fallback → failure) |
 | `doctor.test.zsh` | 23 | Credential health reporting, `--strict` vs non-strict exit semantics, overlap always failing both modes, a loop-body-local regression guard across two profiles both carrying a `user_namespace` |
 | `ghw-cli.test.zsh` | 8 | Top-level dispatch: help, missing command, unknown command, `--account` with no value |

@@ -38,7 +38,7 @@ ghw_members() {  # $1 account, remaining flags
   # of "teams list unreadable". Same pitfall `lib/import-engine.zsh`'s
   # pre-write reads are already guarded against, for the same reason.
   teams_json=$(ghw_api_paged "/orgs/${org}/teams") || { print -ru2 -- "ghw members: /orgs/${org}/teams read failed"; return 1 }
-  teams=$(print -r -- "$teams_json" | jq -r '.[].slug') || return 1
+  teams=$(print -r -- "$teams_json" | jq -r '.[].slug') || { print -ru2 -- "ghw members: /orgs/${org}/teams list did not parse"; return 1 }
 
   typeset -A team_of is_admin no2fa
   for u in ${(f)"$(print -r -- "$admins" | jq -r '.[].login')"}; do is_admin[$u]=1; done

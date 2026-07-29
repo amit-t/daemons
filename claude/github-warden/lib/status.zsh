@@ -44,8 +44,8 @@ ghw_status() {  # $1 account (may be ""), remaining flags
   # subshell `ghw_api_paged` forks internally and does not survive back to
   # this caller, so quoting it here would print a stale/unrelated value.
   members_json=$(ghw_api_paged "/orgs/${org}/members") || { print -ru2 -- "ghw status: /orgs/${org}/members read failed"; return 1 }
-  members=$(print -r -- "$members_json" | jq 'length') || return 1
+  members=$(print -r -- "$members_json" | jq 'length') || { print -ru2 -- "ghw status: /orgs/${org}/members list did not parse"; return 1 }
   teams_json=$(ghw_api_paged "/orgs/${org}/teams") || { print -ru2 -- "ghw status: /orgs/${org}/teams read failed"; return 1 }
-  teams=$(print -r -- "$teams_json" | jq 'length') || return 1
+  teams=$(print -r -- "$teams_json" | jq 'length') || { print -ru2 -- "ghw status: /orgs/${org}/teams list did not parse"; return 1 }
   print -r -- "org ${org}: repos=${repos} members=${members} teams=${teams} plan=${plan}"
 }
