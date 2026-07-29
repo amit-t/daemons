@@ -3,11 +3,13 @@
     "personal": {
       "token_env": "GHW_TOKEN_PERSONAL",
       "login": "amit-t",
-      "orgs": ["AppIncubatorHQ", "babble-club", "bharat-innovation-olympiad", "BrightBytesHub", "eternals-tech", "EverPlanHQ", "EverPlanHQ-Dep", "FlyingPenguinsInd", "Hiplogik", "iamamittiwari", "IntelliBuilds", "KommonSchool", "MilkyWaayy", "nagpurtechies", "perspectiv91", "Quiet-Realist", "RefineryInc", "Swapaholic", "untox-labs", "Zippy-Tech", "amit-t"]
+      "user_namespace": "amit-t",
+      "orgs": ["AppIncubatorHQ", "babble-club", "bharat-innovation-olympiad", "BrightBytesHub", "eternals-tech", "EverPlanHQ", "EverPlanHQ-Dep", "FlyingPenguinsInd", "Hiplogik", "iamamittiwari", "IntelliBuilds", "KommonSchool", "MilkyWaayy", "nagpurtechies", "perspectiv91", "Quiet-Realist", "RefineryInc", "Swapaholic", "untox-labs", "Zippy-Tech"]
     },
     "inv": {
       "token_env": "GHW_TOKEN_INV",
       "login": "amit-tiwari_vnt",
+      "user_namespace": "amit-tiwari_vnt",
       "orgs": ["INVENCO-GROUP", "Invenco-Cloud-Systems-ICS", "inv-cloud-platform", "Invenco-Group-Limited", "Invenco-Platform-Software", "Invenco-Test-Practice-ITP"]
     }
   }

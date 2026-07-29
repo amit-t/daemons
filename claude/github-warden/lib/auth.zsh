@@ -6,6 +6,52 @@ ghw_accounts_file() {
   print -r -- "${GHW_ACCOUNTS_FILE:-${daemon_dir}/config/accounts.json}"
 }
 
+# Air-gap: a target org/owner belongs to exactly one profile, matched
+# against that profile's orgs[] OR its user_namespace (a missing
+# user_namespace key is absent, never the literal string "null"). GitHub
+# org/user names are case-insensitive, so the comparison is done on a
+# lowercased copy of the target — callers keep the ORIGINAL casing in
+# every message, return value, and downstream API path; only this internal
+# comparison is case-folded.
+_ghw_profile_owning() {  # $1 target (original casing), $2 accounts file -> owning profile or ""
+  local target_lc="${(L)1}"
+  jq -r --arg o "$target_lc" '
+    .profiles | to_entries[]
+    | select( ((.value.orgs // []) | map(ascii_downcase) | index($o)) != null
+              or (((.value.user_namespace // "") | ascii_downcase) == $o) )
+    | .key' "$2" | head -1
+}
+
+# Config invariant: no org/user_namespace may be listed under more than one
+# profile (case-insensitively — a name differing only in case across two
+# profiles is still a collision). Cheap jq pass, called by
+# ghw_resolve_profile before any matching so every command inherits the
+# check; also surfaced by `ghw doctor`. Message joins ALL colliding
+# profiles uniformly (comma-separated), for any count >= 2.
+ghw_check_airgap() {
+  local file overlap name profiles
+  file=$(ghw_accounts_file)
+  overlap=$(jq -r '
+    [ .profiles | to_entries[] | .key as $p
+      | ((.value.orgs // [])
+         + (if ((.value.user_namespace // "") != "") then [.value.user_namespace] else [] end))[] as $n
+      | {name: $n, profile: $p} ]
+    | group_by(.name | ascii_downcase)
+    | map(select(length > 1))
+    | .[0]
+    | select(. != null)
+    | [.[0].name, ([.[].profile] | join(", "))]
+    | @tsv
+  ' "$file" 2>/dev/null)
+  if [[ -n "$overlap" ]]; then
+    name="${overlap%%$'\t'*}"
+    profiles="${overlap#*$'\t'}"
+    print -ru2 -- "ACCOUNT_OVERLAP: '${name}' is listed under profiles ${profiles} — accounts must be air-gapped."
+    return 2
+  fi
+  return 0
+}
+
 ghw_resolve_profile() {  # $1 explicit account or "", $2 target org/owner or ""
   local explicit="$1" org="$2" file
   file=$(ghw_accounts_file)
@@ -13,8 +59,20 @@ ghw_resolve_profile() {  # $1 explicit account or "", $2 target org/owner or ""
     print -ru2 -- "ghw: accounts file not found: $file"
     return 2
   fi
+  ghw_check_airgap || return 2
   if [[ -n "$explicit" ]]; then
     if jq -e --arg p "$explicit" '.profiles[$p]' "$file" >/dev/null; then
+      if [[ -n "$org" ]]; then
+        local owner
+        owner=$(_ghw_profile_owning "$org" "$file")
+        if [[ -n "$owner" && "$owner" != "$explicit" ]]; then
+          print -ru2 -- "ACCOUNT_MISMATCH: '${org}' belongs to profile '${owner}', not '${explicit}'. ghw keeps accounts air-gapped — rerun with --account ${owner} or omit --account."
+          return 2
+        elif [[ -z "$owner" ]]; then
+          print -ru2 -- "ACCOUNT_MISMATCH: '${org}' is not mapped to profile '${explicit}' (or any profile). Add it to config/accounts.json."
+          return 2
+        fi
+      fi
       print -r -- "$explicit"
       return 0
     fi
@@ -23,7 +81,7 @@ ghw_resolve_profile() {  # $1 explicit account or "", $2 target org/owner or ""
   fi
   if [[ -n "$org" ]]; then
     local match
-    match=$(jq -r --arg o "$org" '.profiles | to_entries[] | select(.value.orgs | index($o)) | .key' "$file" | head -1)
+    match=$(_ghw_profile_owning "$org" "$file")
     if [[ -n "$match" ]]; then
       print -r -- "$match"
       return 0

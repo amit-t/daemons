@@ -25,7 +25,10 @@ Usage:
                               Reconcile logins into an org/team. Add-only, idempotent,
                               never demotes an existing member. --script skips the agent
                               and runs the deterministic engine directly.
-  ghw doctor                  Check every profile: token, login, scopes, org admin role.
+  ghw doctor [--strict]       Check every profile: token, login, scopes, air-gap invariant.
+                              Exits 0 once credentials + air-gap are healthy; org-admin role
+                              is informational unless --strict, which requires admin on
+                              every listed org and exits 1 otherwise.
   ghw status [--org <org>]    Org overview: repos, members, teams (read-only).
   ghw audit --org <org> --ref <owner/repo>
                               Settings/security/branch-protection drift vs reference repo.
