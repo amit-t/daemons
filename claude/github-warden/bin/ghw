@@ -27,13 +27,15 @@ Usage:
                               and runs the deterministic engine directly.
   ghw doctor                  Check every profile: token, login, scopes, org admin role.
   ghw status [--org <org>]    Org overview: repos, members, teams (read-only).
-  ghw audit --org <org> [--ref <owner/repo>]
+  ghw audit --org <org> --ref <owner/repo>
                               Settings/security/branch-protection drift vs reference repo.
   ghw stale --org <org> [--months <n>]
                               Archive candidates: inactive/empty repos (read-only).
   ghw members --org <org> [--csv <out>] [--json]
                               Membership report: roles, teams, 2FA, outside collaborators.
   ghw help                    Show this help.
+
+  --account precedes the command, e.g. `ghw --account inv status`.
 
 Config (env):
   GHW_TOKEN_PERSONAL / GHW_TOKEN_INV   tokens per profile (see config/accounts.json)
@@ -133,10 +135,16 @@ main() {
       while (( $# )); do
         case "$1" in
           --script) script_mode=1; shift ;;
-          --org) org="${2:-}"; engine_args+=(--org "${2:-}"); shift 2 ;;
-          --team) engine_args+=(--team "${2:-}"); shift 2 ;;
-          --csv|--column|--role|--org-role) engine_args+=("$1" "${2:-}"); shift 2 ;;
           --dry-run) engine_args+=(--dry-run); shift ;;
+          --org|--team|--csv|--column|--role|--org-role)
+            if (( $# < 2 )); then
+              print -ru2 -- "ghw import: ${1} requires a value"
+              exit 2
+            fi
+            [[ "$1" == --org ]] && org="$2"
+            engine_args+=("$1" "$2")
+            shift 2
+            ;;
           *) print -ru2 -- "ghw import: unknown flag: $1"; exit 2 ;;
         esac
       done
@@ -166,7 +174,16 @@ main() {
       while (( $# )); do
         case "$1" in
           --script) script_mode=1; shift ;;
-          --*) passthru+=("$1" "${2:-}"); shift 2 ;;
+          --*)
+            # Passthrough assumes flag+value pairs. A trailing lone flag with
+            # no neighbor left would make `shift 2` error without shifting in
+            # zsh (infinite loop) — bound consumption to what's left instead.
+            if (( $# >= 2 )); then
+              passthru+=("$1" "$2"); shift 2
+            else
+              passthru+=("$1"); shift
+            fi
+            ;;
           *) target="$1"; shift ;;
         esac
       done

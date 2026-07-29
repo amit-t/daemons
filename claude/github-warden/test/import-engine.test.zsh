@@ -123,6 +123,29 @@ out=$(zsh "$engine" --account inv --org INVENCO-GROUP --team ppna --csv "$csv" 2
 if (( rc != 0 )); then _ok; else _fail "member-list read failure: expected non-zero exit, got 0"; fi
 assert_not_contains "member-list read failure zero writes" "$(<$GHW_STUB_LOG)" "PUT "
 
+# Guarded read variant: TEAM members GET returns 200 with a malformed
+# (non-array) body. ghw_api_paged must propagate this as a failure rather
+# than returning rc 0 with empty output, or the team-phase set-difference
+# would treat every CSV login as new and upsert-PUT existing maintainers.
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() {
+  case "$1 $2" in
+    "GET "*/user) RESP_STATUS=200; RESP_BODY='{"login":"amit_vnt"}'; RESP_HEADERS='x-oauth-scopes: admin:org' ;;
+    "GET "*/memberships/amit_vnt) RESP_STATUS=200; RESP_BODY='{"role":"admin"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/teams/ppna/members*) RESP_STATUS=200; RESP_BODY='{"not":"an array"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/teams/ppna) RESP_STATUS=200; RESP_BODY='{"slug":"ppna"}'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP/members*) RESP_STATUS=200; RESP_BODY='[{"login":"amit_vnt"}]'; RESP_HEADERS='' ;;
+    "GET "*/orgs/INVENCO-GROUP) RESP_STATUS=200; RESP_BODY='{"login":"INVENCO-GROUP"}'; RESP_HEADERS='' ;;
+    *) RESP_STATUS=500; RESP_BODY='{}'; RESP_HEADERS='' ;;
+  esac
+}
+EOF
+: > "$GHW_STUB_LOG"
+print -rl -- "login" "newuser_vnt" > "$csv"
+out=$(zsh "$engine" --account inv --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "malformed team-list body: expected non-zero exit, got 0"; fi
+assert_not_contains "malformed team-list body zero writes" "$(<$GHW_STUB_LOG)" "PUT "
+
 # Case-insensitive membership matching: CSV login differs only in case from
 # an already-existing org member. GitHub logins are case-insensitive; the
 # set-difference must still recognize the login as already present and

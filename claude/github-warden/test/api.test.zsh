@@ -93,5 +93,14 @@ out=$(<"$out_file")
 assert_exit "paged rc" 0 $rc
 assert_eq "paged length" 101 "$(print -r -- "$out" | jq 'length')"
 
+# malformed page body: 200 with a non-array object instead of a member array.
+# Must not be treated as an empty-but-valid page (rc 0, empty output) — that
+# would let a caller's MEMBER_LIST_READ_FAILED guard pass with an empty map.
+cat > "$GHW_STUB_ROUTES" <<'EOF'
+stub_route() { RESP_STATUS=200; RESP_BODY='{"not":"an array"}'; RESP_HEADERS='' }
+EOF
+ghw_api_paged /orgs/o/members > "$out_file"; rc=$?
+assert_exit "paged malformed body rc" 1 $rc
+
 rm -rf "$work"
 report

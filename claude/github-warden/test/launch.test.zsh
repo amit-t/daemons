@@ -25,6 +25,12 @@ assert_contains "target in context" "$out" "INVENCO-GROUP/some-repo"
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP 2>&1); rc=$?
 assert_exit "import without csv exits 2" 2 $rc
 
+# --org as the trailing arg with no value must exit 2 immediately, not loop
+# forever on a `shift 2` with only 1 arg left (zsh errors without shifting).
+out=$(zsh "$ghw_bin" import --org 2>&1); rc=$?
+assert_exit "import trailing --org exits 2 (no hang)" 2 $rc
+assert_contains "import trailing --org names the flag" "$out" "--org requires a value"
+
 # --script must export GH_TOKEN/GITHUB_TOKEN before handing off to the
 # gh-repo-mirror skill script, which authenticates via the gh CLI reading
 # those env vars — separate from the GHW_DRY_LAUNCH prompt assertions above.
@@ -41,6 +47,12 @@ assert_exit "mirror --script launch ok" 0 $rc
 assert_contains "mirror --script exports GH_TOKEN" "$out" "GH_TOKEN=tok"
 assert_contains "mirror --script exports GITHUB_TOKEN" "$out" "GITHUB_TOKEN=tok"
 assert_contains "mirror --script passes ref-repo" "$out" "--ref-repo INVENCO-GROUP/some-repo"
+
+# A trailing boolean passthrough flag (no value after it) must not hang the
+# arg loop (zsh's `shift 2` errors without shifting when only 1 arg is left).
+out=$(HOME="$fake_home" zsh "$ghw_bin" mirror INVENCO-GROUP/some-repo --script --lone-flag 2>&1); rc=$?
+assert_exit "mirror trailing lone flag completes (no hang)" 0 $rc
+assert_contains "mirror trailing lone flag reaches ARGS" "$out" "--lone-flag"
 
 rm -rf "$work" "$fake_home"
 report

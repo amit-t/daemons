@@ -45,6 +45,10 @@ ghw_parse_source() {  # $1 csv path, $2 column name — prints deduped logins
     print -ru2 -- "SOURCE_INVALID: file not found: $csv"
     return 6
   fi
+  if grep -q '"' "$csv"; then
+    print -ru2 -- "SOURCE_INVALID: quoted CSV fields are not supported — export a plain CSV"
+    return 6
+  fi
   local raw
   raw=$(awk -F',' -v col="$column" '
     NR==1 { for (i=1;i<=NF;i++) { h=$i; gsub(/^[" \r]+|[" \r]+$/,"",h); if (h==col) c=i }

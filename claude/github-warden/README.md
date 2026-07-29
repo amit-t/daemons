@@ -15,10 +15,10 @@ GitHub org/repo management daemon for Amit's two accounts — **personal** and *
 | `ghw mirror <repo\|url>` (or bare inside a repo — infers ref from `origin`) | ✅ | clscb playbook seeded with gh-repo-mirror skill, resolved profile, target arg; agent interviews and drives `mirror-repo.zsh`. `--script` bypasses the agent: `mirror-repo.zsh` direct with config-preset defaults, fails on missing input |
 | `ghw import --org X [--team y] --csv f [--column login] [--role member\|maintainer] [--org-role member] [--dry-run]` | ✅ | clscb playbook narrates, judges edge rows, and reports; **every write goes through `lib/import-engine.zsh`** — algorithm in code, not prompt |
 | `ghw doctor` | ❌ | local zsh — every profile: token auth, scopes, admin role per listed org; named pass/fail table |
-| `ghw status [--account a] [--org X]` | ❌ | local zsh — org overview: repo counts, member/team counts, visibility split, plan/seat basics |
+| `ghw status [--org X]` (`--account` is a global selector that precedes the command: `ghw --account a status`) | ❌ | local zsh — org overview: repo counts, member/team counts, visibility split, plan/seat basics |
 | `ghw audit --org X --ref owner/repo` | ❌ | local zsh — every repo vs reference: general settings, security-and-analysis flags, classic branch protection on default branch; drift table, read-only |
 | `ghw stale --org X [--months N]` (default 6) | ❌ | local zsh — repos with no push/PR/issue activity in N months, empty repos, fork clutter; ranked report, prints archive commands, executes nothing |
-| `ghw members --org X [--team y] [--csv out] [--json]` | ❌ | local zsh — members, org roles, team matrix, 2FA-disabled flags, outside collaborators; CSV output round-trips into `ghw import` |
+| `ghw members --org X [--csv out] [--json]` | ❌ | local zsh — members, org roles, team matrix, 2FA-disabled flags, outside collaborators; CSV output round-trips into `ghw import` |
 
 `--script` on `mirror`/`import` bypasses the agent entirely: `import --script` runs `lib/import-engine.zsh` directly; `mirror --script` runs `mirror-repo.zsh` with `GH_TOKEN`/`GITHUB_TOKEN` exported. `GHW_DRY_LAUNCH=1` prints the assembled agent prompt instead of launching it.
 

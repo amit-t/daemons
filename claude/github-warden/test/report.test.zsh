@@ -36,5 +36,14 @@ print -r -- "login" > "$csvfile"
 out=$(ghw_parse_source "$csvfile" login 2>&1); rc=$?
 assert_exit "empty source rc" 6 $rc
 
+# Quoted field with an embedded comma would shift columns under a naive
+# awk -F',' split and extract a login that was never intended for that row.
+# Refuse quoted CSVs outright rather than mis-parse them.
+quotedfile="${work}/quoted.csv"
+print -rl -- 'name,login' '"Smith, alice_vnt",bob' > "$quotedfile"
+out=$(ghw_parse_source "$quotedfile" login 2>&1); rc=$?
+assert_exit "quoted csv rc" 6 $rc
+assert_contains "quoted csv named" "$out" "SOURCE_INVALID: quoted CSV fields are not supported"
+
 rm -rf "$work"
 report

@@ -65,8 +65,9 @@ ghw_api_paged() {  # $1 endpoint — GETs all pages, prints one merged JSON arra
   [[ "$endpoint" == *\?* ]] && sep="&"
   while true; do
     chunk=$(ghw_api GET "${endpoint}${sep}per_page=100&page=${page}") || return $?
-    out=$(print -r -- "$out" | jq --argjson c "$chunk" '. + $c')
-    len=$(print -r -- "$chunk" | jq 'length')
+    out=$(print -r -- "$out" | jq --argjson c "$chunk" '. + $c') || return 1
+    len=$(print -r -- "$chunk" | jq 'length') || return 1
+    [[ "$len" == <-> ]] || return 1
     (( len < 100 )) && break
     (( page++ ))
   done
