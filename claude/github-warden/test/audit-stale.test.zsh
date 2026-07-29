@@ -8,6 +8,10 @@ work=$(mktemp -d)
 export GHW_CURL="zsh ${script_dir}/fixtures/curl-stub.zsh"
 export GHW_STUB_LOG="${work}/log" GHW_STUB_ROUTES="${work}/routes.zsh"
 export GHW_API_ROOT="https://api.github.example" GHW_SLEEP=":"
+# Hermetic: stub gh (empty-token mode) so ghw_token_for's gh-primary path
+# never shells out to a real gh binary — forces the env-var fallback this
+# test already relies on.
+export GHW_GH="zsh ${script_dir}/fixtures/gh-stub.zsh" GHW_GH_STUB_TOKEN=""
 export GHW_ACCOUNTS_FILE="${work}/accounts.json"
 print -r -- '{"profiles":{"inv":{"token_env":"T_I","login":"amit_vnt","orgs":["ORG1"]}}}' > "$GHW_ACCOUNTS_FILE"
 export T_I="tok"

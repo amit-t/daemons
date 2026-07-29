@@ -50,7 +50,12 @@ Profiles in `config/accounts.json`:
 (`login`/`orgs` values above are illustrative; real values captured from `GET /user` and `GET /user/orgs` during first `ghw doctor` setup, per profile.)
 
 - Resolution order: explicit `--account personal|inv` → target org/owner matched against `orgs[]` → hard fail with the org list printed. Never guesses.
-- Tokens come **only** from the named env vars (import spec §9): never the `gh` keyring, never committed, never logged, never echoed into reports.
+- Token source order (`ghw_token_for` in `lib/auth.zsh`), per resolved profile:
+  1. `gh` keyring, primary: if `gh` is on `PATH`, `gh auth token --user <profile login>`. One-time setup is `gh auth login --hostname github.com` per account — no PAT to mint or rotate by hand.
+  2. Env var fallback: the profile's `token_env` (`GHW_TOKEN_PERSONAL` / `GHW_TOKEN_INV`), used when `gh` is absent or its keyring has no token for that login.
+  3. Neither present → hard fail naming both remediations (`gh auth login --hostname github.com` and `export <VARNAME>=<token>`); ghw never self-elevates or guesses.
+  The token is never printed or logged; `ghw doctor` reports which source each profile resolved from (`gh:<login>` or `env:<VAR>`), never the token value.
+  SSH keys are configured for both accounts for git clone/push; the GitHub API always uses the resolved token, never SSH.
 - Precondition gate (`lib/auth.zsh`) runs before any mutating command, all-or-nothing, each failure named:
   - P1 `AUTH_INVALID` — `GET /user` fails or login ≠ profile `login`.
   - P2 `SCOPE_MISSING` — classic PAT: `x-oauth-scopes` lacks required scope; fine-grained PAT (no header): targeted probe call. Daemon never attempts to acquire scope; prints remediation for a human.
@@ -95,4 +100,4 @@ Implements the import spec verbatim; deltas from that spec here are interface-le
 
 ## Out of scope (v1)
 
-HTTP job surface from the import spec; any member removal or role mutation; `gh auth` keyring integration; auto-archiving from `stale`.
+HTTP job surface from the import spec; any member removal or role mutation; auto-archiving from `stale`.

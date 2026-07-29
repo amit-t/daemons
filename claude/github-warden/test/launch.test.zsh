@@ -8,6 +8,10 @@ work=$(mktemp -d)
 export GHW_ACCOUNTS_FILE="${work}/accounts.json"
 print -r -- '{"profiles":{"inv":{"token_env":"T_I","login":"amit_vnt","orgs":["INVENCO-GROUP"]}}}' > "$GHW_ACCOUNTS_FILE"
 export T_I="tok" GHW_DRY_LAUNCH=1
+# Hermetic: stub gh (empty-token mode) so ghw_token_for's gh-primary path
+# never shells out to a real gh binary — forces the env-var fallback this
+# test already relies on.
+export GHW_GH="zsh ${script_dir}/fixtures/gh-stub.zsh" GHW_GH_STUB_TOKEN=""
 
 csv="${work}/s.csv"; print -rl -- "login" "a_vnt" > "$csv"
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
@@ -21,6 +25,23 @@ out=$(zsh "$ghw_bin" mirror INVENCO-GROUP/some-repo 2>&1); rc=$?
 assert_exit "mirror dry launch ok" 0 $rc
 assert_contains "mirror playbook included" "$out" "ghw mirror playbook"
 assert_contains "target in context" "$out" "INVENCO-GROUP/some-repo"
+
+# SSH-form explicit target: owner resolution + downstream normalization must
+# strip git@github.com: and .git, not just the https:// prefix. Check the
+# specific "reference target:" run-context line (the playbook body itself
+# legitimately mentions git@github.com: as SSH-remote example text, so a
+# whole-output substring check would false-positive on that).
+out=$(zsh "$ghw_bin" mirror git@github.com:INVENCO-GROUP/some-repo.git 2>&1); rc=$?
+assert_exit "mirror ssh-form dry launch ok" 0 $rc
+assert_contains "ssh-form target normalized in context" "$out" "reference target: INVENCO-GROUP/some-repo"
+assert_not_contains "ssh-form context line has no git@ prefix" "$out" "reference target: git@"
+assert_not_contains "ssh-form context line has no .git suffix" "$out" "reference target: INVENCO-GROUP/some-repo.git"
+
+# https-form explicit target with a .git suffix: also normalized.
+out=$(zsh "$ghw_bin" mirror https://github.com/INVENCO-GROUP/some-repo.git 2>&1); rc=$?
+assert_exit "mirror https-form dry launch ok" 0 $rc
+assert_contains "https-form target normalized in context" "$out" "reference target: INVENCO-GROUP/some-repo"
+assert_not_contains "https-form context line has no .git suffix" "$out" "reference target: INVENCO-GROUP/some-repo.git"
 
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP 2>&1); rc=$?
 assert_exit "import without csv exits 2" 2 $rc

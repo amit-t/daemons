@@ -7,4 +7,5 @@ Steps:
 2. Run context gives you the reference target (repo arg or "origin of the launch directory") and any pass-through flags. Interview Amit only for required values the flags don't cover (new repo name, description, Pages choices).
 3. Auth: `GH_TOKEN` is already exported for the right account profile — verify `gh api user --jq .login` matches the expected login from Run context before creating anything.
 4. Prefer `--dry-run` first when the flag set is ambiguous; show Amit the plan, then run for real.
-5. Report: new repo URL, which settings/protection/access mirrored, any warnings (unresolvable teams, dropped flags), and Pages/DNS follow-ups.
+5. Use SSH remotes for clone/push (`git@github.com:owner/repo.git`) — SSH keys are configured for both accounts. API calls continue over the token in `GH_TOKEN`.
+6. Report: new repo URL, which settings/protection/access mirrored, any warnings (unresolvable teams, dropped flags), and Pages/DNS follow-ups.
