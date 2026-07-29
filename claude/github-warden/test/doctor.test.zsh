@@ -9,6 +9,9 @@ export GHW_CURL="zsh ${script_dir}/fixtures/curl-stub.zsh"
 export GHW_STUB_LOG="${work}/log" GHW_STUB_ROUTES="${work}/routes.zsh"
 export GHW_API_ROOT="https://api.github.example" GHW_SLEEP=":"
 export GHW_ACCOUNTS_FILE="${work}/accounts.json"
+# Hermetic: point GHW_GH at a stub so doctor never shells out to a real gh.
+export GHW_GH="zsh ${script_dir}/fixtures/gh-stub.zsh"
+export GHW_GH_STUB_TOKEN="" GHW_GH_STUB_LOG="${work}/gh-log"
 cat > "$GHW_ACCOUNTS_FILE" <<'JSON'
 {"profiles":{"personal":{"token_env":"T_P","login":"amit-t","orgs":["amit-t"]},
 "inv":{"token_env":"T_I","login":"amit_vnt","orgs":["INVENCO-GROUP"]}}}
@@ -25,9 +28,9 @@ stub_route() {
 EOF
 out=$(zsh "$ghw_bin" doctor 2>&1); rc=$?
 assert_exit "doctor exit 1 when a profile is broken" 1 $rc
-assert_contains "healthy token" "$out" "profile personal: token=ok"
+assert_contains "healthy token names source" "$out" "profile personal: token=ok(env:T_P)"
 assert_contains "healthy role" "$out" "org amit-t: role=admin"
-assert_contains "missing token flagged" "$out" "profile inv: token=MISSING"
+assert_contains "missing token flagged" "$out" "profile inv: token=MISSING (gh auth login, or export T_I)"
 assert_not_contains "no writes" "$(<$GHW_STUB_LOG)" "PUT "
 
 rm -rf "$work"

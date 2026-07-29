@@ -4,9 +4,12 @@ GitHub org/repo management daemon for Amit's two accounts — **personal** and *
 
 ## One-time setup
 
-1. Fill `config/accounts.json` with real values: `login` and `orgs` for each profile, captured from `gh api user` (and `gh api user/orgs` for org membership) while authenticated as that account. The `inv` profile ships with `login: "FILL_AT_SETUP"` — a placeholder `ghw` will refuse to match against any real token.
-2. Export tokens into the named env vars — `GHW_TOKEN_PERSONAL` and `GHW_TOKEN_INV`. Tokens come only from these env vars: never the `gh` keyring, never committed, never logged, never echoed into reports. A fine-grained PAT with **Organization Members: read & write** is the recommended scope (import spec §9); a classic PAT needs `admin:org`.
-3. Run `ghw doctor` to verify: token present, login matches profile, and org-admin role for every configured org, per profile.
+1. `config/accounts.json` ships with real `login`/`orgs` values for both profiles, captured from `gh api user` (and `gh api user/orgs`) while authenticated as each account.
+2. Run `gh auth login --hostname github.com` once per account (personal, then inv) so the `gh` CLI keyring holds a token for each `login`. This is the **primary** credential source — `ghw_token_for` runs `gh auth token --user <login>` per profile, so no PAT needs to be minted or exported day to day.
+   - Fallback: exporting `GHW_TOKEN_PERSONAL` / `GHW_TOKEN_INV` still works if `gh` isn't on `PATH` or its keyring has no token for that login. Tokens are never read from anywhere else: not committed, not logged, not echoed into reports.
+   - SSH keys are configured for both accounts for git operations (clone/push); the GitHub API always goes over the resolved token (`GH_TOKEN`/`GITHUB_TOKEN`), never SSH.
+3. Run `ghw doctor` to verify: token present (and which source produced it), login matches profile, and org-admin role for every configured org, per profile.
+4. `personal`'s current `gh` token lacks the `admin:org` scope, so mutating org commands (`import`) against personal orgs need a re-login with that scope first: `gh auth refresh -h github.com -s admin:org --user amit-t`. Read-only commands (`status`, `audit`, `stale`, `members`, `doctor`) work as-is.
 
 ## Commands
 
@@ -63,7 +66,7 @@ Reports are never deleted.
 
 | Var | Purpose |
 |---|---|
-| `GHW_TOKEN_PERSONAL` / `GHW_TOKEN_INV` | credentials per `config/accounts.json` profile (required) |
+| `GHW_TOKEN_PERSONAL` / `GHW_TOKEN_INV` | credentials per `config/accounts.json` profile (optional fallback — primary source is `gh auth token --user <login>`) |
 | `GHW_LAUNCHER` | agent launcher for `mirror`/`import` (default `clscb`) |
 | `GHW_STATE_DIR` | reports/state dir (default `~/.local/state/github-warden`) |
 | `GHW_API_ROOT` | GitHub API base URL (default `https://api.github.com`) |

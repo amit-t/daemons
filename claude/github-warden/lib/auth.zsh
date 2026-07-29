@@ -41,14 +41,39 @@ ghw_profile_field() {  # $1 profile, $2 field
 
 ghw_profile_login() { ghw_profile_field "$1" login }
 
-ghw_token_for() {  # $1 profile — exports GHW_TOKEN, GHW_TOKEN_ENV_NAME
-  local env_name
-  env_name=$(ghw_profile_field "$1" token_env)
-  if [[ -z "${(P)env_name:-}" ]]; then
-    print -ru2 -- "ghw: token env var ${env_name} is empty — export it for profile '$1'"
-    return 2
+ghw_gh_available() {  # true if the (possibly overridden) gh binary can be run
+  local -a gh_words; gh_words=(${=GHW_GH:-gh})
+  local gh_cmd="${gh_words[1]:-}"
+  [[ -z "$gh_cmd" ]] && return 1
+  if [[ "$gh_cmd" == */* ]]; then
+    [[ -x "$gh_cmd" ]]
+  else
+    (( $+commands[$gh_cmd] ))
   fi
-  typeset -gx GHW_TOKEN="${(P)env_name}" GHW_TOKEN_ENV_NAME="$env_name"
+}
+
+ghw_token_for() {  # $1 profile — exports GHW_TOKEN, GHW_TOKEN_ENV_NAME, GHW_TOKEN_SOURCE
+  local profile="$1" env_name login token
+  env_name=$(ghw_profile_field "$profile" token_env)
+  login=$(ghw_profile_login "$profile")
+  typeset -gx GHW_TOKEN_ENV_NAME="$env_name"
+
+  if ghw_gh_available; then
+    local -a gh_words; gh_words=(${=GHW_GH:-gh})
+    token=$("${gh_words[@]}" auth token --user "$login" 2>/dev/null)
+    if [[ -n "$token" ]]; then
+      typeset -gx GHW_TOKEN="$token" GHW_TOKEN_SOURCE="gh:${login}"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${(P)env_name:-}" ]]; then
+    typeset -gx GHW_TOKEN="${(P)env_name}" GHW_TOKEN_SOURCE="env:${env_name}"
+    return 0
+  fi
+
+  print -ru2 -- "ghw: no credential available for profile '${profile}'. Either run 'gh auth login --hostname github.com' (as ${login}), or export ${env_name}=<token>."
+  return 2
 }
 
 # ---- precondition gate (import spec §3) ------------------------------------

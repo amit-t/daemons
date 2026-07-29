@@ -56,6 +56,14 @@ ghw_build_prompt() {  # $1 playbook name, rest = run-context lines
   for line in "$@"; do print -r -- "- ${line}"; done
 }
 
+ghw_normalize_repo_target() {  # $1 raw target -> plain owner/repo (no scheme/.git)
+  local t="$1"
+  t="${t#https://github.com/}"
+  t="${t#git@github.com:}"
+  t="${t%.git}"
+  print -r -- "$t"
+}
+
 ghw_launch() {  # $1 prompt — exports token for gh CLI, hands off to launcher
   local prompt="$1"
   typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
@@ -189,10 +197,12 @@ main() {
       done
       local owner=""
       if [[ -n "$target" ]]; then
-        owner="${${target#https://github.com/}%%/*}"
+        target=$(ghw_normalize_repo_target "$target")
+        owner="${target%%/*}"
       elif git -C "$PWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         target=$(git -C "$PWD" remote get-url origin 2>/dev/null)
-        owner="${${${target#https://github.com/}#git@github.com:}%%/*}"
+        target=$(ghw_normalize_repo_target "$target")
+        owner="${target%%/*}"
       fi
       if [[ -z "$target" ]]; then
         print -ru2 -- "ghw mirror: pass a repo/URL or run inside a git repo with an origin remote"

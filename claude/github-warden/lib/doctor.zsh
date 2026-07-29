@@ -8,11 +8,10 @@ ghw_doctor() {
   file=$(ghw_accounts_file)
   for profile in ${(f)"$(jq -r '.profiles | keys[]' "$file")"}; do
     env_name=$(ghw_profile_field "$profile" token_env)
-    if [[ -z "${(P)env_name:-}" ]]; then
-      print -r -- "profile ${profile}: token=MISSING (export ${env_name})"
+    if ! ghw_token_for "$profile" >/dev/null 2>/dev/null; then
+      print -r -- "profile ${profile}: token=MISSING (gh auth login, or export ${env_name})"
       (( broken++ )); continue
     fi
-    typeset -gx GHW_TOKEN="${(P)env_name}"
     expected=$(ghw_profile_login "$profile")
     # NOTE: `body=$(ghw_api ...)` would fork a subshell, losing the
     # `typeset -g GHW_LAST_STATUS`/`GHW_LAST_HEADERS` ghw_api sets — same
@@ -28,7 +27,7 @@ ghw_doctor() {
     scopes=$(print -r -- "$GHW_LAST_HEADERS" | awk 'tolower($1)=="x-oauth-scopes:" { $1=""; gsub("\r",""); sub(/^ /,""); print; exit }')
     local login_disp="ok"
     if [[ "$me" != "$expected" ]]; then login_disp="MISMATCH(${me})"; (( broken++ )); fi
-    print -r -- "profile ${profile}: token=ok login=${login_disp} scopes=${scopes:-fine-grained}"
+    print -r -- "profile ${profile}: token=ok(${GHW_TOKEN_SOURCE:-unknown}) login=${login_disp} scopes=${scopes:-fine-grained}"
     for org in ${(f)"$(jq -r --arg p "$profile" '.profiles[$p].orgs[]' "$file")"}; do
       ghw_api GET "/orgs/${org}/memberships/${me}" >"$tmp"; rc=$?
       body=$(<"$tmp")
