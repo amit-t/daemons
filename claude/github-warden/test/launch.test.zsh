@@ -8,6 +8,10 @@ work=$(mktemp -d)
 export GHW_ACCOUNTS_FILE="${work}/accounts.json"
 print -r -- '{"profiles":{"inv":{"token_env":"T_I","login":"amit_vnt","orgs":["INVENCO-GROUP"]}}}' > "$GHW_ACCOUNTS_FILE"
 export T_I="tok" GHW_DRY_LAUNCH=1
+# Hermetic: stub gh (empty-token mode) so ghw_token_for's gh-primary path
+# never shells out to a real gh binary — forces the env-var fallback this
+# test already relies on.
+export GHW_GH="zsh ${script_dir}/fixtures/gh-stub.zsh" GHW_GH_STUB_TOKEN=""
 
 csv="${work}/s.csv"; print -rl -- "login" "a_vnt" > "$csv"
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP --team ppna --csv "$csv" 2>&1); rc=$?
