@@ -351,7 +351,13 @@ ghw members --org INVENCO-GROUP --csv /tmp/invenco-members.csv
 
 The CSV this produces round-trips directly into `ghw import --csv ... --column login`.
 
-**Exit codes:** `0` success, `1` any paged member/team fetch failed, `2` missing `--org` or account/token resolution failure.
+**Gotcha:** two of the reads in `lib/members.zsh` degrade silently instead of failing the run:
+- The **per-team** member fetch (`GET /orgs/{org}/teams/{slug}/members`, inside the `for team in ...` loop) has no `|| return 1` guard at all — a failed or erroring fetch for one team is silently swallowed, and that team's membership comes back empty (no logins get that team added to their `teams` column).
+- The **org-level teams-list** fetch (`teams=$(ghw_api_paged "/orgs/${org}/teams" | jq -r '.[].slug') || return 1`) *looks* guarded but isn't reliably: it pipes `ghw_api_paged` into `jq` before checking the exit status, and plain zsh (no `pipefail` set anywhere in this codebase) reports a pipeline's `$?` from its **last** stage. `ghw_api_paged` prints nothing on any failure path, so `jq` receives empty input and exits `0` — masking the upstream failure. Verified directly: forcing the teams endpoint to 500 still returns exit `0` with an empty `teams` column, not exit `1`.
+
+Both failure modes look identical in the output: a thinner-than-expected `teams` column with no error printed. Sanity-check it against a team you know has members if a report looks thin. Only the org-level `members`/`admins`/`twofa`/`outside` fetches reliably fail the run — none of those pipe through `jq` before their `|| return 1` check.
+
+**Exit codes:** `0` success (including a run where the teams-list or a per-team fetch degraded silently, per the gotcha above), `1` if the org-level members, admins, 2FA, or outside-collaborators fetch failed, `2` missing `--org` or account/token resolution failure.
 
 ---
 
@@ -401,14 +407,14 @@ Add-only. No role changes to existing members (promotion or demotion), no remova
 
 | # | Scenario | Covered in |
 |---|---|---|
-| A1 | Re-run a completed job unchanged → 0 writes, all `skipped`, exit 0 | `test/import-engine.test.zsh` ("A1 idempotent re-run") |
+| A1 | Re-run a completed job unchanged → 0 writes, all `skipped`, exit 0 | `test/import-engine.test.zsh` ("A1 re-run exit 0" / "A1 zero writes") |
 | A2 | Existing org **Owner** in source → no org `PUT`, role still `admin` | `test/import-engine.test.zsh` ("A2 no org PUT for owner") |
 | A3 | Existing team **maintainer** in source → no team `PUT`, role still `maintainer` | `test/import-engine.test.zsh` ("A3 no team PUT for maintainer") |
 | A4 | Nonexistent login in source → row `not_found`, batch continues | `test/import-engine.test.zsh` ("A4 ghost not_found" / "A4 batch continued") |
 | A5 | Token lacks `admin:org` → refuses at P2, zero writes | `test/precheck.test.zsh` ("scope missing refuses") |
 | A6 | `--dry-run` → zero writes, `would_add` rows | `test/import-engine.test.zsh` ("A6 dry-run exit" / "A6 zero writes" / "A6 would_add row") |
 | A7 | Team `PUT` never precedes org membership | `test/import-engine.test.zsh` ("A7: org PUT must precede team PUT") |
-| A8 | Injected secondary rate limit mid-batch → backs off, resumes, completes | `test/api.test.zsh` ("rate-limited then success (A8 core)") |
+| A8 | Injected secondary rate limit mid-batch → backs off, resumes, completes | `test/api.test.zsh` ("rate-limited then success" — labeled `A8 core` only in a source comment, not the assert text) |
 
 ## Reports
 
@@ -430,17 +436,17 @@ Every `import` run — including `--dry-run` — writes to `${GHW_STATE_DIR}/rep
 | `failed` | `org`, `team`, `verify` | A write returned a non-2xx, non-404 status; or a post-write verify read failed or found the login missing from live state | Investigate the `detail` column (HTTP status + API message), re-run — the engine is idempotent |
 | `would_add` | `org`, `team` | `--dry-run` only — this is what a real run would add | None; run for real when ready |
 
-Illustrative excerpt (constructed from the code's row format — the header and field order are exact; the data is illustrative, adapted from a real import the origin spec documents, not a live capture):
+Illustrative excerpt (constructed from the code's row format — the header and field order are exact, and the `not_found` detail below is the literal string `lib/import-engine.zsh` emits for that case; the rest of the data is illustrative, adapted from a real import the origin spec documents, not a live capture):
 
 ```
 login,phase,status,state,role,detail
 Alexis-Freitez_vnt,org,added,active,member,
 Frank-Cohee_vnt,team,added,active,maintainer,org owner auto-elevated
-Kiran1-Kumar_vnt,org,not_found,,,"account does not exist on github.com"
+Kiran1-Kumar_vnt,org,not_found,,,account does not exist on github.com
 leo-pronzolino_vnt,team,skipped,active,maintainer,already a member
 ```
 
-`detail` carries a `"org owner auto-elevated"` note (not an error) when GitHub auto-promotes an existing org Owner added to a team — the verify pass asserts membership, not role equality, so this never surfaces as a failure.
+`detail` carries a `"org owner auto-elevated"` note (not an error) when GitHub auto-promotes an existing org Owner added to a team — the verify pass asserts membership, not role equality, so this never surfaces as a failure. Note the unquoted `not_found` detail field above: `_ghw_csv_field` (`lib/report.zsh`) quotes a field only when it contains a comma or a double-quote, and this message has neither — a field with either would appear double-quoted, with embedded quotes doubled (`""`).
 
 **Retention:** reports are never deleted. `lib/report.zsh` only ever creates and appends; nothing in this daemon prunes `${GHW_STATE_DIR}/reports/`.
 
@@ -504,7 +510,7 @@ See [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md) for the real values and rationale.
 zsh claude/github-warden/test/run.zsh
 ```
 
-Current: **11 test files, 192 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
+Current: **11 test files, 209 assertions, all passing.** Each file is independently runnable (`zsh claude/github-warden/test/<name>.test.zsh`); `run.zsh` runs all of them and fails if any file fails.
 
 **Stub architecture — hermetic by design, no live network in tests:**
 - `test/fixtures/curl-stub.zsh` — a fake `curl` that understands the exact arg layout `ghw_api` emits (`-sS -X METHOD -H ... -D hdrfile -o bodyfile -w %{http_code}`), routes requests via `$GHW_STUB_ROUTES`, and logs every call to `$GHW_STUB_LOG` so tests can assert exactly what was (or wasn't) sent — including asserting the **absence** of a `PUT`, which is how A1/A2/A3/A6 are proven.
@@ -516,10 +522,10 @@ Current: **11 test files, 192 assertions, all passing.** Each file is independen
 | File | Assertions | Covers |
 |---|---:|---|
 | `airgap.test.zsh` | 39 | Cross-account guard, `user_namespace` resolution, config-overlap invariant, case-insensitive target matching |
-| `api.test.zsh` | 12 | `ghw_api`: happy path, plain 403, 404, secondary rate-limit retry (A8), pagination, malformed-body failure |
-| `audit-stale.test.zsh` | 12 | `audit` drift detection, `stale` candidate ranking |
+| `api.test.zsh` | 19 | `ghw_api`: happy path, plain 403, 404, secondary rate-limit retry (A8), a second consecutive secondary-limit retry proving the captured body stays uncorrupted, pagination, malformed-body failure |
+| `audit-stale.test.zsh` | 15 | `audit` drift detection, `stale` candidate ranking, a loop-body-local regression guard on the stale report output |
 | `auth-resolve.test.zsh` | 24 | Profile resolution (explicit/org-map/unmapped/unknown), token source precedence (gh keyring → env fallback → failure) |
-| `doctor.test.zsh` | 16 | Credential health reporting, `--strict` vs non-strict exit semantics, overlap always failing both modes |
+| `doctor.test.zsh` | 23 | Credential health reporting, `--strict` vs non-strict exit semantics, overlap always failing both modes, a loop-body-local regression guard across two profiles both carrying a `user_namespace` |
 | `ghw-cli.test.zsh` | 8 | Top-level dispatch: help, missing command, unknown command, `--account` with no value |
 | `import-engine.test.zsh` | 24 | A1–A7 acceptance behaviors, guarded pre-write reads, case-insensitive membership matching |
 | `launch.test.zsh` | 24 | Dry-launch prompt assembly, target normalization (SSH/HTTPS forms), `--script` mode, trailing-flag hang guards |
