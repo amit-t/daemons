@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { defaultRunner, sendCmuxTextAndEnter, shellQuote, type CommandResult, type CommandRunner, type OrchestratorContext } from "./orchestrator.ts";
+import { defaultRunner, sendCmuxTextAndEnter, shellQuote, sleepBeforeCmuxEnter, type CommandResult, type CommandRunner, type OrchestratorContext } from "./orchestrator.ts";
 import { CLAUDE_PANEL_TITLE, isExactManagedPanelTitle, isManagedAgentSurfaceTitle } from "./panel-titles.ts";
 
 export const CLAUDE_AUTO_RESUME_MESSAGE = "continue\n";
@@ -483,6 +483,7 @@ async function attemptSend(
     job.surfaceId = surface.surfaceId;
     const args = ["send", "--workspace", job.workspaceId, ...windowArgs(job.windowId), "--surface", surface.surfaceId, "--", job.message];
     const result = await runner("cmux", args);
+    if (result.code === 0) await sleepBeforeCmuxEnter();
     const enterResult =
       result.code === 0
         ? await runner("cmux", ["send-key", "--workspace", job.workspaceId, ...windowArgs(job.windowId), "--surface", surface.surfaceId, "Enter"])

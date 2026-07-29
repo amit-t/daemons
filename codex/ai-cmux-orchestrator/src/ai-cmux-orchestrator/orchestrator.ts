@@ -180,6 +180,23 @@ function windowArgs(windowId?: string): string[] {
   return windowId ? ["--window", windowId] : [];
 }
 
+export const CMUX_ENTER_DELAY_FLAG = "AICO_SEND_ENTER_DELAY_MS";
+export const CMUX_ENTER_DELAY_DEFAULT_MS = 300;
+
+export function resolveCmuxEnterDelayMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = env[CMUX_ENTER_DELAY_FLAG];
+  if (raw === undefined || raw.trim() === "") return CMUX_ENTER_DELAY_DEFAULT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return CMUX_ENTER_DELAY_DEFAULT_MS;
+  return parsed;
+}
+
+export function sleepBeforeCmuxEnter(env: Record<string, string | undefined> = process.env): Promise<void> {
+  const delayMs = resolveCmuxEnterDelayMs(env);
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 export async function sendCmuxTextAndEnter(options: {
   runner: CommandRunner;
   workspaceId: string;
@@ -198,6 +215,9 @@ export async function sendCmuxTextAndEnter(options: {
     ...(options.separator === false ? [] : ["--"]),
     options.text,
   ]);
+  // TUI paste-burst detection folds an immediate Enter into the pasted text
+  // instead of submitting it; the pause lets the paste settle first.
+  await sleepBeforeCmuxEnter();
   await runOrThrow(options.runner, "cmux", [
     "send-key",
     "--workspace",

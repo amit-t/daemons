@@ -11,6 +11,8 @@ import {
 } from "../src/ai-cmux-orchestrator/devin-poll.ts";
 import type { CommandRunner } from "../src/ai-cmux-orchestrator/orchestrator.ts";
 
+process.env.AICO_SEND_ENTER_DELAY_MS = "0";
+
 type RunnerResponse = { code?: number; stdout?: string; stderr?: string };
 
 function commandKey(args: string[]): string {

@@ -16,6 +16,8 @@ import {
   loadAiCmuxOrchestratorEnv,
 } from "../src/ai-cmux-orchestrator/config.ts";
 
+process.env.AICO_SEND_ENTER_DELAY_MS = "0";
+
 type RunnerResponse = { code?: number; stdout?: string; stderr?: string };
 
 function strictRunnerFor(responses: Record<string, RunnerResponse | RunnerResponse[]>): { runner: CommandRunner; calls: string[][] } {

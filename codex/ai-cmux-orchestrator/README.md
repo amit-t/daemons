@@ -176,7 +176,7 @@ aico --events --unread
 # {"type":"aico_event","version":1,"agent":"Devin","state":"needs_input","severity":"action_required",...}
 ```
 
-When new unread events exist, the daemon sends Codex a fixed control notice (written with `cmux send`, then submitted with `cmux send-key ... Enter`), not raw agent output:
+When new unread events exist, the daemon sends Codex a fixed control notice (written with `cmux send`, then submitted with `cmux send-key ... Enter` after a short pause), not raw agent output. The pause between the paste and the Enter defaults to 300 ms and is tunable via `AICO_SEND_ENTER_DELAY_MS`; without it, TUI paste-burst detection can fold the Enter into the pasted text, leaving the notice sitting unsubmitted in the agent's input box. The same pause applies to every daemon-driven `cmux send` + Enter pair, including Claude auto-resume messages.
 
 ```text
 <<<AICO_DAEMON_NOTICE_V1

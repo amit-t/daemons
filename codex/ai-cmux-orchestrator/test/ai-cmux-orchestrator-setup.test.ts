@@ -13,6 +13,8 @@ import {
   parseEnvironmentFile,
 } from "../src/ai-cmux-orchestrator/config.ts";
 
+process.env.AICO_SEND_ENTER_DELAY_MS = "0";
+
 type RunnerResponse = { code?: number; stdout?: string; stderr?: string };
 
 function runnerFor(responses: Record<string, RunnerResponse>): { runner: CommandRunner; calls: string[][] } {
