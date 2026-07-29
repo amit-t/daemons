@@ -4,6 +4,18 @@ Date: 2026-07-28
 Status: approved (brainstorm 2026-07-28)
 Derives from: `/Users/amittiwari/Projects/Invenco/DoE/github-org-mgmt/SPEC-org-import-daemon.md` (org-import spec, referenced below as "import spec"), `dag` (devin-acu-governor) runtime pattern, `~/.claude/skills/gh-repo-mirror`.
 
+## As-built (2026-07-29)
+
+`ghw` shipped with everything below, plus these additions beyond the original design. The README is now the current reference for exact flags/behavior — this document stays as historical design record and is not updated line-by-line as the code evolves.
+
+- **gh-keyring credential source, with env fallback.** `ghw_token_for` resolves the primary token via `gh auth token --user <login>` (no PAT to mint or rotate for interactive use), falling back to the profile's `token_env` var (`GHW_TOKEN_PERSONAL`/`GHW_TOKEN_INV`) for headless/cron runs where `gh` isn't available. This is a deliberate divergence from the import spec's original "not from the `gh` CLI keyring" auth stance (§9 there) — that guidance assumed a standalone daemon process; `ghw` runs as an interactive CLI tool for a human operator, so the keyring is the better primary source, with the spec's env-based approach kept as the fallback.
+- **`user_namespace`**, an optional per-profile field so a profile's own GitHub user namespace resolves like an org for target-matching, without `ghw doctor` issuing a bogus org-membership probe against it.
+- **Account air-gap enforcement**, a full safety property (cross-account `ACCOUNT_MISMATCH` refusal before any network call, plus the `ACCOUNT_OVERLAP` config invariant) — not present in this design doc's original Auth section in this form.
+- **`ghw doctor` exit semantics + `--strict`**: plain `doctor` exits 0 on credential + air-gap health alone (org-admin role informational); `--strict` additionally requires admin on every listed org.
+- **SSH-aware `mirror` targets**: target normalization strips both `https://github.com/` and `git@github.com:` forms (plus a trailing `.git`), so SSH remotes resolve the same as HTTPS ones.
+
+See [`../../../claude/github-warden/README.md`](../../../claude/github-warden/README.md) for the complete, current command reference.
+
 ## Purpose
 
 GitHub org/repo management daemon for Amit's two accounts — **personal** and **inv** (Invenco; includes EMU org `INVENCO-GROUP` and `Invenco-Cloud-Systems-ICS`). Deterministic zsh + GitHub API core, Claude-agent playbooks for agent-shaped work, admin access verified on every run before any write.
