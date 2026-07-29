@@ -56,6 +56,16 @@ assert_not_contains "active excluded" "$out" $'good\t'
 assert_contains "archive command printed" "$out" "gh repo archive ORG1/drifty --yes"
 assert_not_contains "read-only" "$(<$GHW_STUB_LOG)" "PUT "
 assert_not_contains "no deletes" "$(<$GHW_STUB_LOG)" "DELETE "
+# Regression guard for hoisting `pushed_epoch` out of the repo loop: "good"
+# and "drifty" above both have a non-zero size and a non-null pushed_at, so
+# both take the epoch-parsing branch — "good" first, "drifty" second. A bare
+# `local pushed_epoch` inside that branch used to make zsh print
+# `pushed_epoch=<value>` to stdout on the SECOND repo that reached it,
+# corrupting this command's actual report output. Assert the output is
+# pristine and every expected report row still made it through untouched.
+assert_not_contains "no zsh bare-local pushed_epoch leak" "$out" "pushed_epoch="
+assert_contains "report row for drifty intact" "$out" $'drifty\t2020-01-01T00:00:00Z\tinactive >6mo (last push 2020-01-01)'
+assert_contains "report row for emptyrepo intact" "$out" $'emptyrepo\tnull\tempty'
 
 rm -rf "$work"
 report
