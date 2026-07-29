@@ -78,3 +78,13 @@ cas--codex()   { cas --agent codex "$@" }
 cas--devin()   { cas --agent devin "$@" }
 cas--deo()     { cas --deo "$@" }
 cas--def()     { cas --def "$@" }
+
+# ghw — github-warden: GitHub org/repo management daemon.
+ghw() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/github-warden/bin/ghw"
+  if [[ ! -x "$daemon_entry" && ! -f "$daemon_entry" ]]; then
+    print -ru2 -- "ghw: missing daemon entrypoint at $daemon_entry"
+    return 1
+  fi
+  zsh "$daemon_entry" "$@"
+}

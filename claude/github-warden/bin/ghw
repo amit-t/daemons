@@ -1,0 +1,224 @@
+#!/usr/bin/env zsh
+# ghw — github-warden: GitHub org/repo management daemon.
+# Thin launcher: resolves the account profile + token, runs deterministic
+# read-only commands locally, and hands mutating flows (mirror, import) to a
+# clscb playbook session whose writes go only through lib/ engine scripts.
+set -u
+script_path=${0:A}
+daemon_dir=${script_path:h:h}
+
+ghw_usage() {
+  cat <<'EOF'
+ghw — github-warden: GitHub org/repo management daemon
+
+Usage:
+  ghw [--account personal|inv] <command ...>
+                              --account picks the credential profile; omitted, ghw
+                              infers it from the target org/owner via config/accounts.json.
+  ghw mirror [<repo|url>] [flags...]
+                              Launch an agent that scaffolds a new repo mirroring a
+                              reference repo (gh-repo-mirror skill). Bare inside a git
+                              repo: reference = origin. --script runs
+                              mirror-repo.zsh directly (pass its flags through).
+  ghw import --org <org> [--team <slug>] --csv <file> [--column login]
+             [--role member|maintainer] [--org-role member] [--dry-run] [--script]
+                              Reconcile logins into an org/team. Add-only, idempotent,
+                              never demotes an existing member. --script skips the agent
+                              and runs the deterministic engine directly.
+  ghw doctor                  Check every profile: token, login, scopes, org admin role.
+  ghw status [--org <org>]    Org overview: repos, members, teams (read-only).
+  ghw audit --org <org> --ref <owner/repo>
+                              Settings/security/branch-protection drift vs reference repo.
+  ghw stale --org <org> [--months <n>]
+                              Archive candidates: inactive/empty repos (read-only).
+  ghw members --org <org> [--csv <out>] [--json]
+                              Membership report: roles, teams, 2FA, outside collaborators.
+  ghw help                    Show this help.
+
+  --account precedes the command, e.g. `ghw --account inv status`.
+
+Config (env):
+  GHW_TOKEN_PERSONAL / GHW_TOKEN_INV   tokens per profile (see config/accounts.json)
+  GHW_LAUNCHER                         agent launcher for mirror/import (default clscb)
+  GHW_STATE_DIR                        reports/state dir (default ~/.local/state/github-warden)
+EOF
+}
+
+ghw_build_prompt() {  # $1 playbook name, rest = run-context lines
+  local playbook="$1"; shift
+  cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${playbook}.md"
+  print -r -- ""
+  print -r -- "## Run context"
+  print -r -- "- today: $(date +%F)"
+  print -r -- "- daemon dir: ${daemon_dir}"
+  print -r -- "- state dir: ${GHW_STATE_DIR}"
+  local line
+  for line in "$@"; do print -r -- "- ${line}"; done
+}
+
+ghw_launch() {  # $1 prompt — exports token for gh CLI, hands off to launcher
+  local prompt="$1"
+  typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+  if [[ -n "${GHW_DRY_LAUNCH:-}" ]]; then
+    print -r -- "$prompt"
+    return 0
+  fi
+  exec ${=GHW_LAUNCHER:-clscb} "$prompt"
+}
+
+main() {
+  : ${GHW_STATE_DIR:=${HOME}/.local/state/github-warden}
+  typeset -gx GHW_STATE_DIR
+  source "${daemon_dir}/lib/auth.zsh"
+  local account=""
+  while (( $# )); do
+    case "${1:-}" in
+      --account=*) account="${1#--account=}"; shift ;;
+      --account)
+        account="${2:-}"
+        if [[ -z "$account" ]]; then
+          print -ru2 -- "ghw: --account expects a profile name"
+          exit 2
+        fi
+        shift 2
+        ;;
+      *) break ;;
+    esac
+  done
+
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    ghw_usage >&2
+    exit 2
+  fi
+  shift
+
+  case "$cmd" in
+    help|-h|--help)
+      ghw_usage
+      exit 0
+      ;;
+    doctor)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/doctor.zsh"
+      ghw_doctor "$@"
+      exit $?
+      ;;
+    status)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/status.zsh"
+      ghw_status "$account" "$@"
+      exit $?
+      ;;
+    members)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/members.zsh"
+      ghw_members "$account" "$@"
+      exit $?
+      ;;
+    audit)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/audit.zsh"
+      ghw_audit "$account" "$@"
+      exit $?
+      ;;
+    stale)
+      source "${daemon_dir}/lib/api.zsh"
+      source "${daemon_dir}/lib/stale.zsh"
+      ghw_stale "$account" "$@"
+      exit $?
+      ;;
+    import)
+      local org="" script_mode=0
+      local -a engine_args
+      engine_args=()
+      while (( $# )); do
+        case "$1" in
+          --script) script_mode=1; shift ;;
+          --dry-run) engine_args+=(--dry-run); shift ;;
+          --org|--team|--csv|--column|--role|--org-role)
+            if (( $# < 2 )); then
+              print -ru2 -- "ghw import: ${1} requires a value"
+              exit 2
+            fi
+            [[ "$1" == --org ]] && org="$2"
+            engine_args+=("$1" "$2")
+            shift 2
+            ;;
+          *) print -ru2 -- "ghw import: unknown flag: $1"; exit 2 ;;
+        esac
+      done
+      if [[ -z "$org" || " ${engine_args[*]} " != *" --csv "* ]]; then
+        print -ru2 -- "ghw import: --org and --csv are required"
+        exit 2
+      fi
+      local profile
+      profile=$(ghw_resolve_profile "$account" "$org") || exit 2
+      ghw_token_for "$profile" || exit 2
+      typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+      engine_args+=(--account "$profile")
+      if (( script_mode )); then
+        exec zsh "${daemon_dir}/lib/import-engine.zsh" "${engine_args[@]}"
+      fi
+      local prompt
+      prompt=$(ghw_build_prompt import \
+        "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))" \
+        "engine command: zsh ${daemon_dir}/lib/import-engine.zsh ${engine_args[*]}" \
+        "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it.")
+      ghw_launch "$prompt"
+      ;;
+    mirror)
+      local target="" script_mode=0
+      local -a passthru
+      passthru=()
+      while (( $# )); do
+        case "$1" in
+          --script) script_mode=1; shift ;;
+          --*)
+            # Passthrough assumes flag+value pairs. A trailing lone flag with
+            # no neighbor left would make `shift 2` error without shifting in
+            # zsh (infinite loop) — bound consumption to what's left instead.
+            if (( $# >= 2 )); then
+              passthru+=("$1" "$2"); shift 2
+            else
+              passthru+=("$1"); shift
+            fi
+            ;;
+          *) target="$1"; shift ;;
+        esac
+      done
+      local owner=""
+      if [[ -n "$target" ]]; then
+        owner="${${target#https://github.com/}%%/*}"
+      elif git -C "$PWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        target=$(git -C "$PWD" remote get-url origin 2>/dev/null)
+        owner="${${${target#https://github.com/}#git@github.com:}%%/*}"
+      fi
+      if [[ -z "$target" ]]; then
+        print -ru2 -- "ghw mirror: pass a repo/URL or run inside a git repo with an origin remote"
+        exit 2
+      fi
+      local profile
+      profile=$(ghw_resolve_profile "$account" "$owner") || exit 2
+      ghw_token_for "$profile" || exit 2
+      typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+      if (( script_mode )); then
+        exec zsh "${HOME}/.claude/skills/gh-repo-mirror/scripts/mirror-repo.zsh" --ref-repo "$target" "${passthru[@]}"
+      fi
+      local prompt
+      prompt=$(ghw_build_prompt mirror \
+        "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))" \
+        "reference target: ${target}" \
+        "pass-through flags: ${passthru[*]:-'(none — interview Amit)'}" \
+        "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it.")
+      ghw_launch "$prompt"
+      ;;
+    *)
+      print -ru2 -- "ghw: unknown command: ${cmd}"
+      ghw_usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
