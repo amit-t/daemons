@@ -552,4 +552,108 @@ Waiting for your input before I continue.
     expectNoticeSubmitted(calls, 2);
     expect(state.events.filter((event) => event.type === "aico_event" && event.state === "blocked")).toHaveLength(2);
   });
+
+  test("emits a completed event once and never re-notifies for an unchanged idle screen", async () => {
+    const state = createEmptyDevinPollState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      workspaceName: "Project-X",
+      cwd: "/work/project-x",
+      orchestratorSurfaceId: "surface:codex",
+      devinPanelEnabled: true,
+      devinSurfaceId: "surface:devin",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const idleCompletedScreen = "Research task complete. Summary written to notes.";
+    const { runner, calls } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithCodexAndDevin() },
+        { stdout: treeWithCodexAndDevin() },
+        { stdout: treeWithCodexAndDevin() },
+      ],
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:devin --scrollback --lines 200": [
+        { stdout: idleCompletedScreen },
+        { stdout: idleCompletedScreen },
+        { stdout: idleCompletedScreen },
+      ],
+      [commandKey([
+        "cmux",
+        "send",
+        "--workspace",
+        "workspace-uuid",
+        "--window",
+        "window-uuid",
+        "--surface",
+        "surface:codex",
+        "--",
+        buildAiccDaemonNotice({
+          workspaceId: "workspace-uuid",
+          noticeId: "notice-workspace-uuid-2026-06-02T15:00:00.000Z",
+          createdAt: "2026-06-02T15:00:00.000Z",
+        }),
+      ])]: { stdout: "sent" },
+      [noticeEnterKey]: { stdout: "sent" },
+    });
+
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:00:00.000Z"));
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:10:00.000Z"));
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:25:00.000Z"));
+
+    expectNoticeSubmitted(calls, 1);
+    expect(state.events.filter((event) => event.type === "aico_event" && event.state === "completed")).toHaveLength(1);
+    expect(state.events.filter((event) => event.type === "scan_failed")).toHaveLength(0);
+  });
+
+  test("emits an error event once and never re-notifies for an unchanged idle screen", async () => {
+    const state = createEmptyDevinPollState();
+    state.registrations.push({
+      workspaceId: "workspace-uuid",
+      windowId: "window-uuid",
+      workspaceName: "Project-X",
+      cwd: "/work/project-x",
+      orchestratorSurfaceId: "surface:codex",
+      devinPanelEnabled: true,
+      devinSurfaceId: "surface:devin",
+      updatedAt: "2026-06-02T15:00:00.000Z",
+    });
+    const idleErrorScreen = "Build failed with 2 type errors.";
+    const { runner, calls } = strictRunnerFor({
+      "cmux --id-format both --json tree --workspace workspace-uuid --window window-uuid": [
+        { stdout: treeWithCodexAndDevin() },
+        { stdout: treeWithCodexAndDevin() },
+        { stdout: treeWithCodexAndDevin() },
+      ],
+      "cmux read-screen --workspace workspace-uuid --window window-uuid --surface surface:devin --scrollback --lines 200": [
+        { stdout: idleErrorScreen },
+        { stdout: idleErrorScreen },
+        { stdout: idleErrorScreen },
+      ],
+      [commandKey([
+        "cmux",
+        "send",
+        "--workspace",
+        "workspace-uuid",
+        "--window",
+        "window-uuid",
+        "--surface",
+        "surface:codex",
+        "--",
+        buildAiccDaemonNotice({
+          workspaceId: "workspace-uuid",
+          noticeId: "notice-workspace-uuid-2026-06-02T15:00:00.000Z",
+          createdAt: "2026-06-02T15:00:00.000Z",
+        }),
+      ])]: { stdout: "sent" },
+      [noticeEnterKey]: { stdout: "sent" },
+    });
+
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:00:00.000Z"));
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:10:00.000Z"));
+    await scanDevinSurfacesOnce(state, runner, new Date("2026-06-02T15:25:00.000Z"));
+
+    expectNoticeSubmitted(calls, 1);
+    expect(state.events.filter((event) => event.type === "aico_event" && event.state === "error")).toHaveLength(1);
+    expect(state.events.filter((event) => event.type === "scan_failed")).toHaveLength(0);
+  });
 });

@@ -274,7 +274,10 @@ export async function scanDevinSurfacesOnce(
           const meaningful = detectAgentScreenState(agentSurface.agent, screenText);
           if (!meaningful) continue;
           const meaningfulKey = `${agentSurface.agent}:${agentSurface.surfaceId}:${meaningful.state}`;
-          if (!shouldEmitAgentEvent(registration, meaningfulKey, meaningful.fingerprint, now, true)) continue;
+          // Only blocked screens wait on a human, so only they get 10-minute
+          // reminders; completed/error screens on idle panes stay static and
+          // would otherwise re-notify forever.
+          if (!shouldEmitAgentEvent(registration, meaningfulKey, meaningful.fingerprint, now, meaningful.state === "blocked")) continue;
           createAgentInboxEvent({
             state,
             workspaceId: registration.workspaceId,
