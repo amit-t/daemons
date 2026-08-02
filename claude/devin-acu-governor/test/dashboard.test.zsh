@@ -415,6 +415,16 @@ assert_exit "refresh rc" 0 $rc
 assert_contains "refresh stdout" "$out" "data refetched every 30 minute(s) in the background"
 expected_refresh_time=$(date -r "$now_epoch" +%H:%M:%S)
 assert_contains "refresh completion line" "$out" "✓ refreshed at ${expected_refresh_time}"
+# Every refresh block is dated, numbered, ruled, and repeats the data path, so a
+# run left going for a day never buries the links under scrollback.
+assert_contains "refresh block dated" "$out" "$(date -r "$now_epoch" "+%a %Y-%m-%d")"
+assert_contains "refresh block numbered" "$out" "refresh #1"
+assert_contains "refresh block ruled" "$out" "────────"
+assert_contains "refresh block data path" "$out" "  data       ${tmpdir:A}/dash-refresh/data.json"
+assert_contains "refresh block next cadence" "$out" "  next       in 30m"
+# refresh.log keeps the same history durably for after the terminal is gone.
+assert_contains "refresh log line" \
+  "$(<"${tmpdir}/dash-refresh/refresh.log")" "refresh #1"
 if [[ "$out" == *"Data written:"* ]]; then
   _fail "refresh output should not print data.json path each cycle"
 else
@@ -430,6 +440,18 @@ assert_eq "refresh status state" "static" "$(jq -r '.state' "${tmpdir}/dash-refr
 assert_eq "refresh status gen matches data" \
   "$(jq -r '.generated_at' "${tmpdir}/dash-refresh/data.json")" \
   "$(jq -r '.generated_at' "${tmpdir}/dash-refresh/status.json")"
+
+# 7c-bis. A refresh that lands once the server is up repeats the dashboard URL
+#         inside its block and logs it, so the link survives a day of scrollback.
+out=$(DAG_DASHBOARD_SERVE_ONCE=0 DAG_DASHBOARD_REFRESH_ONCE=0 \
+  DAG_DASHBOARD_REFRESH_SECONDS=1 DAG_DASHBOARD_LOOP_REFRESHES=1 \
+  run_dash --refresh 10 --no-open --out "${tmpdir}/dash-loop" 2>&1); rc=$?
+assert_exit "loop refresh rc" 0 $rc
+assert_contains "loop refresh reprints url" "$out" "  dashboard  http://127.0.0.1:8642/"
+assert_contains "loop refresh numbered" "$out" "refresh #2"
+loop_log=$(<"${tmpdir}/dash-loop/refresh.log")
+assert_contains "loop refresh log carries url" "$loop_log" "refresh #2  http://127.0.0.1:8642/"
+assert_eq "loop refresh log lines" "2" "$(wc -l < "${tmpdir}/dash-loop/refresh.log" | tr -d ' ')"
 
 # 7d. --refresh only accepts the supported 5/10/15/30 minute intervals.
 out=$(run_dash --refresh 7 --no-open --out "${tmpdir}/dash-refresh-bad" 2>&1); rc=$?

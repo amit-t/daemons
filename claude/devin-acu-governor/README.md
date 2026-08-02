@@ -496,14 +496,25 @@ Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap 
 
 `--refresh <minutes>` accepts `5`, `10`, `15`, or `30`. It keeps the command running and refetches `data.json` on that cadence **in the background**. Both the terminal and the browser get live feedback through a small `status.json` written next to `data.json`:
 
-- **Terminal.** Between refreshes a single self-rewriting line counts down — `⟳ next refresh in 4m 32s · Ctrl-C to stop`. During a refresh it shows phase progress — `⟳ refreshing 47% · user dailies (19/40)` — across the cycle/daily/org/user fetches, so the long first fetch (before the browser even opens) is no longer a silent wait.
+- **Terminal.** Between refreshes a single self-rewriting line counts down — `⟳ next refresh in 4m 32s · Ctrl-C to stop`. During a refresh it shows phase progress — `⟳ refreshing 47% · user dailies (19/40)` — across the cycle/daily/org/user fetches, so the long first fetch (before the browser even opens) is no longer a silent wait. Each completed refresh then prints a ruled block that repeats the links, so a dashboard left running for a day never buries them under scrollback:
+
+  ```
+  ────────────────────────────────────────────────────────────────
+  ✓ refreshed at 15:12:30  ·  Sun 2026-08-02  ·  refresh #7
+    dashboard  http://127.0.0.1:8642/
+    data       /Users/you/.local/state/devin-acu-governor/dashboard/latest/data.json
+    next       in 10m  ·  ~15:22:30
+  ────────────────────────────────────────────────────────────────
+  ```
+
+  The same history is appended to `refresh.log` next to `data.json` (one `<ISO timestamp>  refresh #N  <url>  <data path>` line per refresh, trimmed to the last 1000 lines once it passes 2000), so the URL survives the terminal. The `next` line is omitted for static/manual refreshes, and the very first block — written before the port is bound — has no `dashboard` line; the `Dashboard serving:` header prints immediately after it.
 - **Browser.** The app polls `status.json` every second and turns `next_refresh_epoch` into the same `next refresh in …` countdown. Clicking `Refresh now` sends a same-origin, header-gated POST to a localhost-only `__dag_refresh_now` endpoint, which interrupts the backend countdown and queues an immediate refetch; the app hides the button and shows `Refreshing…` until `status.json` catches up. When the backend starts fetching, the button is replaced by a `Refreshing N%` progress bar (with the current phase); when the new snapshot lands, the app pulls the fresh `data.json` (detected via a changed `generated_at`) and returns to `data refreshed X ago` — no page reloads.
 
 `Refresh now` works with or without `--refresh`: in refresh mode it breaks the countdown and starts the next backend fetch early; in static mode it asks the still-running dashboard process to fetch a fresh snapshot on demand. If the app is served by an older/static file server without the endpoint, it falls back to re-pulling the latest written `data.json`. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).
 
 Port: default `8642`; pin with `--port <n>` or `DAG_DASHBOARD_PORT`. If the default port is busy, a free one is picked automatically (warned on stderr).
 
-Generated files in the output dir: `data.json` (the snapshot), `status.json` (the live refresh/countdown channel), plus the staged app build (`index.html`, `assets/`). Manual refresh uses a local signal file beside those artifacts; Devin API traffic remains read-only. `--json-only` writes `data.json` + `status.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
+Generated files in the output dir: `data.json` (the snapshot), `status.json` (the live refresh/countdown channel), `refresh.log` (one line per completed refresh, bounded), plus the staged app build (`index.html`, `assets/`). Manual refresh uses a local signal file beside those artifacts; Devin API traffic remains read-only. `--json-only` writes `data.json` + `status.json` — no build, no server, no browser. No API writes; tests assert no curl write verbs.
 
 **Transient-failure resilience.** Every GET retries gateway/overload classes — HTTP `429`, `502`, `503`, `504` (e.g. a `504 Gateway Time-out` with an HTML body), and curl transport errors — with bounded linear backoff (`DAG_FETCH_RETRIES`, default 3; `DAG_FETCH_RETRY_SLEEP` seconds × attempt, default 2). If the two per-user ACU-limit endpoints still fail transiently after retries, the dashboard **degrades instead of aborting**: a failed per-user override falls back to the default cap (`cap_source: default`), and a failed default-cap endpoint leaves uncapped users marked `uncapped`. Each degradation prints a warning to stderr. Hard errors (`4xx`/`500`) and any other endpoint remain fatal and quote the exact response body — a single flaky user-limit call no longer takes down the whole dashboard.
 
@@ -593,6 +604,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_DASHBOARD_APP_DIR` | `web/dashboard-app` | Dashboard: React app source/build directory |
 | `DAG_DASHBOARD_NPM` | `npm` | Dashboard: npm command for the one-time app build |
 | `DAG_DASHBOARD_PYTHON` | `python3` | Dashboard: python used for the localhost static server |
+| `DAG_DASHBOARD_REFRESH_SECONDS` | unset | Dashboard test hook: override the `--refresh` cadence in seconds |
+| `DAG_DASHBOARD_LOOP_REFRESHES` | unset | Dashboard test hook: stop after N refresh-loop iterations |
 | `DAG_MODEL_ANALYTICS_TTL_MINUTES` | `20` | Dashboard: minimum minutes between Windsurf model-analytics refetches (endpoint allows 10 req/hr/team) |
 | `DAG_WINDSURF_API_BASE` | `https://server.codeium.com` | Dashboard: Windsurf analytics base URL |
 

@@ -16,7 +16,9 @@
 # Requires: $daemon_dir set and lib/key-resolve.zsh sourced (bin/dag does both).
 # DAG_NOW_EPOCH overrides "now" for deterministic tests.
 # Test hooks: DAG_DASHBOARD_REFRESH_ONCE=1 (one refresh iteration),
-# DAG_DASHBOARD_SERVE_ONCE=1 (start server, verify, stop, return).
+# DAG_DASHBOARD_SERVE_ONCE=1 (start server, verify, stop, return),
+# DAG_DASHBOARD_REFRESH_SECONDS=<n> (override the cadence in seconds),
+# DAG_DASHBOARD_LOOP_REFRESHES=<n> (stop after n loop refreshes).
 
 # Gateway/overload HTTP classes that typically clear on retry. A 504 Gateway
 # Time-out from Devin's edge (HTML body, not JSON) is the canonical case.
@@ -96,6 +98,56 @@ _dag_dash_fmt_dur() {  # $1=seconds -> "45s" | "4m 32s" | "1h 5m"
   else
     print -r -- "$(( s / 3600 ))h $(( (s % 3600) / 60 ))m"
   fi
+}
+
+# ---- Refresh banner --------------------------------------------------------
+# A dashboard left running for hours scrolls the one-time "Dashboard serving:"
+# header off screen, so the operator loses the URL. Every completed refresh
+# therefore prints a ruled block that repeats the URL and the data path, and
+# appends one line to ${out_dir}/refresh.log for durable history.
+#
+# Set by dag_dashboard: the served URL (empty for --json-only, and for the
+# first write, which happens before the port is bound), the cadence in minutes
+# (empty for static/manual refresh), and the completed-refresh counter.
+typeset -g _dag_dash_banner_url=""
+typeset -g _dag_dash_banner_interval=""
+typeset -g _dag_dash_refresh_n=0
+
+_dag_dash_rule() { local e=""; print -r -- "${(l:64::─:)e}" }  # named var: bin/dag runs under `set -u`
+
+# Append one line of refresh history next to the snapshot. Bounded so a run
+# spanning days cannot grow the file without limit. Never fatal.
+_dag_dash_refresh_log() {  # $1=out_dir $2=epoch
+  local out_dir=$1 now=$2 log="${1}/refresh.log" iso lines
+  [[ -d "$out_dir" ]] || return 0
+  iso=$(date -r "$now" +%Y-%m-%dT%H:%M:%S%z 2>/dev/null) || return 0
+  print -r -- "${iso}  refresh #${_dag_dash_refresh_n}  ${_dag_dash_banner_url:-(no server)}  ${out_dir}/data.json" \
+    >> "$log" 2>/dev/null || return 0
+  lines=$(wc -l < "$log" 2>/dev/null) || return 0
+  if (( ${lines:-0} > 2000 )); then
+    tail -n 1000 "$log" > "${log}.tmp" 2>/dev/null \
+      && mv "${log}.tmp" "$log" 2>/dev/null
+  fi
+  return 0
+}
+
+# Print the per-refresh block. Keeps the legacy "✓ refreshed at HH:MM:SS"
+# opening so existing log greps still match, then adds the date, the refresh
+# ordinal, and the links. $1=out_dir $2=epoch
+_dag_dash_refresh_banner() {
+  local out_dir=$1 now=$2 next
+  (( _dag_dash_refresh_n++ ))
+  print -r --
+  _dag_dash_rule
+  print -r -- "✓ refreshed at $(date -r "$now" +%H:%M:%S)  ·  $(date -r "$now" "+%a %Y-%m-%d")  ·  refresh #${_dag_dash_refresh_n}"
+  [[ -n "$_dag_dash_banner_url" ]] && print -r -- "  dashboard  ${_dag_dash_banner_url}"
+  print -r -- "  data       ${out_dir}/data.json"
+  if [[ -n "$_dag_dash_banner_interval" ]]; then
+    next=$(date -r $(( now + _dag_dash_banner_interval * 60 )) +%H:%M:%S)
+    print -r -- "  next       in ${_dag_dash_banner_interval}m  ·  ~${next}"
+  fi
+  _dag_dash_rule
+  _dag_dash_refresh_log "$out_dir" "$now"
 }
 
 # Live countdown to the next refresh. Sleeps in 1-second steps, overwriting a
@@ -450,7 +502,7 @@ _dag_dashboard_write_data() {
     mv "${out_dir}/data.json.tmp" "${out_dir}/data.json" || return 1
     _dag_dash_emit "$out_dir" 100 "snapshot ready" "" "$prev_gen"
     [[ -t 1 ]] && print -n -- $'\r\033[K'
-    print -r -- "✓ refreshed at $(date -r "$now" +%H:%M:%S)"
+    _dag_dash_refresh_banner "$out_dir" "$now"
     return 0
   } always {
     rm -rf "$work"
@@ -689,6 +741,13 @@ dag_dashboard() {
   : ${out_dir:=${DAG_STATE_DIR}/dashboard/latest}
   out_dir=${out_dir:A}
 
+  # Per-run banner context: the URL is filled in once the server is up.
+  _dag_dash_banner_url=""
+  _dag_dash_banner_interval="$refresh_minutes"
+  _dag_dash_refresh_n=0
+  # Test hooks: shorten the cadence and stop after N loop refreshes.
+  local loop_budget="${DAG_DASHBOARD_LOOP_REFRESHES:-}"
+
   # --json-only: data artifact only — no app build, no server, no browser.
   if (( json_only )); then
     if [[ -z "$refresh_minutes" ]]; then
@@ -696,11 +755,15 @@ dag_dashboard() {
       _dag_dash_status_static "$out_dir"
       return 0
     fi
-    refresh_seconds=$(( refresh_minutes * 60 ))
+    refresh_seconds="${DAG_DASHBOARD_REFRESH_SECONDS:-$(( refresh_minutes * 60 ))}"
     while true; do
       _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
       print -r -- "Refresh: every ${refresh_minutes} minute(s). Keep this command running; press Ctrl-C to stop."
       [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
+      if [[ -n "$loop_budget" ]] && (( --loop_budget <= 0 )); then
+        _dag_dash_status_static "$out_dir"
+        return 0
+      fi
       _dag_dash_countdown "$out_dir" "$refresh_seconds" ""
     done
   fi
@@ -732,6 +795,7 @@ dag_dashboard() {
   {
     _dag_dash_serve_start "$out_dir" "$port" "$_dag_dash_refresh_request_file" || return 1
     local url="http://127.0.0.1:${port}/"
+    _dag_dash_banner_url="$url"
     print -r -- "Dashboard serving:"
     print -r -- "  ${url}"
     print -r -- "  data: ${out_dir}/data.json"
@@ -754,12 +818,16 @@ dag_dashboard() {
       done
     fi
 
-    refresh_seconds=$(( refresh_minutes * 60 ))
+    refresh_seconds="${DAG_DASHBOARD_REFRESH_SECONDS:-$(( refresh_minutes * 60 ))}"
     while true; do
       [[ "${DAG_DASHBOARD_REFRESH_ONCE:-}" == "1" ]] && { _dag_dash_status_static "$out_dir"; return 0; }
       # Live countdown (terminal + browser); returns 1 if the server died.
       _dag_dash_countdown "$out_dir" "$refresh_seconds" "$_dag_dash_server_pid" "$_dag_dash_refresh_request_file" || return 1
       _dag_dashboard_write_data "$out_dir" "$refresh_minutes" || return $?
+      if [[ -n "$loop_budget" ]] && (( --loop_budget <= 0 )); then
+        _dag_dash_status_static "$out_dir"
+        return 0
+      fi
     done
   } always {
     _dag_dash_serve_stop
