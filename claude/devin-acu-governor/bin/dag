@@ -52,6 +52,11 @@ Usage:
                               run, each funded zero-sum from the lowest consumers; discovers the
                               over set live — no emails needed
   dag over                    Alias for: dag boost over
+  dag boost warning           Boost every user approaching budget (dashboard WARNING/CRITICAL:
+                              0.85 <= consumed/cap < 1) before they go over, each funded
+                              zero-sum from the lowest consumers; discovers the warning set
+                              live — no emails needed
+  dag warning                 Alias for: dag boost warning
   dag user <email>            Deep-dive one user's consumption and model usage (read-only)
   dag usage [--json] [--top <n>]
                               List every user's consumed ACUs, effective Local Agent cap,
@@ -102,6 +107,7 @@ Examples:
   dag --def status
   dag set-limits alice@corp.com
   dag boost over
+  dag boost warning
   dag sessions
   dag sessions --hours 72 --insights
   dag session logs --days 7 --org "Platform Eng"
@@ -218,7 +224,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new new-cycle boost over user status sessions models; do
+    for playbook in set-limits set-limits-new new-cycle boost over warning user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -519,6 +525,18 @@ main() {
           "scope: all users currently over budget (state OVER: consumed >= effective Local Agent cap)"
           "no explicit target — discover the over set live, then run the boost + borrow flow for each over user"
         )
+      elif [[ "${1:-}" == "warning" ]]; then
+        shift
+        if (( $# > 0 )); then
+          print -ru2 -- "dag boost warning: takes no arguments (got: $*); it boosts every user currently approaching budget"
+          exit 2
+        fi
+        cmd="warning"
+        context_lines=(
+          "requested shell command: dag boost warning"
+          "scope: all users currently approaching budget (dashboard states WARNING/CRITICAL: 0.85 <= consumed / effective Local Agent cap < 1)"
+          "no explicit target — discover the warning set live, then run the boost + borrow flow for each warning-band user"
+        )
       else
         local email="${1:-}" amount="${2:-}"
         if [[ "$email" != *@*.* ]]; then
@@ -546,6 +564,17 @@ main() {
         "requested shell command: dag over"
         "scope: all users currently over budget (state OVER: consumed >= effective Local Agent cap)"
         "no explicit target — discover the over set live, then run the boost + borrow flow for each over user"
+      )
+      ;;
+    warning)
+      if (( $# > 0 )); then
+        print -ru2 -- "dag warning: takes no arguments (got: $*); it boosts every user currently approaching budget"
+        exit 2
+      fi
+      context_lines=(
+        "requested shell command: dag warning"
+        "scope: all users currently approaching budget (dashboard states WARNING/CRITICAL: 0.85 <= consumed / effective Local Agent cap < 1)"
+        "no explicit target — discover the warning set live, then run the boost + borrow flow for each warning-band user"
       )
       ;;
     user)

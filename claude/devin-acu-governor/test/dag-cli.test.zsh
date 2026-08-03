@@ -208,6 +208,32 @@ assert_contains "usage lists boost over" "$out" "dag boost over"
 out=$(run_dag all-commands)
 assert_contains "all-commands over available" "$out" "# Playbook: boost over"
 
+# 6a2. boost warning: no email required, discovers the warning set at run time.
+out=$(run_dag boost warning); rc=$?
+assert_exit "boost warning rc" 0 $rc
+assert_contains "boost warning playbook" "$out" "# Playbook: boost warning"
+assert_contains "boost warning command" "$out" "command: warning"
+assert_contains "boost warning scope" "$out" "scope: all users currently approaching budget"
+assert_contains "boost warning band" "$out" "0.85 <= consumed / effective Local Agent cap < 1"
+assert_contains "boost warning no target" "$out" "no explicit target — discover the warning set live"
+assert_contains "boost warning plan jq" "$out" "boost-plan.jq"
+assert_contains "boost warning user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "boost warning over handoff" "$out" "dag boost over"
+assert_contains "boost warning write gate token" "$out" "CONFIRM DAG WRITE"
+# Alias: dag warning (without the boost prefix).
+out=$(run_dag warning); rc=$?
+assert_exit "warning alias rc" 0 $rc
+assert_contains "warning alias playbook" "$out" "# Playbook: boost warning"
+# boost warning takes no positional args.
+out=$(run_dag boost warning alice@corp.com 2>&1); rc=$?; assert_exit "boost warning extra arg" 2 $rc
+out=$(run_dag warning alice@corp.com 2>&1); rc=$?; assert_exit "warning alias extra arg" 2 $rc
+# usage help lists boost warning.
+out=$(run_dag 2>&1)
+assert_contains "usage lists boost warning" "$out" "dag boost warning"
+# all-commands surfaces the warning playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands warning available" "$out" "# Playbook: boost warning"
+
 # 6b. user command dispatch + validation.
 out=$(run_dag user 2>&1); rc=$?; assert_exit "user noargs" 2 $rc
 out=$(run_dag user not-an-email 2>&1); rc=$?; assert_exit "user bad email" 2 $rc

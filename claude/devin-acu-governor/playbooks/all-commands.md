@@ -45,6 +45,8 @@ Use the appended playbooks to route known tasks:
 - Use `dag set-limits` for prorated per-user Local Agent limit writes across confirmed engineers.
 - Use `dag new-cycle` at the start of every billing cycle for the full reset: verify the new cycle is live, rebuild every active user's cap from the full monthly pool, clear stale excluded-user overrides, rewrite the ledger fresh.
 - Use `dag boost <email> [acus]` for Boost/Borrow user cap adjustments.
+- Use `dag boost over` (alias `dag over`) to boost every user currently over budget in one zero-sum batch.
+- Use `dag boost warning` (alias `dag warning`) to boost every user approaching budget (dashboard WARNING/CRITICAL, 85–100% of cap) before they go over.
 - Use `dag set limit global <acus> [org_id|org_name]` for deterministic org-level Local Agent cap writes.
 - Use `dag models [file|names...]` for model burn and Admin Portal allowlist walkthroughs.
 - Use `dag dashboard` for a local static burn-rate dashboard.
