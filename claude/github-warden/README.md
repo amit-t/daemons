@@ -1,6 +1,6 @@
 # github-warden (`ghw`)
 
-`ghw` is a GitHub org/repo management daemon for Amit's two air-gapped GitHub identities: **personal** (login `amit-t`, his own orgs plus his own user namespace) and **inv** (login `amit-tiwari_vnt`, the Invenco VNT account administering every Invenco org, including the `INVENCO-GROUP` EMU org). Runtime shape mirrors `dag` (devin-acu-governor): read-only commands (`doctor`, `status`, `audit`, `stale`, `members`) run as pure local zsh/curl/jq and never launch an agent; the two mutating flows (`mirror`, `import`) launch a `clscb` playbook whose writes go only through deterministic `lib/` engine scripts, never through raw agent-issued API calls. Admin access is verified fresh on every run, before any write — the daemon never trusts a cached auth state.
+`ghw` is a GitHub org/repo management daemon for Amit's two air-gapped GitHub identities: **personal** (login `amit-t`, his own orgs plus his own user namespace) and **inv** (login `amit-tiwari_vnt`, the Invenco VNT account administering every Invenco org, including the `INVENCO-GROUP` EMU org). Runtime shape mirrors `dag` (devin-acu-governor): read-only commands (`doctor`, `status`, `audit`, `stale`, `members`) run as pure local zsh/curl/jq and never launch an agent; the two mutating flows (`mirror`, `import`) launch a `co` playbook (interactive-shell launcher, override with `GHW_LAUNCHER`) whose writes go only through deterministic `lib/` engine scripts, never through raw agent-issued API calls. Admin access is verified fresh on every run, before any write — the daemon never trusts a cached auth state.
 
 Related docs: [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md) (the two-identity account model in depth) and [`docs/RUNBOOK-org-import.md`](docs/RUNBOOK-org-import.md) (the operational runbook for `ghw import`).
 
@@ -99,8 +99,8 @@ Plain `ghw doctor` exits 0 here — every profile's credential health is good an
 
 | Command | Mutates | Runtime |
 |---|---:|---|
-| `ghw mirror [<repo\|url>] [flags...]` | Yes | Agent (`clscb` playbook) by default; `--script` runs `mirror-repo.zsh` directly |
-| `ghw import --org X [--team y] --csv f [flags...]` | Yes | Agent (`clscb` playbook) by default; `--script` runs `lib/import-engine.zsh` directly |
+| `ghw mirror [<repo\|url>] [flags...]` | Yes | Agent (`co` playbook) by default; `--script` runs `mirror-repo.zsh` directly |
+| `ghw import [--org X] [--team y] [--csv f] [flags...]` | Yes | Agent (`co` playbook) by default; bare `ghw import` interviews for org/csv; `--script` runs `lib/import-engine.zsh` directly |
 | `ghw doctor [--strict]` | No | Local zsh |
 | `ghw status [--org X]` | No | Local zsh |
 | `ghw audit --org X --ref owner/repo` | No | Local zsh |
@@ -159,7 +159,7 @@ ghw mirror amit-t/some-repo --script --new-repo-name my-new-repo --private
 ## `import`
 
 ```
-ghw [--account personal|inv] import --org <org> [--team <slug>] --csv <file>
+ghw [--account personal|inv] import [--org <org>] [--team <slug>] [--csv <file>]
     [--column login] [--role member|maintainer] [--org-role member]
     [--dry-run] [--script]
 ```
@@ -170,16 +170,16 @@ Reconciles a CSV of logins into an org (and optionally one team). Add-only, idem
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--org <org>` | required | Target org |
+| `--org <org>` | interview | Target org (required with `--script`; otherwise the agent interviews for it) |
 | `--team <slug>` | none | Target team slug (org-only import if omitted) |
-| `--csv <file>` | required | Plain-CSV source of logins |
+| `--csv <file>` | interview | Plain-CSV source of logins (required with `--script`; otherwise the agent interviews for it) |
 | `--column <name>` | `login` | Header of the column holding logins |
 | `--role <member\|maintainer>` | `member` | Desired **team** role for new team members |
 | `--org-role <member\|admin>` | `member` | Desired **org** role for new org members only |
 | `--dry-run` | off | Run steps 1–5, report `would_add`, zero writes |
 | `--script` | off | Bypass the agent: run `lib/import-engine.zsh` directly |
 
-`--org` and `--csv` are both required; missing either exits 2 with `ghw import: --org and --csv are required`. Any other unrecognized flag exits 2. A flag that needs a value with none left exits 2 (`ghw import: <flag> requires a value`).
+`--org` and `--csv` are required only with `--script`; missing either there exits 2 with `ghw import --script: --org and --csv are required`. In agent mode a missing org/csv launches the playbook in interview mode: the agent collects the values (plus optional flags), previews the CSV, and runs the engine through a `bin/ghw import ... --script` re-entry that resolves the account and token from the org. Any other unrecognized flag exits 2. A flag that needs a value with none left exits 2 (`ghw import: <flag> requires a value`).
 
 **What it reads/writes:** reads the CSV, `GET /orgs/{org}/members`, `GET /orgs/{org}/teams/{team}/members`; writes via `PUT /orgs/{org}/memberships/{u}` and `PUT /orgs/{org}/teams/{team}/memberships/{u}`, and writes a report under `${GHW_STATE_DIR}/reports/<job_id>/` (see [Reports](#reports)) — every write goes through `lib/import-engine.zsh`, whether reached via the agent playbook or `--script`.
 
@@ -498,7 +498,7 @@ See [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md) for the real values and rationale.
 | Var | Default | Purpose |
 |---|---|---|
 | `GHW_TOKEN_PERSONAL` / `GHW_TOKEN_INV` | unset | Credential fallback per profile's `token_env`; used when `gh` isn't available or its keyring has no token for that login. Read via the profile's `token_env` name in `config/accounts.json`, not hardcoded |
-| `GHW_LAUNCHER` | `clscb` | Agent launcher exec'd for `mirror`/`import` (unless `--script` or `GHW_DRY_LAUNCH`) |
+| `GHW_LAUNCHER` | `co` | Agent launcher for `mirror`/`import`, resolved inside `zsh -ic` so interactive functions/aliases work (unless `--script` or `GHW_DRY_LAUNCH`) |
 | `GHW_STATE_DIR` | `~/.local/state/github-warden` | Root for `reports/<job_id>/` |
 | `GHW_API_ROOT` | `https://api.github.com` | GitHub API base URL |
 | `GHW_DRY_LAUNCH` | unset | If set (non-empty), `mirror`/`import` print the assembled agent prompt instead of launching it |

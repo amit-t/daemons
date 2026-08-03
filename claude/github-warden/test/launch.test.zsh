@@ -7,7 +7,9 @@ ghw_bin="${script_dir}/../bin/ghw"
 work=$(mktemp -d)
 export GHW_ACCOUNTS_FILE="${work}/accounts.json"
 print -r -- '{"profiles":{"inv":{"token_env":"T_I","login":"amit_vnt","orgs":["INVENCO-GROUP"]}}}' > "$GHW_ACCOUNTS_FILE"
-export T_I="tok" GHW_DRY_LAUNCH=1
+# Token value must never appear in any assembled prompt. Keep it distinctive:
+# a generic value like "tok" false-positives on prose that mentions "token".
+export T_I="hushp4ss" GHW_DRY_LAUNCH=1
 # Hermetic: stub gh (empty-token mode) so ghw_token_for's gh-primary path
 # never shells out to a real gh binary — forces the env-var fallback this
 # test already relies on.
@@ -19,7 +21,7 @@ assert_exit "import dry launch ok" 0 $rc
 assert_contains "common policy included" "$out" "github-warden common policy"
 assert_contains "import playbook included" "$out" "ghw import playbook"
 assert_contains "engine command in context" "$out" "import-engine.zsh --org INVENCO-GROUP --team ppna"
-assert_not_contains "token never in prompt" "$out" "tok"
+assert_not_contains "token never in prompt" "$out" "hushp4ss"
 
 out=$(zsh "$ghw_bin" mirror INVENCO-GROUP/some-repo 2>&1); rc=$?
 assert_exit "mirror dry launch ok" 0 $rc
@@ -43,8 +45,31 @@ assert_exit "mirror https-form dry launch ok" 0 $rc
 assert_contains "https-form target normalized in context" "$out" "reference target: INVENCO-GROUP/some-repo"
 assert_not_contains "https-form context line has no .git suffix" "$out" "reference target: INVENCO-GROUP/some-repo.git"
 
+# Missing --csv (agent mode): launches an interview playbook instead of failing.
 out=$(zsh "$ghw_bin" import --org INVENCO-GROUP 2>&1); rc=$?
-assert_exit "import without csv exits 2" 2 $rc
+assert_exit "import without csv launches interview" 0 $rc
+assert_contains "interview names missing csv" "$out" "missing inputs: --csv"
+assert_contains "interview keeps resolved profile" "$out" "account profile: inv"
+assert_contains "interview has engine template" "$out" "bin/ghw import --org <org> --csv <file>"
+assert_not_contains "interview never leaks token" "$out" "hushp4ss"
+
+# Bare import (no flags): interview must cover org + csv, no token resolved yet.
+out=$(zsh "$ghw_bin" import 2>&1); rc=$?
+assert_exit "bare import launches interview" 0 $rc
+assert_contains "interview names missing org and csv" "$out" "missing inputs: --org --csv"
+assert_contains "interview defers credential to re-entry" "$out" "credential: not resolved yet"
+
+# --script bypasses the agent, so it still hard-requires org + csv.
+out=$(zsh "$ghw_bin" import --org INVENCO-GROUP --script 2>&1); rc=$?
+assert_exit "import --script without csv exits 2" 2 $rc
+assert_contains "import --script names requirement" "$out" "--org and --csv are required"
+
+# Default launcher is co (interactive function, resolved via zsh -ic at exec).
+out=$(GHW_PRINT_LAUNCHER=1 zsh "$ghw_bin" import --org INVENCO-GROUP --csv "$csv" 2>&1); rc=$?
+assert_exit "print-launcher ok" 0 $rc
+assert_eq "default launcher is co" "co" "$out"
+out=$(GHW_PRINT_LAUNCHER=1 GHW_LAUNCHER=cf zsh "$ghw_bin" import --org INVENCO-GROUP --csv "$csv" 2>&1); rc=$?
+assert_eq "GHW_LAUNCHER override wins" "cf" "$out"
 
 # --org as the trailing arg with no value must exit 2 immediately, not loop
 # forever on a `shift 2` with only 1 arg left (zsh errors without shifting).
@@ -65,8 +90,8 @@ EOF
 
 out=$(HOME="$fake_home" zsh "$ghw_bin" mirror INVENCO-GROUP/some-repo --script --new-repo X 2>&1); rc=$?
 assert_exit "mirror --script launch ok" 0 $rc
-assert_contains "mirror --script exports GH_TOKEN" "$out" "GH_TOKEN=tok"
-assert_contains "mirror --script exports GITHUB_TOKEN" "$out" "GITHUB_TOKEN=tok"
+assert_contains "mirror --script exports GH_TOKEN" "$out" "GH_TOKEN=hushp4ss"
+assert_contains "mirror --script exports GITHUB_TOKEN" "$out" "GITHUB_TOKEN=hushp4ss"
 assert_contains "mirror --script passes ref-repo" "$out" "--ref-repo INVENCO-GROUP/some-repo"
 
 # A trailing boolean passthrough flag (no value after it) must not hang the

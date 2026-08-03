@@ -2,7 +2,7 @@
 # ghw — github-warden: GitHub org/repo management daemon.
 # Thin launcher: resolves the account profile + token, runs deterministic
 # read-only commands locally, and hands mutating flows (mirror, import) to a
-# clscb playbook session whose writes go only through lib/ engine scripts.
+# co playbook session whose writes go only through lib/ engine scripts.
 set -u
 script_path=${0:A}
 daemon_dir=${script_path:h:h}
@@ -20,11 +20,13 @@ Usage:
                               reference repo (gh-repo-mirror skill). Bare inside a git
                               repo: reference = origin. --script runs
                               mirror-repo.zsh directly (pass its flags through).
-  ghw import --org <org> [--team <slug>] --csv <file> [--column login]
+  ghw import [--org <org>] [--team <slug>] [--csv <file>] [--column login]
              [--role member|maintainer] [--org-role member] [--dry-run] [--script]
                               Reconcile logins into an org/team. Add-only, idempotent,
-                              never demotes an existing member. --script skips the agent
-                              and runs the deterministic engine directly.
+                              never demotes an existing member. Bare `ghw import` works:
+                              the agent interviews for org/csv/options. --script skips
+                              the agent and runs the deterministic engine directly
+                              (then --org and --csv are required).
   ghw doctor [--strict]       Check every profile: token, login, scopes, air-gap invariant.
                               Exits 0 once credentials + air-gap are healthy; org-admin role
                               is informational unless --strict, which requires admin on
@@ -42,7 +44,7 @@ Usage:
 
 Config (env):
   GHW_TOKEN_PERSONAL / GHW_TOKEN_INV   tokens per profile (see config/accounts.json)
-  GHW_LAUNCHER                         agent launcher for mirror/import (default clscb)
+  GHW_LAUNCHER                         agent launcher for mirror/import (default co)
   GHW_STATE_DIR                        reports/state dir (default ~/.local/state/github-warden)
 EOF
 }
@@ -67,14 +69,23 @@ ghw_normalize_repo_target() {  # $1 raw target -> plain owner/repo (no scheme/.g
   print -r -- "$t"
 }
 
-ghw_launch() {  # $1 prompt — exports token for gh CLI, hands off to launcher
+ghw_launch() {  # $1 prompt — exports token (when resolved) for gh CLI, hands off to launcher
   local prompt="$1"
-  typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+  local launcher="${GHW_LAUNCHER:-co}"
+  if [[ -n "${GHW_TOKEN:-}" ]]; then
+    typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+  fi
+  if [[ -n "${GHW_PRINT_LAUNCHER:-}" ]]; then
+    print -r -- "$launcher"
+    return 0
+  fi
   if [[ -n "${GHW_DRY_LAUNCH:-}" ]]; then
     print -r -- "$prompt"
     return 0
   fi
-  exec ${=GHW_LAUNCHER:-clscb} "$prompt"
+  # Launchers (co, cf, clscb, ...) are interactive-only zsh functions/aliases;
+  # resolve them inside an interactive shell, same as dag.
+  exec zsh -ic "${launcher} $(printf '%q' "$prompt")"
 }
 
 main() {
@@ -140,7 +151,7 @@ main() {
       exit $?
       ;;
     import)
-      local org="" script_mode=0
+      local org="" csv="" script_mode=0
       local -a engine_args
       engine_args=()
       while (( $# )); do
@@ -153,29 +164,58 @@ main() {
               exit 2
             fi
             [[ "$1" == --org ]] && org="$2"
+            [[ "$1" == --csv ]] && csv="$2"
             engine_args+=("$1" "$2")
             shift 2
             ;;
           *) print -ru2 -- "ghw import: unknown flag: $1"; exit 2 ;;
         esac
       done
-      if [[ -z "$org" || " ${engine_args[*]} " != *" --csv "* ]]; then
-        print -ru2 -- "ghw import: --org and --csv are required"
+      # --script is the deterministic no-agent path: it needs both inputs up
+      # front. Agent mode interviews for whatever is missing instead.
+      if (( script_mode )) && [[ -z "$org" || -z "$csv" ]]; then
+        print -ru2 -- "ghw import --script: --org and --csv are required"
         exit 2
       fi
-      local profile
-      profile=$(ghw_resolve_profile "$account" "$org") || exit 2
-      ghw_token_for "$profile" || exit 2
-      typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
-      engine_args+=(--account "$profile")
-      if (( script_mode )); then
-        exec zsh "${daemon_dir}/lib/import-engine.zsh" "${engine_args[@]}"
+      local profile=""
+      if [[ -n "$org" ]]; then
+        profile=$(ghw_resolve_profile "$account" "$org") || exit 2
+        ghw_token_for "$profile" || exit 2
+        typeset -gx GH_TOKEN="$GHW_TOKEN" GITHUB_TOKEN="$GHW_TOKEN"
+        engine_args+=(--account "$profile")
+        if (( script_mode )); then
+          exec zsh "${daemon_dir}/lib/import-engine.zsh" "${engine_args[@]}"
+        fi
+      fi
+      local -a ctx
+      ctx=()
+      if [[ -n "$org" && -n "$csv" ]]; then
+        ctx+=(
+          "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))"
+          "engine command: zsh ${daemon_dir}/lib/import-engine.zsh ${engine_args[*]}"
+          "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it."
+        )
+      else
+        local -a missing
+        missing=()
+        [[ -z "$org" ]] && missing+=(--org)
+        [[ -z "$csv" ]] && missing+=(--csv)
+        ctx+=(
+          "missing inputs: ${missing[*]} — interview Amit for them (plus any optional flags) before running the engine"
+          "provided flags: ${engine_args[*]:-(none)}"
+          "engine command template: zsh ${daemon_dir}/bin/ghw import --org <org> --csv <file> [--team <slug>] [--column login] [--role member|maintainer] [--org-role member] [--dry-run] --script"
+        )
+        if [[ -n "$profile" ]]; then
+          ctx+=(
+            "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))"
+            "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it."
+          )
+        else
+          ctx+=("credential: not resolved yet — the --script re-entry infers the account profile from --org and resolves the token itself.")
+        fi
       fi
       local prompt
-      prompt=$(ghw_build_prompt import \
-        "account profile: ${profile} (expected login: $(ghw_profile_login "$profile"))" \
-        "engine command: zsh ${daemon_dir}/lib/import-engine.zsh ${engine_args[*]}" \
-        "credential: exported as GH_TOKEN/GITHUB_TOKEN in this shell. Never print it.")
+      prompt=$(ghw_build_prompt import "${ctx[@]}")
       ghw_launch "$prompt"
       ;;
     mirror)
