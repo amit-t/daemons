@@ -88,3 +88,16 @@ ghw() {
   fi
   zsh "$daemon_entry" "$@"
 }
+
+# hive — hivemind: cross-machine sync of global agent instructions/memories.
+hive() {
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/hivemind/bin/hive"
+  if [[ ! -f "$daemon_entry" ]]; then
+    print -ru2 -- "hive: missing daemon entrypoint at $daemon_entry"
+    return 127
+  fi
+  zsh "$daemon_entry" "$@"
+}
+hive--claude() { hive --agent claude "$@" }
+hive--codex()  { hive --agent codex "$@" }
+hive--devin()  { hive --agent devin "$@" }
