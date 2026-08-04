@@ -8,6 +8,7 @@
     {"org_id": "labs", "name": "Labs", "max_cycle_acu_limit": null, "max_session_acu_limit": null},
     {"org_id": "edge-warn", "name": "EdgeWarn", "max_cycle_acu_limit": 1000, "max_session_acu_limit": null},
     {"org_id": "edge-over", "name": "EdgeOver", "max_cycle_acu_limit": 1000, "max_session_acu_limit": null},
-    {"org_id": "blocked", "name": "Blocked", "max_cycle_acu_limit": 0, "max_session_acu_limit": null}
+    {"org_id": "blocked", "name": "Blocked", "max_cycle_acu_limit": 0, "max_session_acu_limit": null},
+    {"org_id": "ics-like", "name": "ICSLike", "max_cycle_acu_limit": 500, "max_session_acu_limit": 250}
   ]
 }

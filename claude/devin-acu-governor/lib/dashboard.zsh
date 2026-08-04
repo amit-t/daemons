@@ -441,12 +441,26 @@ _dag_dashboard_write_data() {
     _dag_dash_emit "$out_dir" 30 "model analytics" "" "$prev_gen"
 
     : > "${work}/org-dailies.json"
-    local oid od n_orgs i_org=0
+    : > "${work}/org-limits.json"
+    local oid od ol n_orgs i_org=0
     n_orgs=$(jq '[.items[]?.org_id] | length' "${work}/organizations.json")
     for oid in $(jq -r '.items[]?.org_id' "${work}/organizations.json"); do
       od=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/organizations/${oid}?time_after=${after}&time_before=${before}" "$hdr") || return 1
       jq -n --arg org_id "$oid" --argjson daily "$od" \
         '{org_id: $org_id, daily: $daily}' >> "${work}/org-dailies.json" || return 1
+      # Org ACU-limit settings (v3beta1): the enforced Local Agent and Devin
+      # Cloud cycle caps. The v3 org roster's max_cycle_acu_limit is the
+      # cloud-only cap, so without this split the org meter divides all-product
+      # consumption by the cloud cap and shows a false OVER. A persistent
+      # transient failure degrades to "no settings" (jq falls back to the v3
+      # cloud cap; Local Agent shows uncapped) instead of nuking the dashboard.
+      if ! ol=$(_dag_dash_fetch "${base}/v3beta1/enterprise/organizations/${oid}/consumption/acu-limits" "$hdr"); then
+        _dag_dash_last_transient || return 1
+        print -ru2 -- "dag dashboard: org ${oid} ACU-limit endpoint unavailable after retries; falling back to v3 cloud cap only"
+        ol='{}'
+      fi
+      jq -n --arg org_id "$oid" --argjson limits "$ol" \
+        '{org_id: $org_id, limits: $limits}' >> "${work}/org-limits.json" || return 1
       (( i_org++ ))
       (( n_orgs > 0 )) && _dag_dash_emit "$out_dir" $(( 30 + i_org * 8 / n_orgs )) "org dailies" "${i_org}/${n_orgs}" "$prev_gen"
     done
@@ -488,6 +502,7 @@ _dag_dashboard_write_data() {
       --slurpfile ent "${work}/enterprise-daily.json" \
       --slurpfile orgs "${work}/organizations.json" \
       --slurpfile orgd "${work}/org-dailies.json" \
+      --slurpfile orgl "${work}/org-limits.json" \
       --slurpfile users "${work}/members-users.json" \
       --slurpfile userd "${work}/user-dailies.json" \
       --slurpfile userl "${work}/user-limits.json" \

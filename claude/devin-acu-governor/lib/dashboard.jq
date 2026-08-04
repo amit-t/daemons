@@ -4,6 +4,9 @@
 #     --slurpfile ent      <enterprise daily response> \
 #     --slurpfile orgs     <organizations response> \
 #     --slurpfile orgd     <stream of {org_id, daily} docs, one per org> \
+#     --slurpfile orgl     <stream of {org_id, limits} docs, one per org: the
+#                           v3beta1 org acu-limits settings (local_agent /
+#                           cloud_agent cycle caps); limits == {} when degraded> \
 #     --slurpfile users    <enterprise members/users response> \
 #     --slurpfile userd    <stream of {user_id, daily} docs, one per user> \
 #     --slurpfile userl    <stream of {user_id, limits} docs, one per user> \
@@ -36,6 +39,27 @@ def org_status($consumed; $limit; $projected):
   else "ok"
   end;
 
+# Worst-of for an org's two meters: the row-level status drives the table badge
+# and the filter chips, so it must reflect the more alarming meter.
+def status_rank:
+  {"ok": 0, "uncapped": 1, "blocked": 2, "warning": 3, "critical": 4,
+   "forecast_over": 5, "over": 6}[.];
+def worst_status($a; $b): if ($a | status_rank) >= ($b | status_rank) then $a else $b end;
+
+# One enforcement meter (Local Agent or Devin Cloud): its own consumption,
+# enforced cap, run rate, forecast, and status.
+def org_meter($consumed; $limit; $elapsed_days; $cycle_days):
+  ($consumed / $elapsed_days) as $mrate
+  | ($mrate * $cycle_days) as $mproj
+  | {
+      consumed: ($consumed | r2),
+      limit: $limit,
+      daily_run_rate: ($mrate | r2),
+      projected: ($mproj | r2),
+      pct_limit: (if ($limit // 0) == 0 then null else (($consumed / $limit) | r3) end),
+      status: org_status($consumed; $limit; $mproj)
+    };
+
 def user_status($consumed; $limit):
   if $limit == null then "uncapped"
   elif $limit == 0 then (if $consumed > 0 then "over" else "blocked" end)
@@ -56,24 +80,54 @@ def user_status($consumed; $limit):
 | ($rate * $cycle_days) as $projected
 | ($orgs[0].items // []) as $orglist
 | ($orgd | map({key: .org_id, value: (.daily.total_acus // 0)}) | from_entries) as $org_consumed
+| ($orgd | map({key: .org_id, value: (
+    [(.daily.consumption_by_date // [])[].acus_by_product]
+    | {devin: ([.[].devin // 0] | add // 0),
+       cascade: ([.[].cascade // 0] | add // 0),
+       terminal: ([.[].terminal // 0] | add // 0),
+       review: ([.[].review // 0] | add // 0)}
+  )}) | from_entries) as $org_products
+| ($orgl | map({key: .org_id, value: (.limits // {})}) | from_entries) as $org_limits
 | ($orglist | map(
     . as $o
     | ($org_consumed[$o.org_id] // 0) as $c
     | ($c / $elapsed_days) as $orate
     | ($orate * $cycle_days) as $oproj
+    | ($org_products[$o.org_id]
+       // {devin: 0, cascade: 0, terminal: 0, review: 0}) as $p
+    | ($org_limits[$o.org_id] // {}) as $olim
+    # Two independent enforcement gates, so two meters:
+    #   Local Agent (cascade + terminal) vs local_agent.cycle_acu_limit,
+    #   Devin Cloud (devin)              vs cloud_agent.cycle_acu_limit.
+    # The v3 roster's max_cycle_acu_limit equals the cloud cap and is only a
+    # fallback for a degraded org acu-limits fetch — dividing the all-product
+    # total by it produced the old false OVER. review counts in the totals but
+    # in neither gate.
+    | ($olim.local_agent.cycle_acu_limit // null) as $local_limit
+    | (if ($olim | has("cloud_agent")) and ($olim.cloud_agent != null)
+       then ($olim.cloud_agent.cycle_acu_limit // null)
+       elif ($olim | length) == 0 then $o.max_cycle_acu_limit
+       else null end) as $cloud_limit
+    | org_meter($p.cascade + $p.terminal; $local_limit; $elapsed_days; $cycle_days) as $local
+    | org_meter($p.devin; $cloud_limit; $elapsed_days; $cycle_days) as $cloud
     | {
         org_id: $o.org_id,
         name: ($o.name // $o.org_id),
         consumed: ($c | r2),
         daily_run_rate: ($orate | r2),
         projected: ($oproj | r2),
-        max_cycle_acu_limit: $o.max_cycle_acu_limit,
         max_session_acu_limit: $o.max_session_acu_limit,
-        pct_limit: (if ($o.max_cycle_acu_limit // 0) == 0 then null
-                    else (($c / $o.max_cycle_acu_limit) | r3) end),
-        status: org_status($c; $o.max_cycle_acu_limit; $oproj)
+        products: ($p | map_values(r2)),
+        local: $local,
+        cloud: $cloud,
+        status: worst_status($local.status; $cloud.status)
       }
   )) as $org_rows
+# Enterprise burn not attributed to any org (users without billing_org_id).
+# Org-level caps cannot see or gate it, so surface the gap instead of letting
+# org totals silently disagree with the enterprise total.
+| ([$org_rows[].consumed] | add // 0) as $org_attributed
+| ($consumed - $org_attributed) as $unattributed
 | ($users[0].items // []) as $userlist
 | ($userd | map({key: .user_id, value: (.daily.total_acus // 0)}) | from_entries) as $user_consumed
 | ($userl | map({key: .user_id, value: (.limits // {})}) | from_entries) as $user_limits
@@ -206,15 +260,28 @@ def user_status($consumed; $limit):
       rows: ($ma.rows // [])
     },
     orgs: $org_rows,
+    attribution: {
+      org_attributed: ($org_attributed | r2),
+      unattributed: ($unattributed | r2),
+      pct_unattributed: (if $consumed > 0 then (($unattributed / $consumed) | r3) else null end)
+    },
     users: $user_rows,
     warnings: (
-      [$org_rows[] | select(.status == "over")
-        | "\(.name) is OVER its cycle cap: \(.consumed) of \(.max_cycle_acu_limit) ACUs consumed"]
-      + [$org_rows[] | select(.status == "forecast_over")
-        | "\(.name) is forecast to exceed its cycle cap: projected \(.projected) vs cap \(.max_cycle_acu_limit)"]
-      + [$org_rows[] | select(.status == "uncapped")
-        | "\(.name) has no max_cycle_acu_limit (uncapped)"]
+      # Per-meter, because that is how the caps enforce: a Local Agent overage
+      # says nothing about Devin Cloud and vice versa.
+      [$org_rows[] | . as $r
+        | [["Local Agent", .local], ["Devin Cloud", .cloud]][] | . as [$g, $m]
+        | if $m.status == "over"
+          then "\($r.name) \($g) is OVER its cycle cap: \($m.consumed) of \($m.limit) ACUs consumed"
+          elif $m.status == "forecast_over"
+          then "\($r.name) \($g) is forecast to exceed its cycle cap: projected \($m.projected) vs cap \($m.limit)"
+          elif $m.status == "uncapped"
+          then "\($r.name) has no \($g) cycle cap (uncapped)"
+          else empty end]
       + [$user_rows[] | select(.status == "over")
         | "\(.email) is OVER effective user cap: \(.consumed) of \(.effective_cycle_acu_limit) ACUs consumed"]
+      + (if $unattributed > 0
+         then ["\($unattributed | r2) ACUs (\((($unattributed / ([$consumed, 0.0001] | max)) * 100) | round)% of enterprise burn) are attributed to no organization — users without billing_org_id; org caps cannot gate that usage"]
+         else [] end)
     )
   }

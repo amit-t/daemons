@@ -45,16 +45,41 @@ export interface DailyPoint {
   review: number
 }
 
+// One enforcement gate (Local Agent or Devin Cloud): its own consumption,
+// enforced cycle cap, and status. Orgs carry two — the gates are independent.
+export interface OrgMeter {
+  consumed: number
+  limit: number | null
+  daily_run_rate: number
+  projected: number
+  pct_limit: number | null
+  status: OrgStatus
+}
+
+export interface OrgProducts {
+  devin: number
+  cascade: number
+  terminal: number
+  review: number
+}
+
 export interface OrgRow {
   org_id: string
   name: string
   consumed: number
   daily_run_rate: number
   projected: number
-  max_cycle_acu_limit: number | null
   max_session_acu_limit: number | null
-  pct_limit: number | null
+  products: OrgProducts
+  local: OrgMeter
+  cloud: OrgMeter
   status: OrgStatus
+}
+
+export interface AttributionInfo {
+  org_attributed: number
+  unattributed: number
+  pct_unattributed: number | null
 }
 
 export interface UserProductTotals {
@@ -148,6 +173,7 @@ export interface DashboardData {
   sessions_info: SessionsInfo
   model_analytics: ModelAnalyticsInfo
   orgs: OrgRow[]
+  attribution: AttributionInfo
   users: UserRow[]
   warnings: string[]
 }

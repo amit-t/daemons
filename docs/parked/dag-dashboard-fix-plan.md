@@ -1,6 +1,11 @@
-# PARKED: dag dashboard fix plan (2026-08-04)
+# RESOLVED: dag dashboard fix plan (2026-08-04)
 
-Status: parked by Amit. Pick up on request. No changes applied.
+Status: executed 2026-08-04 on Amit's request. Outcome per item:
+
+1. **Dashboard fix — DONE.** `lib/dashboard.zsh` now fetches per-org `/v3beta1/.../acu-limits`; `lib/dashboard.jq` + `web/dashboard-app` render two enforcement meters per org (Local Agent vs `local_agent.cycle_acu_limit`, Devin Cloud vs `cloud_agent.cycle_acu_limit`). Live-verified: ICS shows Local 1349/3000 ok, Cloud 24.04/500 ok — false OVER gone. Inv ai-daemons SHA pin now stale until reviewed re-pin.
+2. **Lower ICS local cap — DECLINED by Amit** ("do not change any actual local ACUs"). Live re-verified 2026-08-04: every org already has `cloud_agent.cycle_acu_limit` set (ICS 500, Vontier 5000, others 500), so cloud sessions cannot exceed allocation in any org. No API writes performed.
+3. **Attribution — NO WRITES by Amit's instruction** (no per-user changes). Dashboard now computes and warns on the gap instead: 7087 ACUs (76%) unattributed this cycle.
+4. Overshoot note unchanged (caps gate at new-message time).
 
 ## Context
 

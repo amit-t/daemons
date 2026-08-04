@@ -81,6 +81,9 @@ case "$url" in
   *consumption/daily/organizations/*)
     org="${url##*/organizations/}"; org="${org%%\?*}"
     emit "${FIXTURES}/org-${org}-daily.json" "${FAKE_ORG_DAILY_CODE:-200}" "${FAKE_ORG_DAILY_BODY:-}" ;;
+  *v3beta1/enterprise/organizations/*/consumption/acu-limits*)
+    org="${url##*/organizations/}"; org="${org%%/*}"
+    emit "${FIXTURES}/org-${org}-limits.json" "${FAKE_ORG_LIMIT_CODE:-200}" "${FAKE_ORG_LIMIT_BODY:-}" ;;
   *consumption/daily*)
     emit "${FIXTURES}/enterprise-daily.json" "${FAKE_DAILY_CODE:-200}" "${FAKE_DAILY_BODY:-}" ;;
   *enterprise/organizations*)
@@ -175,6 +178,7 @@ run_dash() {
   FAKE_DAILY_CODE="${FAKE_DAILY_CODE:-200}" FAKE_DAILY_BODY="${FAKE_DAILY_BODY:-}" \
   FAKE_ORGS_CODE="${FAKE_ORGS_CODE:-200}" FAKE_ORGS_BODY="${FAKE_ORGS_BODY:-}" \
   FAKE_ORG_DAILY_CODE="${FAKE_ORG_DAILY_CODE:-200}" FAKE_ORG_DAILY_BODY="${FAKE_ORG_DAILY_BODY:-}" \
+  FAKE_ORG_LIMIT_CODE="${FAKE_ORG_LIMIT_CODE:-200}" FAKE_ORG_LIMIT_BODY="${FAKE_ORG_LIMIT_BODY:-}" \
   FAKE_USERS_CODE="${FAKE_USERS_CODE:-200}" FAKE_USERS_BODY="${FAKE_USERS_BODY:-}" \
   FAKE_USER_DAILY_CODE="${FAKE_USER_DAILY_CODE:-200}" FAKE_USER_DAILY_BODY="${FAKE_USER_DAILY_BODY:-}" \
   FAKE_DEFAULT_USER_LIMIT_CODE="${FAKE_DEFAULT_USER_LIMIT_CODE:-200}" FAKE_DEFAULT_USER_LIMIT_BODY="${FAKE_DEFAULT_USER_LIMIT_BODY:-}" \
@@ -251,7 +255,9 @@ assert_eq "daily[0] epoch" "1778918400" "$(jqd '.daily[0].epoch')"
 assert_eq "daily[0] date" "2026-05-16" "$(jqd '.daily[0].date')"
 assert_eq "daily[2] date" "2026-06-14" "$(jqd '.daily[2].date')"
 
-# 6. Org status classification covers every branch.
+# 6. Org status classification covers every branch. The row status is the worst
+#    of the two enforcement meters (Local Agent, Devin Cloud) — each meter
+#    divides its own consumption by its own enforced cap.
 org_field() { jq -r --arg id "$1" ".orgs[] | select(.org_id==\$id)$2" "${out_dir}/data.json" }
 assert_eq "org ok" "ok" "$(org_field platform .status)"
 assert_eq "org warning" "warning" "$(org_field research .status)"
@@ -259,22 +265,67 @@ assert_eq "org critical" "critical" "$(org_field growth .status)"
 assert_eq "org forecast_over" "forecast_over" "$(org_field ml .status)"
 assert_eq "org over" "over" "$(org_field sandbox .status)"
 assert_eq "org uncapped" "uncapped" "$(org_field labs .status)"
-assert_eq "org pct_limit" "0.95" "$(org_field growth .pct_limit)"
+assert_eq "org local pct_limit" "0.96" "$(org_field growth .local.pct_limit)"
 assert_eq "org projected" "1007.5" "$(org_field ml .projected)"
 assert_eq "org run rate" "29" "$(org_field research .daily_run_rate)"
 assert_eq "org session cap" "100" "$(org_field platform .max_session_acu_limit)"
 assert_eq "org warning boundary (== 0.85)" "warning" "$(org_field edge-warn .status)"
 assert_eq "org over boundary (consumed == limit)" "over" "$(org_field edge-over .status)"
 assert_eq "org zero cap unused blocked" "blocked" "$(org_field blocked .status)"
-assert_eq "warnings count" "5" "$(jqd '.warnings | length')"
-assert_contains "warning forecast_over org" "$(jqd '.warnings | join("|")')" "ML"
-assert_contains "warning over org" "$(jqd '.warnings | join("|")')" "Sandbox"
-assert_contains "warning uncapped org" "$(jqd '.warnings | join("|")')" "Labs"
+
+# 6a. Per-meter fields: sandbox is over on the CLOUD gate only (devin 600 vs
+#     cloud cap 500) while its Local Agent gate stays ok (500 vs 1000).
+assert_eq "sandbox cloud consumed" "600" "$(org_field sandbox .cloud.consumed)"
+assert_eq "sandbox cloud limit" "500" "$(org_field sandbox .cloud.limit)"
+assert_eq "sandbox cloud status" "over" "$(org_field sandbox .cloud.status)"
+assert_eq "sandbox local status" "ok" "$(org_field sandbox .local.status)"
+assert_eq "ml local limit" "580" "$(org_field ml .local.limit)"
+assert_eq "ml local status" "forecast_over" "$(org_field ml .local.status)"
+assert_eq "org products cascade" "300" "$(org_field platform .products.cascade)"
+
+# 6b. False-OVER regression (the original ICS bug): all-product total 1300 far
+#     exceeds the 500 cloud cap, but Local Agent 1276/3000 and cloud 24/500 are
+#     both fine — the org must NOT be flagged over.
+assert_eq "ics-like status" "ok" "$(org_field ics-like .status)"
+assert_eq "ics-like local consumed" "1276" "$(org_field ics-like .local.consumed)"
+assert_eq "ics-like local limit" "3000" "$(org_field ics-like .local.limit)"
+assert_eq "ics-like cloud consumed" "24" "$(org_field ics-like .cloud.consumed)"
+assert_eq "ics-like cloud limit" "500" "$(org_field ics-like .cloud.limit)"
+if [[ "$(jqd '.warnings | join("|")')" == *ICSLike* ]]; then
+  _fail "ics-like must not warn: caps are per-gate, not total-vs-cloud-cap"
+else
+  _ok
+fi
+
+# 6c. Warnings are per-gate; uncapped Labs warns for both gates. Attribution
+#     gap surfaces only when org-attributed burn is below the enterprise total
+#     (fixture orgs sum past it, so no warning here).
+assert_eq "warnings count" "6" "$(jqd '.warnings | length')"
+assert_contains "warning forecast_over org" "$(jqd '.warnings | join("|")')" "ML Local Agent is forecast"
+assert_contains "warning over org" "$(jqd '.warnings | join("|")')" "Sandbox Devin Cloud is OVER"
+assert_contains "warning uncapped local" "$(jqd '.warnings | join("|")')" "Labs has no Local Agent cycle cap"
+assert_contains "warning uncapped cloud" "$(jqd '.warnings | join("|")')" "Labs has no Devin Cloud cycle cap"
 if [[ "$(jqd '.warnings | join("|")')" == *Blocked* ]]; then
   _fail "zero-usage blocked org should not be over-warning"
 else
   _ok
 fi
+assert_eq "attribution org total" "7595" "$(jqd '.attribution.org_attributed')"
+assert_eq "attribution unattributed" "-6095" "$(jqd '.attribution.unattributed')"
+if [[ "$(jqd '.warnings | join("|")')" == *"attributed to no organization"* ]]; then
+  _fail "attribution warning must not fire when orgs cover the enterprise total"
+else
+  _ok
+fi
+
+# 6d. Attribution gap warning fires when enterprise burn exceeds org-attributed
+#     burn (users without billing_org_id).
+out=$(FAKE_DAILY_BODY='{"total_acus":9595,"consumption_by_date":[{"date":1778918400,"acus":9595,"acus_by_product":{"devin":100,"cascade":9495,"terminal":0,"review":0}}]}' \
+  run_dash --json-only --out "${tmpdir}/dash-attr" 2>&1); rc=$?
+assert_exit "attribution rc" 0 $rc
+attr() { jq -r "$1" "${tmpdir}/dash-attr/data.json" }
+assert_eq "attribution gap" "2000" "$(attr '.attribution.unattributed')"
+assert_contains "attribution warning" "$(attr '.warnings | join("|")')" "2000 ACUs (21% of enterprise burn) are attributed to no organization"
 
 # 7. User section includes each user's consumed ACUs and effective cap.
 assert_eq "user count" "4" "$(jqd '.users | length')"
@@ -545,6 +596,26 @@ out=$(FAKE_USER_LIMIT_CODE=500 FAKE_USER_LIMIT_BODY='{"detail":"hard 500"}' \
   run_dash --no-open --out "${tmpdir}/dash-hard500" 2>&1); rc=$?
 if (( rc != 0 )); then _ok; else _fail "hard 500 on user limit must stay fatal"; fi
 if [[ "$out" == *"transient; retry"* ]]; then _fail "500 was retried as transient"; else _ok; fi
+
+# 8h2. Persistent 504 on an ORG acu-limits endpoint degrades gracefully: that
+#      org falls back to the v3 cloud cap (Local Agent shows uncapped); the
+#      dashboard still renders and other orgs keep their real split.
+cnt="${tmpdir}/t-orglim.cnt"; rm -f "$cnt"
+out=$(FAKE_TRANSIENT_URL="organizations/ics-like/consumption/acu-limits" FAKE_TRANSIENT_TIMES=-1 \
+  FAKE_TRANSIENT_CODE=504 TRANSIENT_COUNTER="$cnt" DAG_FETCH_RETRIES=2 DAG_FETCH_RETRY_SLEEP=0 \
+  run_dash --no-open --out "${tmpdir}/dash-orglim-deg" 2>&1); rc=$?
+assert_exit "org-limit degrade rc" 0 $rc
+assert_contains "org-limit degrade warned" "$out" "falling back to v3 cloud cap"
+old() { jq -r --arg id "$1" ".orgs[] | select(.org_id==\$id)$2" "${tmpdir}/dash-orglim-deg/data.json" }
+assert_eq "org-limit degrade cloud fallback" "500" "$(old ics-like .cloud.limit)"
+assert_eq "org-limit degrade local uncapped" "null" "$(old ics-like .local.limit)"
+assert_eq "org-limit degrade others intact" "1000" "$(old sandbox .local.limit)"
+
+# 8h3. A hard 500 on an org acu-limits endpoint stays fatal.
+out=$(FAKE_ORG_LIMIT_CODE=500 FAKE_ORG_LIMIT_BODY='{"detail":"org limits down"}' \
+  run_dash --no-open --out "${tmpdir}/dash-orglim-hard" 2>&1); rc=$?
+if (( rc != 0 )); then _ok; else _fail "hard 500 on org limits must stay fatal"; fi
+assert_contains "org limits error body" "$out" '{"detail":"org limits down"}'
 
 # 8i. Sessions endpoint failure (e.g. missing ViewOrgSessions) degrades:
 #     dashboard renders, user session stats null, enterprise section flagged off.

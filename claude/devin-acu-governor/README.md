@@ -491,7 +491,7 @@ DAG_DOCTOR_SKIP_ANALYTICS=1 dag doctor
 
 ## `dag dashboard`
 
-Local, read-only dashboard — a React app (`web/dashboard-app/`, Vite + recharts) served from a localhost-only HTTP server. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, enterprise users, each user's current-cycle daily ACUs, the default per-user Local Agent cap, each user's explicit Local Agent override, the cycle's Devin Cloud sessions, and (optionally, with the Windsurf key) the per-user model/IDE ACU split into `data.json`, stages the built app next to it under `$DAG_STATE_DIR/dashboard/latest/` by default, and serves it at `http://127.0.0.1:8642/`. Local-only by design: the server binds `127.0.0.1` and nothing is deployed.
+Local, read-only dashboard — a React app (`web/dashboard-app/`, Vite + recharts) served from a localhost-only HTTP server. Fetches cycle, enterprise daily consumption, orgs, per-org daily consumption, per-org ACU-limit settings (Local Agent + Devin Cloud cycle caps), enterprise users, each user's current-cycle daily ACUs, the default per-user Local Agent cap, each user's explicit Local Agent override, the cycle's Devin Cloud sessions, and (optionally, with the Windsurf key) the per-user model/IDE ACU split into `data.json`, stages the built app next to it under `$DAG_STATE_DIR/dashboard/latest/` by default, and serves it at `http://127.0.0.1:8642/`. Local-only by design: the server binds `127.0.0.1` and nothing is deployed.
 
 ```zsh
 dag dashboard
@@ -508,7 +508,8 @@ The dashboard shows:
 
 - enterprise consumed/remaining/run-rate/projection/verdict cards with cycle progress, plus a capped-user-total card showing the sum of finite effective user caps (the ACUs consumed if capped users all use their full caps);
 - interactive daily burn chart (stacked per-product bars, plus a cumulative + forecast view with the pool reference line) and a product-split donut;
-- organization table: sortable columns, status filter chips, per-row cap meters;
+- organization table: sortable columns, status filter chips, and **two enforcement meters per org** — Local Agent consumption (`cascade` + `terminal`) against the org's `local_agent.cycle_acu_limit`, and Devin Cloud consumption (`devin`) against `cloud_agent.cycle_acu_limit` (both from `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits`); the row status is the worse of the two meters. The v3 roster's `max_cycle_acu_limit` is the cloud-only cap and is used only as a fallback when the org acu-limits fetch degrades — dividing all-product consumption by it produced false `OVER` badges;
+- an attribution-gap note + warning when enterprise burn exceeds the org-attributed sum (users without `billing_org_id`; org caps cannot gate that usage);
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; each email has an adjacent explicit `Copy` button, and each row has a dedicated `Details` button for opening the drawer;
 - top-bar refresh status: a live **`next refresh in 4m 32s`** countdown to the next backend refetch, a **`Refreshing N%`** progress bar (with the current phase, e.g. `user dailies (19/40)`) that replaces the `Refresh now` button while the backend is fetching, immediate `Refreshing…` feedback after manual clicks, and a `data refreshed X ago` resting state with a `Refresh now` button for static snapshots;
 - warnings for org cap risk and users already over effective cap;

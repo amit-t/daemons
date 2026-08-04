@@ -1,30 +1,45 @@
 import { useMemo, useState } from 'react'
-import type { OrgRow, OrgStatus } from '../types'
+import type { OrgMeter, OrgRow, OrgStatus } from '../types'
 import { fmt, fmtPct } from '../format'
 import { SortableTable, type Column } from './SortableTable'
 import { Meter, StatusBadge } from './StatusBadge'
 
 const STATUSES: OrgStatus[] = ['ok', 'warning', 'critical', 'forecast_over', 'over', 'blocked', 'uncapped']
 
+// One enforcement gate rendered as "consumed / cap" plus a meter. The two
+// gates (Local Agent, Devin Cloud) are independent — never one shared cap.
+function GateCell({ meter }: { meter: OrgMeter }) {
+  return (
+    <>
+      <span className="gate-figures">
+        {fmt(meter.consumed)} / {meter.limit === null ? '—' : fmt(meter.limit)}
+      </span>{' '}
+      <Meter pct={meter.pct_limit} status={meter.status} />
+      {fmtPct(meter.pct_limit)}
+    </>
+  )
+}
+
 const columns: Column<OrgRow>[] = [
   { key: 'name', label: 'Org', sortValue: (o) => o.name.toLowerCase(), render: (o) => o.name },
   { key: 'consumed', label: 'Consumed', numeric: true, sortValue: (o) => o.consumed, render: (o) => fmt(o.consumed) },
   { key: 'rate', label: 'Rate/day', numeric: true, sortValue: (o) => o.daily_run_rate, render: (o) => fmt(o.daily_run_rate) },
   { key: 'projected', label: 'Projected', numeric: true, sortValue: (o) => o.projected, render: (o) => fmt(o.projected) },
-  { key: 'cycle_cap', label: 'Cycle cap', numeric: true, sortValue: (o) => o.max_cycle_acu_limit, render: (o) => fmt(o.max_cycle_acu_limit) },
-  { key: 'session_cap', label: 'Session cap', numeric: true, sortValue: (o) => o.max_session_acu_limit, render: (o) => fmt(o.max_session_acu_limit) },
   {
-    key: 'pct',
-    label: '% of cap',
+    key: 'local',
+    label: 'Local Agent / cap',
     numeric: true,
-    sortValue: (o) => o.pct_limit,
-    render: (o) => (
-      <>
-        <Meter pct={o.pct_limit} status={o.status} />
-        {fmtPct(o.pct_limit)}
-      </>
-    ),
+    sortValue: (o) => o.local.pct_limit,
+    render: (o) => <GateCell meter={o.local} />,
   },
+  {
+    key: 'cloud',
+    label: 'Devin Cloud / cap',
+    numeric: true,
+    sortValue: (o) => o.cloud.pct_limit,
+    render: (o) => <GateCell meter={o.cloud} />,
+  },
+  { key: 'session_cap', label: 'Session cap', numeric: true, sortValue: (o) => o.max_session_acu_limit, render: (o) => fmt(o.max_session_acu_limit) },
   { key: 'status', label: 'Status', sortValue: (o) => STATUSES.indexOf(o.status), render: (o) => <StatusBadge status={o.status} /> },
 ]
 

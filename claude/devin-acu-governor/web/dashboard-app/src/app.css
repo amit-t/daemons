@@ -756,3 +756,15 @@ footer {
   text-align: right;
   min-width: 64px;
 }
+
+/* org table: per-gate "consumed / cap" figures + attribution gap note */
+.gate-figures {
+  font-variant-numeric: tabular-nums;
+  margin-right: 6px;
+}
+
+.attribution-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: -8px 0 16px;
+}

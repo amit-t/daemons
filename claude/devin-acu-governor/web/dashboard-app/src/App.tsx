@@ -125,6 +125,12 @@ export default function App() {
       </section>
 
       <OrgTable orgs={data.orgs} />
+      {data.attribution && data.attribution.unattributed > 0 && (
+        <div className="attribution-note">
+          {fmt(data.attribution.unattributed)} ACUs this cycle are attributed to no organization (users without
+          billing_org_id) — org caps cannot gate that usage.
+        </div>
+      )}
       <UserTable users={data.users} onSelect={(u) => setSelectedUserId(u.user_id)} />
 
       {selectedUser && (
