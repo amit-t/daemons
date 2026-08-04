@@ -89,15 +89,18 @@ ghw() {
   zsh "$daemon_entry" "$@"
 }
 
-# hive — hivemind: cross-machine sync of global agent instructions/memories.
+# hive — cross-machine sync of global agent instructions/memories.
+# Public project: https://github.com/amit-t/hive (clone to ~/Projects/Tools-Utilities/hive).
+# Private defaults live here, never in the public repo.
 hive() {
-  local daemon_entry="${HOME}/Projects/Tools-Utilities/daemons/claude/hivemind/bin/hive"
+  local daemon_entry="${HOME}/Projects/Tools-Utilities/hive/bin/hive"
   if [[ ! -f "$daemon_entry" ]]; then
-    print -ru2 -- "hive: missing daemon entrypoint at $daemon_entry"
+    print -ru2 -- "hive: missing entrypoint at $daemon_entry — clone github.com/amit-t/hive there"
     return 127
   fi
-  zsh "$daemon_entry" "$@"
+  HIVE_LAUNCHER="${HIVE_LAUNCHER:-cf}"   HIVE_REMOTE_DENYLIST="${HIVE_REMOTE_DENYLIST:-Invenco-Cloud-Systems-ICS,github.com-atv}"     zsh "$daemon_entry" "$@"
 }
-hive--claude() { hive --agent claude "$@" }
-hive--codex()  { hive --agent codex "$@" }
-hive--devin()  { hive --agent devin "$@" }
+hive--claude() { HIVE_LAUNCHER=cf hive "$@" }
+hive--codex()  { HIVE_LAUNCHER=cxscb hive "$@" }
+hive--devin()  { HIVE_LAUNCHER=deo hive "$@" }
+hive--co()     { HIVE_LAUNCHER=co hive "$@" }
