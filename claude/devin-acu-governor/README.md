@@ -526,13 +526,13 @@ Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap 
   ```
   ────────────────────────────────────────────────────────────────
   ✓ refreshed at 15:12:30  ·  Sun 2026-08-02  ·  refresh #7
-    dashboard  http://127.0.0.1:8642/
+    dashboard  http://127.0.0.1:8642/  ·  ⌘-click to open
     data       /Users/you/.local/state/devin-acu-governor/dashboard/latest/data.json
     next       in 10m  ·  ~15:22:30
   ────────────────────────────────────────────────────────────────
   ```
 
-  The same history is appended to `refresh.log` next to `data.json` (one `<ISO timestamp>  refresh #N  <url>  <data path>` line per refresh, trimmed to the last 1000 lines once it passes 2000), so the URL survives the terminal. The `next` line is omitted for static/manual refreshes, and the very first block — written before the port is bound — has no `dashboard` line; the `Dashboard serving:` header prints immediately after it.
+  The same history is appended to `refresh.log` next to `data.json` (one `<ISO timestamp>  refresh #N  <url>  <data path>` line per refresh, trimmed to the last 1000 lines once it passes 2000), so the URL survives the terminal. The `next` line is omitted for static/manual refreshes, and the very first block — written before the port is bound — has no `dashboard` line; the `Dashboard serving:` header prints immediately after it. The trailing `·  ⌘-click to open` marker is deliberate: it keeps the URL off the end of the line, where terminals that re-join hard-wrapped URLs would splice the next line's `data` label onto a ⌘-click (`http://…/data` → 404).
 - **Browser.** The app polls `status.json` every second and turns `next_refresh_epoch` into the same `next refresh in …` countdown. Clicking `Refresh now` sends a same-origin, header-gated POST to a localhost-only `__dag_refresh_now` endpoint, which interrupts the backend countdown and queues an immediate refetch; the app hides the button and shows `Refreshing…` until `status.json` catches up. When the backend starts fetching, the button is replaced by a `Refreshing N%` progress bar (with the current phase); when the new snapshot lands, the app pulls the fresh `data.json` (detected via a changed `generated_at`) and returns to `data refreshed X ago` — no page reloads.
 
 `Refresh now` works with or without `--refresh`: in refresh mode it breaks the countdown and starts the next backend fetch early; in static mode it asks the still-running dashboard process to fetch a fresh snapshot on demand. If the app is served by an older/static file server without the endpoint, it falls back to re-pulling the latest written `data.json`. Stop with `Ctrl-C`; the server is killed with the command (also on TERM/HUP).

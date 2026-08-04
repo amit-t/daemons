@@ -71,7 +71,7 @@ out=$(run_dhm status --repo "$tmp" --domain example.com --site clitest 2>&1)
 assert_contains "status lists phases"       "$out" "preflight"
 assert_contains "status lists decommission" "$out" "decommission"
 assert_contains "status shows pending"      "$out" "pending"
-assert_contains "status shows the domain"   "$out" "https://example.com"
+assert_contains "status shows the domain"   "$out" "https://example.com  ·  ⌘-click to open"
 assert_eq "state file was created" "1" \
   "$([[ -s "${DHM_STATE_DIR}/clitest/state.json" ]] && print 1 || print 0)"
 

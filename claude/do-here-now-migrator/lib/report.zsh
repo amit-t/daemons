@@ -30,7 +30,9 @@ dhm_report_print() {  # dhm_report_print <site>
   slug=$(dhm_fact_get "$site" slug)
   url=$(dhm_fact_get "$site" site_url)
   backup=$(dhm_fact_get "$site" backup_dir)
-  [[ -n "$domain" ]] && print -r -- "  domain      https://${domain}"
+  # The URL must not end the line: terminals that join hard-wrapped URLs would
+  # splice the next line's "here.now" label onto a line-ending URL on ⌘-click.
+  [[ -n "$domain" ]] && print -r -- "  domain      https://${domain}  ·  ⌘-click to open"
   [[ -n "$slug" ]]   && print -r -- "  here.now    ${url:-https://${slug}.here.now/}  (slug ${slug})"
   [[ -n "$backup" ]] && print -r -- "  backups     ${backup}"
   print -r -- "  state       $(dhm_state_file "$site")"

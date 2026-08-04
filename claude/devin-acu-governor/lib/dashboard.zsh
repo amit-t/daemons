@@ -140,7 +140,10 @@ _dag_dash_refresh_banner() {
   print -r --
   _dag_dash_rule
   print -r -- "✓ refreshed at $(date -r "$now" +%H:%M:%S)  ·  $(date -r "$now" "+%a %Y-%m-%d")  ·  refresh #${_dag_dash_refresh_n}"
-  [[ -n "$_dag_dash_banner_url" ]] && print -r -- "  dashboard  ${_dag_dash_banner_url}"
+  # The URL must never be the last token on its line: iTerm2-style terminals
+  # treat a URL that touches end-of-line as hard-wrapped and splice the next
+  # line's first word onto it, turning ⌘-click into http://.../data → 404.
+  [[ -n "$_dag_dash_banner_url" ]] && print -r -- "  dashboard  ${_dag_dash_banner_url}  ·  ⌘-click to open"
   print -r -- "  data       ${out_dir}/data.json"
   if [[ -n "$_dag_dash_banner_interval" ]]; then
     next=$(date -r $(( now + _dag_dash_banner_interval * 60 )) +%H:%M:%S)
@@ -812,7 +815,9 @@ dag_dashboard() {
     local url="http://127.0.0.1:${port}/"
     _dag_dash_banner_url="$url"
     print -r -- "Dashboard serving:"
-    print -r -- "  ${url}"
+    # Trailing token stops terminal URL detection from splicing the next line
+    # ("data...") onto a line-ending URL (see _dag_dash_refresh_banner).
+    print -r -- "  ${url}  ·  ⌘-click to open"
     print -r -- "  data: ${out_dir}/data.json"
     if [[ -n "$refresh_minutes" ]]; then
       print -r -- "Refresh: data refetched every ${refresh_minutes} minute(s) in the background; the page updates itself without reloading."

@@ -197,7 +197,7 @@ out_dir="${tmpdir}/dash1"
 out=$(run_dash --no-open --out "$out_dir" 2>&1); rc=$?
 assert_exit "dash rc" 0 $rc
 assert_contains "serving printed" "$out" "Dashboard serving:"
-assert_contains "local url printed" "$out" "http://127.0.0.1:8642/"
+assert_contains "local url printed" "$out" "http://127.0.0.1:8642/  ·  ⌘-click to open"
 assert_contains "data path printed" "$out" "${out_dir}/data.json"
 
 # 2. All artifacts staged: data + the built React app.
@@ -498,7 +498,7 @@ out=$(DAG_DASHBOARD_SERVE_ONCE=0 DAG_DASHBOARD_REFRESH_ONCE=0 \
   DAG_DASHBOARD_REFRESH_SECONDS=1 DAG_DASHBOARD_LOOP_REFRESHES=1 \
   run_dash --refresh 10 --no-open --out "${tmpdir}/dash-loop" 2>&1); rc=$?
 assert_exit "loop refresh rc" 0 $rc
-assert_contains "loop refresh reprints url" "$out" "  dashboard  http://127.0.0.1:8642/"
+assert_contains "loop refresh reprints url" "$out" "  dashboard  http://127.0.0.1:8642/  ·  ⌘-click to open"
 assert_contains "loop refresh numbered" "$out" "refresh #2"
 loop_log=$(<"${tmpdir}/dash-loop/refresh.log")
 assert_contains "loop refresh log carries url" "$loop_log" "refresh #2  http://127.0.0.1:8642/"
