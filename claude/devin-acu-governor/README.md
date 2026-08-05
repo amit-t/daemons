@@ -4,8 +4,8 @@
 
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
-- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`), since devin only accepts the prompt as a positional past `--`.
-- Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, and `--def` launches Devin Fable through `def`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only.
+- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`, `--dey`), since devin only accepts the prompt as a positional past `--`.
+- Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, `--def` launches Devin Fable through `def`, and `--dey` launches default-model Devin through `dey`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only.
 - The assembled playbook prompt is identical for every agent and launcher profile.
 - Every agent prompt also includes Amit's durable global instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. That file carries shell preferences only — all DAG policy lives in `playbooks/_common.md`, which is injected into every dag session for every engine.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
@@ -18,6 +18,7 @@ dag --co status
 dag --cf status
 dag --deo status
 dag --def status
+dag --dey set-limits-new
 ```
 
 Current ACU-limit contract comes from Devin docs: <https://docs.devin.ai/admin/billing/acu-limits>. Generic DAG sessions also seed from the full docs index at <https://docs.devin.ai/llms.txt> and the Windsurf/Devin Desktop UsageConfig reference at <https://docs.devin.ai/desktop/accounts/api-reference/usage-config#overview>.
@@ -612,6 +613,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_LAUNCHER_CF` | `cf` | Claude Fable profile launcher used by `--cf` |
 | `DAG_LAUNCHER_DEO` | `deo` | Devin Opus profile launcher used by `--deo` |
 | `DAG_LAUNCHER_DEF` | `def` | Devin Fable profile launcher used by `--def` |
+| `DAG_LAUNCHER_DEY` | `dey` | Default-model Devin profile launcher used by `--dey` |
 | `DAG_PRINT_LAUNCHER` | unset | For agent commands, print the resolved launcher and exit |
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
@@ -714,6 +716,7 @@ zsh -n claude/devin-acu-governor/bin/dag
 zsh -n claude/devin-acu-governor/lib/*.zsh
 DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --co status
 DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --def status
+DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --dey set-limits-new
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits alice@corp.com
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag new-cycle

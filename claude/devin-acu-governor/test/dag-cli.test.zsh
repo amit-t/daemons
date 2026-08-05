@@ -52,7 +52,7 @@ cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
 - Never describe Borrow donor reductions as “negative ACUs.”
 EOF
 run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
-for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def"; do
+for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--dey"; do
   if [[ -n "$agent_args" ]]; then
     out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
   else
@@ -324,7 +324,7 @@ for profile in co cf; do
 done
 # devin-family profiles get a `--` separator so the prompt lands as devin's
 # positional PROMPT (devin only accepts the prompt past `--`).
-for profile in deo def; do
+for profile in deo def dey; do
   out=$(run_dag_launcher "--${profile}" status); rc=$?
   assert_exit "profile ${profile} rc" 0 $rc
   assert_eq "profile ${profile} launcher" "${profile} --" "$out"
@@ -345,6 +345,8 @@ out=$(DAG_LAUNCHER_DEO="my-deo" run_dag_launcher --deo status)
 assert_eq "deo launcher override" "my-deo --" "$out"
 out=$(DAG_LAUNCHER_DEF="my-def" run_dag_launcher --def status)
 assert_eq "def launcher override" "my-def --" "$out"
+out=$(DAG_LAUNCHER_DEY="my-dey" run_dag_launcher --dey status)
+assert_eq "dey launcher override" "my-dey --" "$out"
 # Devin-ness of the default launcher is detected from its command text.
 out=$(DAG_LAUNCHER="deo" run_dag_launcher status)
 assert_eq "devin-like default launcher gets --" "deo --" "$out"
