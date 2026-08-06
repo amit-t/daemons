@@ -54,6 +54,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag boost over` / `dag over` | ✅ user limits + ledger | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
 | `dag boost warning` / `dag warning` | ✅ user limits + ledger | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
+| `dag boost critical` / `dag critical` | ✅ user limits + ledger | Boost only users in the red zone (dashboard CRITICAL: 95–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the critical set live |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
 | `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
 | `dag usage --group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Local exact-IDP-group report; prompts when name is omitted; adds last-3-days per-user usage/product/status detail |
@@ -93,7 +94,7 @@ Flow:
 10. On confirmation, PATCH every active target user: `{"local_agent":{"cycle_acu_limit":<cap>}}`; clear stale explicit overrides for excluded users with `{"local_agent":null}` when their `user_id` is known.
 11. GET each changed user limit after PATCH and confirm exact cap or cleared override.
 12. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data.
-13. List active users near/over cap; point to `dag boost` (or `dag boost over` to clear the whole over set at once, `dag boost warning` to clear the 85–100% warning band before it tips over).
+13. List active users near/over cap; point to `dag boost` (or `dag boost over` to clear the whole over set at once, `dag boost warning` to clear the 85–100% warning band before it tips over, `dag boost critical` for only the red 95–100% zone).
 
 Proration math for eligible active members: `cap_i = floor(consumed_i) + floor((pool − eligible_total_consumed) / N)`. If nothing has been consumed, everyone active gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print. Excluded inactive/former users receive no cap row and no pool reservation.
 
@@ -259,6 +260,20 @@ dag warning          # same thing, shorter
 
 Argument rules:
 - Takes no positional arguments — `dag boost warning alice@corp.com` exits 2. The recipients are whoever is in the warning band at run time.
+
+## `dag boost critical` — Boost only the red zone about to go over
+
+Goal: the urgent subset of `dag boost warning` — the same batch Boost + Borrow flow, restricted to the dashboard's red `critical` badge (`0.95 <= consumed / cap < 1`), the users who will tip into `OVER` next. Yellow-band users (85–95%) are counted with a pointer to `dag boost warning`; `OVER` users with a pointer to `dag boost over`; neither is folded into this run.
+
+Flow is identical to `boost warning` with the narrower band: report the critical set first (including estimated days until `OVER` when run-rate is known), shared donor pool excluding both warning and critical bands, `lib/boost-plan.jq` per recipient, one zero-sum batch preview, one `CONFIRM DAG WRITE` for the whole batch, PATCH + GET-verify + ledger.
+
+```zsh
+dag boost critical    # boost whoever is at 95–100% of cap right now, each funded zero-sum
+dag critical          # same thing, shorter
+```
+
+Argument rules:
+- Takes no positional arguments — `dag boost critical alice@corp.com` exits 2. The recipients are whoever is in the critical band at run time.
 
 ## `dag user <email>`
 

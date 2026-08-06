@@ -234,6 +234,33 @@ assert_contains "usage lists boost warning" "$out" "dag boost warning"
 out=$(run_dag all-commands)
 assert_contains "all-commands warning available" "$out" "# Playbook: boost warning"
 
+# 6a3. boost critical: no email required, discovers the critical set at run time.
+out=$(run_dag boost critical); rc=$?
+assert_exit "boost critical rc" 0 $rc
+assert_contains "boost critical playbook" "$out" "# Playbook: boost critical"
+assert_contains "boost critical command" "$out" "command: critical"
+assert_contains "boost critical scope" "$out" "scope: only users currently in the red zone"
+assert_contains "boost critical band" "$out" "0.95 <= consumed / effective Local Agent cap < 1"
+assert_contains "boost critical no target" "$out" "no explicit target — discover the critical set live"
+assert_contains "boost critical plan jq" "$out" "boost-plan.jq"
+assert_contains "boost critical user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "boost critical over handoff" "$out" "dag boost over"
+assert_contains "boost critical warning handoff" "$out" "dag boost warning"
+assert_contains "boost critical write gate token" "$out" "CONFIRM DAG WRITE"
+# Alias: dag critical (without the boost prefix).
+out=$(run_dag critical); rc=$?
+assert_exit "critical alias rc" 0 $rc
+assert_contains "critical alias playbook" "$out" "# Playbook: boost critical"
+# boost critical takes no positional args.
+out=$(run_dag boost critical alice@corp.com 2>&1); rc=$?; assert_exit "boost critical extra arg" 2 $rc
+out=$(run_dag critical alice@corp.com 2>&1); rc=$?; assert_exit "critical alias extra arg" 2 $rc
+# usage help lists boost critical.
+out=$(run_dag 2>&1)
+assert_contains "usage lists boost critical" "$out" "dag boost critical"
+# all-commands surfaces the critical playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands critical available" "$out" "# Playbook: boost critical"
+
 # 6b. user command dispatch + validation.
 out=$(run_dag user 2>&1); rc=$?; assert_exit "user noargs" 2 $rc
 out=$(run_dag user not-an-email 2>&1); rc=$?; assert_exit "user bad email" 2 $rc
