@@ -49,6 +49,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits <email>` | ✅ target user + donor limits + ledger | Cap only one active current-member user who has no explicit cap yet, funded zero-sum by Borrowing headroom from active capped users; no other uncapped users are capped |
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
 | `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
+| `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
@@ -148,6 +149,21 @@ No recipient is ever capped below its own current consumption. Donors may carry 
 ```zsh
 dag set-limits-new
 ```
+
+## `dag set-limits-global` — Seed org-level caps for uncapped orgs, by Borrowing
+
+Goal: the org-level counterpart of `dag set-limits-new`. Billing orgs with **no explicit org-level Local Agent cap** get one, computed from live current-cycle consumption and funded zero-sum by Borrowing headroom from orgs that already have explicit caps (run-rate-protected floors, no donor org cut below projected end-of-cycle consumption + buffer). Σ explicit org caps stays unchanged. Distinct from `dag set limit global <acus>`, which writes one explicit number deterministically with no planning.
+
+Flow: org roster (`/v3/enterprise/organizations`) → per-org consumption + run-rate → classify capped vs uncapped via `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` → scope confirmation → `lib/borrow-caps.jq` plan (org rows mapped into the program's row shape) → zero-sum preview → `CONFIRM DAG WRITE` → PATCH + live-GET verify each org → org-level ledger entries. If no capped donor orgs exist, the preview offers a pool-prorate fallback instead (consumption-proportional from `DAG_MONTHLY_ACU_POOL`) under the same write gate. Flags any org whose Σ per-user caps exceeds its proposed org cap.
+
+```zsh
+dag set-limits-global     # canonical
+dag set limits global     # same thing
+dag set-limits global     # same thing
+```
+
+Argument rules:
+- Takes no positional arguments — the caps are computed, not passed. `dag set limits global 3000` exits 2 and points at `dag set limit global <acus>`.
 
 ## `dag new-cycle` — Start-of-cycle full reset
 

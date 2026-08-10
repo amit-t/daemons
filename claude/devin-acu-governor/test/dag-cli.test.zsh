@@ -141,6 +141,42 @@ fi
 out=$(run_dag 2>&1)
 assert_contains "usage lists set-limits-new" "$out" "dag set-limits-new"
 
+# 5b2. set-limits-global: org-level set-limits-new; three spellings, no args.
+out=$(run_dag set-limits-global); rc=$?
+assert_exit "setlimitsglobal rc" 0 $rc
+assert_contains "set-limits-global playbook" "$out" "# Playbook: set-limits-global"
+assert_contains "set-limits-global command" "$out" "command: set-limits-global"
+assert_contains "set-limits-global scope" "$out" "seed explicit org-level Local Agent caps"
+assert_contains "set-limits-global borrow jq" "$out" "borrow-caps.jq"
+assert_contains "set-limits-global org roster api" "$out" "/v3/enterprise/organizations"
+assert_contains "set-limits-global org limits api" "$out" "/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits"
+assert_contains "set-limits-global zero sum" "$out" "zero-sum"
+assert_contains "set-limits-global explicit-setter pointer" "$out" "dag set limit global"
+assert_contains "set-limits-global write gate token" "$out" "CONFIRM DAG WRITE"
+# Spelling: dag set limits global (three words).
+out=$(run_dag set limits global); rc=$?
+assert_exit "set limits global rc" 0 $rc
+assert_contains "set limits global playbook" "$out" "# Playbook: set-limits-global"
+assert_contains "set limits global requested" "$out" "requested shell command: dag set limits global"
+# Spelling: dag set-limits global.
+out=$(run_dag set-limits global); rc=$?
+assert_exit "set-limits global rc" 0 $rc
+assert_contains "set-limits global playbook" "$out" "# Playbook: set-limits-global"
+assert_contains "set-limits global requested" "$out" "requested shell command: dag set-limits global"
+# No positional args in any spelling.
+out=$(run_dag set-limits-global extra 2>&1); rc=$?; assert_exit "set-limits-global extra arg" 2 $rc
+out=$(run_dag set limits global 3000 2>&1); rc=$?; assert_exit "set limits global extra arg" 2 $rc
+out=$(run_dag set-limits global 3000 2>&1); rc=$?; assert_exit "set-limits global extra arg" 2 $rc
+# Deterministic explicit setter still intact and distinct.
+out=$(run_dag set limit global 2>&1); rc=$?; assert_exit "set limit global still validates acus" 2 $rc
+assert_contains "set limit global usage intact" "$out" "non-negative integer"
+# usage help lists set-limits-global.
+out=$(run_dag 2>&1)
+assert_contains "usage lists set-limits-global" "$out" "dag set-limits-global"
+# all-commands surfaces the set-limits-global playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands set-limits-global available" "$out" "# Playbook: set-limits-global"
+
 # 5c. new-cycle prompt assembly: own playbook + guard/ledger context; no args allowed.
 out=$(run_dag new-cycle); rc=$?
 assert_exit "newcycle rc" 0 $rc

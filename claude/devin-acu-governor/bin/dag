@@ -46,6 +46,11 @@ Usage:
                               Set org-level Local Agent limit(s), then live-GET verify each
   dag set-limit global <acus> [org_id|org_name]
                               Alias for: dag set limit global
+  dag set-limits-global       Org-level set-limits-new: seed explicit org-level Local Agent
+                              caps for orgs that have none, computed from live consumption
+                              and funded zero-sum by Borrowing headroom from capped orgs
+  dag set limits global       Alias for: dag set-limits-global
+  dag set-limits global       Alias for: dag set-limits-global
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dag boost over              Boost every user currently over budget (consumed >= cap) in one
@@ -232,7 +237,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new new-cycle boost over warning critical user status sessions models; do
+    for playbook in set-limits set-limits-new set-limits-global new-cycle boost over warning critical user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -388,9 +393,23 @@ main() {
         dag_set_limit_global "$@"
         exit $?
       fi
-      print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
-      dag_usage >&2
-      exit 2
+      if [[ "${1:-}" == "limits" && "${2:-}" == "global" ]]; then
+        shift 2
+        if (( $# > 0 )); then
+          print -ru2 -- "dag set limits global: takes no arguments (got: $*); it computes org caps from live consumption (use dag set limit global <acus> for an explicit number)"
+          exit 2
+        fi
+        cmd="set-limits-global"
+        context_lines=(
+          "requested shell command: dag set limits global"
+          "scope: seed explicit org-level Local Agent caps for every org with no explicit org cap, funded zero-sum by Borrowing headroom from explicitly capped orgs"
+          "org caps come from computed live-consumption planning, not an explicit number — dag set limit global <acus> is the explicit deterministic setter"
+        )
+      else
+        print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name], or dag set limits global)"
+        dag_usage >&2
+        exit 2
+      fi
       ;;
     set-limit)
       if [[ "${1:-}" == "global" ]]; then
@@ -408,8 +427,31 @@ main() {
       dag_set_limit_global "$@"
       exit $?
       ;;
-    set-limits)
+    set-limits-global)
       if (( $# > 0 )); then
+        print -ru2 -- "dag set-limits-global: takes no arguments (got: $*); it computes org caps from live consumption (use dag set limit global <acus> for an explicit number)"
+        exit 2
+      fi
+      context_lines=(
+        "requested shell command: dag set-limits-global"
+        "scope: seed explicit org-level Local Agent caps for every org with no explicit org cap, funded zero-sum by Borrowing headroom from explicitly capped orgs"
+        "org caps come from computed live-consumption planning, not an explicit number — dag set limit global <acus> is the explicit deterministic setter"
+      )
+      ;;
+    set-limits)
+      if [[ "${1:-}" == "global" ]]; then
+        shift
+        if (( $# > 0 )); then
+          print -ru2 -- "dag set-limits global: takes no arguments (got: $*); it computes org caps from live consumption (use dag set limit global <acus> for an explicit number)"
+          exit 2
+        fi
+        cmd="set-limits-global"
+        context_lines=(
+          "requested shell command: dag set-limits global"
+          "scope: seed explicit org-level Local Agent caps for every org with no explicit org cap, funded zero-sum by Borrowing headroom from explicitly capped orgs"
+          "org caps come from computed live-consumption planning, not an explicit number — dag set limit global <acus> is the explicit deterministic setter"
+        )
+      elif (( $# > 0 )); then
         local target_email="${1:-}"
         if [[ "$target_email" != *@*.* ]]; then
           print -ru2 -- "dag set-limits: argument must be a user email (got: ${target_email:-<missing>})"
