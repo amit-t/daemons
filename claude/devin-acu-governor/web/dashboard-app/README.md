@@ -24,10 +24,11 @@ npm test -- --run  # Vitest + React Testing Library interaction tests
 | `src/types.ts` | Shape of `data.json` + `status.json` (mirror `lib/dashboard.jq` / `lib/dashboard.zsh` output) |
 | `src/useDashboardData.ts` | Polls `status.json` (1 s) for refresh state, pulls `data.json` on a new `generated_at`, POSTs manual refresh requests, exposes in-flight feedback, keeps last good snapshot on fetch failure |
 | `src/components/RefreshControls.tsx` | Console-meta row: live countdown, immediate manual `Refreshing…` state, `Refreshing N%` progress bar, `Refresh now` button; isolates the per-second tick from the charts |
-| `src/App.tsx` | Layout: header with `RefreshControls`, cycle progress, KPI cards including capped user total, panels |
+| `src/App.tsx` | Layout: header with `RefreshControls`, cycle progress, KPI cards including capped user total, panels; hash router — `#/org/<org_id>` swaps the console body for the per-org page |
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
-| `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters |
+| `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters, Details button routing to the per-org page |
+| `src/components/OrgDetail.tsx` | Per-org page (`#/org/<org_id>`): both enforcement gates as cards, daily burn chart, product split, Local Agent activity (per-member cascade+terminal bars + org model split — Claude sessions have no list API, so activity stands in), members table (local/cloud ACUs, session count/ACUs per user, Details opens the user drawer), and the org's Devin Cloud session list (created/title/user/origin/status/ACUs/PRs, text filter); degrades with hints on pre-`cloud_sessions` snapshots |
 | `src/components/UserTable.tsx` | User cap table: text search, status + cap-source filters, sortable columns, billing org, explicit Copy button beside each email, and a Details action button that opens the detail drawer without row-hover/click side effects |
 | `src/components/UserDetail.tsx` | Per-user drawer: daily ACU line chart over the cycle (cap-pace reference line), Devin Cloud session stats, model + surface (IDE) bar lists from Windsurf analytics, product split; the header email is a click-to-copy token; closes on Esc/✕/backdrop |
 | `src/components/CopyEmail.tsx` | Click-to-copy email token with a transient `copied` / `copy failed` tag (used in the detail drawer; the table has its own compact Copy action) |

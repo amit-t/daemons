@@ -74,6 +74,10 @@ export interface OrgRow {
   local: OrgMeter
   cloud: OrgMeter
   status: OrgStatus
+  // Optional: absent in data.json snapshots generated before the org detail
+  // page existed — the page degrades to a "regenerate" hint.
+  daily?: DailyPoint[]
+  sessions?: UserSessions | null
 }
 
 export interface AttributionInfo {
@@ -132,6 +136,35 @@ export interface SessionsInfo {
   acus: number
 }
 
+// One Devin Cloud session row (trimmed by lib/dashboard.jq from
+// /v3/enterprise/sessions). created_at/updated_at arrive as a Unix epoch on
+// the verified deployment but an ISO string is tolerated.
+export interface CloudSession {
+  session_id: string
+  url: string | null
+  title: string | null
+  status: string | null
+  status_detail: string | null
+  user_id: string | null
+  service_user_id: string | null
+  org_id: string | null
+  created_at: number | string | null
+  updated_at: number | string | null
+  acus_consumed: number
+  origin: string | null
+  category: string | null
+  subcategory: string | null
+  is_archived: boolean
+  playbook_id: string | null
+  tags: string[]
+  pull_requests: unknown[]
+}
+
+export interface CloudSessionsInfo {
+  available: boolean
+  items: CloudSession[]
+}
+
 export interface ModelAnalyticsInfo {
   available: boolean
   stale: boolean
@@ -171,6 +204,8 @@ export interface DashboardData {
   product_split: ProductSplit[]
   daily: DailyPoint[]
   sessions_info: SessionsInfo
+  // Optional: absent in snapshots generated before the org detail page.
+  cloud_sessions?: CloudSessionsInfo
   model_analytics: ModelAnalyticsInfo
   orgs: OrgRow[]
   attribution: AttributionInfo

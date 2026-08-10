@@ -757,6 +757,27 @@ footer {
   min-width: 64px;
 }
 
+/* ---------- per-org detail page (hash route #/org/<id>) ---------- */
+
+.org-detail { animation: drawer-in 0.18s ease-out; }
+
+.page-back {
+  display: inline-block;
+  margin-bottom: 10px;
+}
+
+.session-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-title a { text-decoration: none; }
+
 /* org table: per-gate "consumed / cap" figures + attribution gap note */
 .gate-figures {
   font-variant-numeric: tabular-nums;

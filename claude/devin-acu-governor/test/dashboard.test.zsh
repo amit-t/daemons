@@ -378,6 +378,25 @@ else
   _fail "sessions request missing cycle window"
 fi
 
+# 7f-bis. Org detail data: per-org daily series, per-org session stats (service
+#         sessions INCLUDED — they burn the org's cloud gate), and the trimmed
+#         newest-first cloud_sessions list for the org detail page.
+assert_eq "org daily count" "1" "$(org_field platform '.daily | length')"
+assert_eq "org daily date" "2026-06-01" "$(org_field platform '.daily[0].date')"
+assert_eq "org daily acus" "500" "$(org_field platform '.daily[0].acus')"
+assert_eq "org daily cascade" "300" "$(org_field platform '.daily[0].cascade')"
+assert_eq "platform org session count" "3" "$(org_field platform '.sessions.count')"
+assert_eq "platform org session acus" "15.5" "$(org_field platform '.sessions.acus')"
+assert_eq "research org session count" "1" "$(org_field research '.sessions.count')"
+assert_eq "growth org session count" "0" "$(org_field growth '.sessions.count')"
+assert_eq "cloud sessions available" "true" "$(jqd '.cloud_sessions.available')"
+assert_eq "cloud sessions count" "5" "$(jqd '.cloud_sessions.items | length')"
+assert_eq "cloud sessions newest first" "s-ghost-1" "$(jqd '.cloud_sessions.items[0].session_id')"
+assert_eq "cloud session title kept" "Fix flaky CI" "$(jqd '.cloud_sessions.items[] | select(.session_id=="s-alice-1") | .title')"
+assert_eq "cloud session service user kept" "svc|nightly-ci" "$(jqd '.cloud_sessions.items[] | select(.session_id=="s-svc-1") | .service_user_id')"
+assert_eq "cloud session org kept" "platform" "$(jqd '.cloud_sessions.items[] | select(.session_id=="s-alice-2") | .org_id')"
+assert_eq "cloud session acus rounded" "10.5" "$(jqd '.cloud_sessions.items[] | select(.session_id=="s-alice-1") | .acus_consumed')"
+
 # 7g. Windsurf model/IDE analytics joined per user, aggregated + sorted by ACUs.
 assert_eq "model analytics available" "true" "$(jqd '.model_analytics.available')"
 assert_eq "model analytics stale" "false" "$(jqd '.model_analytics.stale')"
@@ -448,6 +467,22 @@ sortable_src=$(<"${script_dir}/../web/dashboard-app/src/components/SortableTable
 assert_contains "table supports optional row click" "$sortable_src" "onRowClick"
 assert_contains "app renders user detail" "$app_src" "UserDetail"
 assert_contains "app tracks selected user" "$app_src" "selectedUserId"
+
+# 7h-bis. Per-org detail page wired into the app: hash route, Details button in
+#         the org table, members + cloud-session tables in the page component.
+org_detail_src=$(<"${script_dir}/../web/dashboard-app/src/components/OrgDetail.tsx")
+assert_contains "org detail members table" "$org_detail_src" "Members"
+assert_contains "org detail sessions panel" "$org_detail_src" "Devin Cloud sessions"
+assert_contains "org detail filters by billing org" "$org_detail_src" "billing_org_id === org.org_id"
+assert_contains "org detail filters sessions by org" "$org_detail_src" "s.org_id === org.org_id"
+assert_contains "org detail daily chart" "$org_detail_src" "BurnChart"
+assert_contains "org detail local agent activity" "$org_detail_src" "Local Agent activity"
+assert_contains "org detail local agent models" "$org_detail_src" "Local Agent models"
+assert_contains "org detail local acus from products" "$org_detail_src" "u.product_totals.cascade + u.product_totals.terminal"
+assert_contains "app routes org page" "$app_src" "#/org/"
+assert_contains "app renders org detail" "$app_src" "OrgDetail"
+org_table_src=$(<"${script_dir}/../web/dashboard-app/src/components/OrgTable.tsx")
+assert_contains "org table details button" "$org_table_src" 'aria-label={`Open details for ${o.name}`}'
 user_table_src_body=$(<"$user_table_src")
 assert_contains "user table copy button label" "$user_table_src_body" 'aria-label={`Copy ${user.email}`}'
 assert_contains "user table copy uses clipboard" "$user_table_src_body" "copyToClipboard(user.email)"
@@ -626,6 +661,9 @@ assert_contains "sessions degrade warned" "$out" "Devin Cloud session stats"
 nsf() { jq -r "$1" "${tmpdir}/dash-nosess/data.json" }
 assert_eq "sessions degrade available" "false" "$(nsf '.sessions_info.available')"
 assert_eq "sessions degrade user null" "null" "$(nsf '.users[] | select(.email=="alice@example.com").sessions')"
+assert_eq "sessions degrade org null" "null" "$(nsf '.orgs[] | select(.org_id=="platform").sessions')"
+assert_eq "sessions degrade cloud list off" "false" "$(nsf '.cloud_sessions.available')"
+assert_eq "sessions degrade cloud list empty" "0" "$(nsf '.cloud_sessions.items | length')"
 if [[ -f "${tmpdir}/dash-nosess/index.html" ]]; then _ok; else _fail "sessions-degraded run staged no app"; fi
 
 # 8j. No Windsurf service key: model analytics marked unavailable with reason;

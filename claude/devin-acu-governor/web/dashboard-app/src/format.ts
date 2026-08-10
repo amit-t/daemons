@@ -26,6 +26,25 @@ export function fmtDur(seconds: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
+// Session timestamps: Unix epoch on the verified deployment, ISO string
+// tolerated. Rendered in local time as "2026-08-07 14:32".
+export function fmtStamp(ts: number | string | null | undefined): string {
+  if (ts === null || ts === undefined) return '—'
+  const ms = typeof ts === 'number' ? ts * 1000 : Date.parse(ts)
+  if (Number.isNaN(ms)) return String(ts)
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// Sortable numeric form of the same timestamp (epoch seconds), null-safe.
+export function stampEpoch(ts: number | string | null | undefined): number | null {
+  if (ts === null || ts === undefined) return null
+  if (typeof ts === 'number') return ts
+  const ms = Date.parse(ts)
+  return Number.isNaN(ms) ? null : ms / 1000
+}
+
 export function shortDay(date: string): string {
   // "2026-05-16" -> "May 16"
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

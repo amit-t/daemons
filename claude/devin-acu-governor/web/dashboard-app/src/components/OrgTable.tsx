@@ -20,7 +20,8 @@ function GateCell({ meter }: { meter: OrgMeter }) {
   )
 }
 
-const columns: Column<OrgRow>[] = [
+function makeColumns(onSelect: (o: OrgRow) => void): Column<OrgRow>[] {
+  return [
   { key: 'name', label: 'Org', sortValue: (o) => o.name.toLowerCase(), render: (o) => o.name },
   { key: 'consumed', label: 'Consumed', numeric: true, sortValue: (o) => o.consumed, render: (o) => fmt(o.consumed) },
   { key: 'rate', label: 'Rate/day', numeric: true, sortValue: (o) => o.daily_run_rate, render: (o) => fmt(o.daily_run_rate) },
@@ -41,10 +42,30 @@ const columns: Column<OrgRow>[] = [
   },
   { key: 'session_cap', label: 'Session cap', numeric: true, sortValue: (o) => o.max_session_acu_limit, render: (o) => fmt(o.max_session_acu_limit) },
   { key: 'status', label: 'Status', sortValue: (o) => STATUSES.indexOf(o.status), render: (o) => <StatusBadge status={o.status} /> },
-]
+  {
+    key: 'details',
+    label: 'Details',
+    render: (o) => (
+      <button
+        type="button"
+        className="inline-action details-button"
+        aria-label={`Open details for ${o.name}`}
+        title="open org detail page"
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect(o)
+        }}
+      >
+        Details
+      </button>
+    ),
+  },
+  ]
+}
 
-export function OrgTable({ orgs }: { orgs: OrgRow[] }) {
+export function OrgTable({ orgs, onSelect }: { orgs: OrgRow[]; onSelect: (o: OrgRow) => void }) {
   const [statusFilter, setStatusFilter] = useState<Set<OrgStatus>>(new Set())
+  const columns = useMemo(() => makeColumns(onSelect), [onSelect])
 
   const present = useMemo(() => STATUSES.filter((s) => orgs.some((o) => o.status === s)), [orgs])
   const rows = useMemo(
@@ -81,7 +102,7 @@ export function OrgTable({ orgs }: { orgs: OrgRow[] }) {
         initialSort={{ key: 'consumed', dir: 'desc' }}
       />
       <div className="row-count">
-        {rows.length} of {orgs.length} orgs
+        {rows.length} of {orgs.length} orgs · use Details to open the per-org page
       </div>
     </section>
   )
