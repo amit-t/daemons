@@ -334,7 +334,16 @@ assert_eq "alice user id preserved" "email|alice" "$(user_field alice@example.co
 assert_eq "alice consumed" "120.25" "$(user_field alice@example.com .consumed)"
 assert_eq "alice explicit cap" "200" "$(user_field alice@example.com .effective_cycle_acu_limit)"
 assert_eq "alice cap source" "explicit" "$(user_field alice@example.com .cap_source)"
-assert_eq "alice billing org" "platform" "$(user_field alice@example.com .billing_org_id)"
+# billing_org_id resolution, in priority order (fixture shapes exercise each):
+#   alice   — nested under local_agent (the live-API shape, verified 2026-08-10)
+#   bob     — top-level (older/legacy tolerance)
+#   chandra — nested alongside an explicit cap
+#   zero    — absent from acu-limits entirely: falls back to the roster's
+#             org-scoped role assignment (platform)
+assert_eq "alice billing org (nested)" "platform" "$(user_field alice@example.com .billing_org_id)"
+assert_eq "bob billing org (legacy top-level)" "research" "$(user_field bob@example.com .billing_org_id)"
+assert_eq "chandra billing org (nested)" "ml" "$(user_field chandra@example.com .billing_org_id)"
+assert_eq "zero billing org (roster fallback)" "platform" "$(user_field zero@example.com .billing_org_id)"
 assert_eq "bob consumed" "80" "$(user_field bob@example.com .consumed)"
 assert_eq "bob default cap" "100" "$(user_field bob@example.com .effective_cycle_acu_limit)"
 assert_eq "bob cap source" "default" "$(user_field bob@example.com .cap_source)"

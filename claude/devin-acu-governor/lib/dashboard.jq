@@ -194,7 +194,15 @@ def user_status($consumed; $limit):
         cap_source: (if $explicit_limit != null then "explicit"
                      elif $default_user_limit != null then "default"
                      else "uncapped" end),
-        billing_org_id: ($lim.billing_org_id // null),
+        # Live API (verified 2026-08-10) nests attribution under local_agent:
+        #   {"local_agent": {"cycle_acu_limit": N, "billing_org_id": "org-…"}}
+        # Tolerate a top-level billing_org_id (older shape), then fall back to
+        # the roster's first org-scoped role assignment so users without any
+        # explicit ACU-limit setting still attribute to their org.
+        billing_org_id: ($lim.local_agent.billing_org_id
+                         // $lim.billing_org_id
+                         // ([$u.role_assignments[]?.org_id | select(. != null)] | first)
+                         // null),
         headroom: (if $effective_limit == null then null else (($effective_limit - $uc) | r2) end),
         pct_limit: (if ($effective_limit // 0) == 0 then null
                     else (($uc / $effective_limit) | r3) end),
