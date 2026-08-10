@@ -778,6 +778,12 @@ footer {
 
 .session-title a { text-decoration: none; }
 
+/* member's top model tag in the Local Agent activity bar list */
+.bar-tag {
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
 /* org table: per-gate "consumed / cap" figures + attribution gap note */
 .gate-figures {
   font-variant-numeric: tabular-nums;

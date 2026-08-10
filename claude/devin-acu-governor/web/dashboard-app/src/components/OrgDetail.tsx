@@ -31,8 +31,9 @@ interface Props {
   onSelectUser: (u: UserRow) => void
 }
 
-// Local Agent (Claude via Devin Desktop / Windsurf plugins / CLI) usage for one
-// member: cascade + terminal ACUs plus the message count Windsurf analytics saw.
+// Local Agent (Devin Desktop / Windsurf plugins / CLI — any model: GPT, Claude,
+// …) usage for one member: cascade + terminal ACUs plus the message count
+// Windsurf analytics saw.
 function localAcus(u: UserRow): number {
   return u.product_totals.cascade + u.product_totals.terminal
 }
@@ -65,7 +66,7 @@ function BarList({
   rows,
   emptyHint,
 }: {
-  rows: Array<{ label: string; acus: number; messages: number }>
+  rows: Array<{ label: string; tag?: string; acus: number; messages: number }>
   emptyHint: string
 }) {
   if (rows.length === 0) return <div className="detail-empty">{emptyHint}</div>
@@ -74,8 +75,9 @@ function BarList({
     <div className="bar-list">
       {rows.map((r) => (
         <div className="bar-row" key={r.label}>
-          <span className="bar-label" title={r.label}>
+          <span className="bar-label" title={r.tag ? `${r.label} · top model: ${r.tag}` : r.label}>
             {r.label}
+            {r.tag && <span className="bar-tag"> · {r.tag}</span>}
           </span>
           <span className="bar-track">
             <i style={{ width: `${Math.max(1, (r.acus / max) * 100)}%` }} />
@@ -235,15 +237,21 @@ export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, on
   const members = useMemo(() => users.filter((u) => u.billing_org_id === org.org_id), [users, org.org_id])
   const byUserId = useMemo(() => new Map(members.map((u) => [u.user_id, u])), [members])
 
-  // Local Agent activity: cascade + terminal ACUs per member. This is where
-  // Claude sessions live — the Devin API has no session list for Local Agent,
-  // so activity is shown per member and per model instead.
+  // Local Agent activity: cascade + terminal ACUs per member, whatever model
+  // they drive (GPT, Claude, …). The Devin API has no session list for Local
+  // Agent, so activity is shown per member (tagged with their top model by
+  // ACUs) and per model instead.
   const localMembers = useMemo(
     () =>
       members
         .filter((u) => localAcus(u) > 0)
         .sort((a, b) => localAcus(b) - localAcus(a))
-        .map((u) => ({ label: u.email || u.name || u.user_id, acus: localAcus(u), messages: localMessages(u) })),
+        .map((u) => ({
+          label: u.email || u.name || u.user_id,
+          tag: u.models[0]?.model,
+          acus: localAcus(u),
+          messages: localMessages(u),
+        })),
     [members],
   )
   const orgModels = useMemo(() => {
@@ -320,7 +328,7 @@ export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, on
           <div className="card-value">{org.sessions ? fmt(org.sessions.count, 0) : '—'}</div>
           <div className="card-sub">
             {org.sessions
-              ? `${fmt(org.sessions.acus)} ACUs this cycle · cloud only, Claude runs under Local Agent`
+              ? `${fmt(org.sessions.acus)} ACUs this cycle · cloud only — local usage in the Local Agent panels`
               : 'sessions API unavailable'}
           </div>
         </div>
@@ -381,15 +389,15 @@ export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, on
       </div>
 
       <section className="panel">
-        <h2 className="panel-title">Local Agent activity — Claude &amp; friends, per member</h2>
+        <h2 className="panel-title">Local Agent activity — per member, all models</h2>
         <BarList
           rows={localMembers}
           emptyHint="no Local Agent (cascade/terminal) ACUs among this org's members this cycle"
         />
         <div className="row-count">
-          Local Agent sessions (Devin Desktop / Windsurf plugins / Devin CLI — where Claude runs) have no session-list
-          API; this is each member's cycle Local Agent burn with the message count Windsurf analytics saw. The session
-          table below covers Devin Cloud only.
+          Local Agent sessions (Devin Desktop / Windsurf plugins / Devin CLI — GPT, Claude, whatever each engineer
+          drives) have no session-list API; this is each member's cycle Local Agent burn, tagged with their top model
+          by ACUs, with the message count Windsurf analytics saw. The session table below covers Devin Cloud only.
         </div>
       </section>
 

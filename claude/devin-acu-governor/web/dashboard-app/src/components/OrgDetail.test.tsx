@@ -59,7 +59,10 @@ function makeUser(over: Partial<UserRow>): UserRow {
     daily: [],
     product_totals: { devin: 40, cascade: 1, terminal: 1, review: 0 },
     sessions: { count: 2, acus: 12.5 },
-    models: [{ model: 'claude-sonnet-4-6', acus: 2, messages: 37 }],
+    models: [
+      { model: 'gpt-6', acus: 5, messages: 100 },
+      { model: 'claude-sonnet-4-6', acus: 2, messages: 37 },
+    ],
     ides: [],
     ...over,
   }
@@ -212,19 +215,23 @@ describe('OrgDetail page', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
-  test('local agent activity lists members with cascade/terminal burn', () => {
+  test('local agent activity lists members with cascade/terminal burn, tagged by top model', () => {
     setup()
     expect(screen.getByText(/Local Agent activity/)).toBeInTheDocument()
-    // alice has 2 local ACUs (cascade 1 + terminal 1) and 37 analytics messages;
-    // "37 msg" shows in both the member activity bar and the model bar
-    expect(screen.getAllByText('37 msg').length).toBe(2)
+    // alice: 2 local ACUs (cascade 1 + terminal 1), 137 analytics messages,
+    // top model gpt-6 — the tag must NOT be Claude-only
+    expect(screen.getByText('137 msg')).toBeInTheDocument()
+    expect(screen.getByText(/· gpt-6/)).toBeInTheDocument()
     expect(screen.getByText(/no session-list API/)).toBeInTheDocument()
   })
 
-  test('org model split aggregates member models', () => {
+  test('org model split aggregates all member models, not just Claude', () => {
     setup()
     expect(screen.getByText('Local Agent models')).toBeInTheDocument()
+    expect(screen.getByText('gpt-6')).toBeInTheDocument()
     expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument()
+    expect(screen.getByText('100 msg')).toBeInTheDocument()
+    expect(screen.getByText('37 msg')).toBeInTheDocument()
   })
 
   test('old snapshot without cloud_sessions shows the regenerate hint', () => {
