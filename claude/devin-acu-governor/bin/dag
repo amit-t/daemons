@@ -51,6 +51,11 @@ Usage:
                               and funded zero-sum by Borrowing headroom from capped orgs
   dag set limits global       Alias for: dag set-limits-global
   dag set-limits global       Alias for: dag set-limits-global
+  dag slg                     Playbook twin of dag set limit global: recommend an org-level
+                              Local Agent cap for EVERY org (prorated to live consumption,
+                              Σ caps <= DAG_MONTHLY_ACU_POOL), preview, then write all after
+                              CONFIRM DAG WRITE with live-GET verification
+  dag set-limit-global-plan   Alias for: dag slg
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dag boost over              Boost every user currently over budget (consumed >= cap) in one
@@ -237,7 +242,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new set-limits-global new-cycle boost over warning critical user status sessions models; do
+    for playbook in set-limits set-limits-new set-limits-global slg new-cycle boost over warning critical user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -253,6 +258,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
   print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- borrow_caps_jq: ${daemon_dir}/lib/borrow-caps.jq"
+  print -r -- "- org_caps_jq: ${daemon_dir}/lib/org-caps.jq"
   print -r -- "- ledger: ${DAG_STATE_DIR}/allocations.json"
   if [[ -n "${_dag_have_cog_key:-}" ]]; then
     print -r -- "- Devin v3 key: exported as DEVIN_COG_KEY in this shell. Never print it."
@@ -436,6 +442,21 @@ main() {
         "requested shell command: dag set-limits-global"
         "scope: seed explicit org-level Local Agent caps for every org with no explicit org cap, funded zero-sum by Borrowing headroom from explicitly capped orgs"
         "org caps come from computed live-consumption planning, not an explicit number — dag set limit global <acus> is the explicit deterministic setter"
+      )
+      ;;
+    slg|set-limit-global-plan)
+      if (( $# > 0 )); then
+        print -ru2 -- "dag slg: takes no arguments (got: $*); it recommends every org's cap from live consumption (use dag set limit global <acus> [org] for an explicit number)"
+        exit 2
+      fi
+      local slg_invoked="$cmd"
+      cmd="slg"
+      context_lines=(
+        "requested shell command: dag ${slg_invoked}"
+        "scope: recommend and set the org-level Local Agent cap for EVERY billing org, distributing DAG_MONTHLY_ACU_POOL proportionally to live Local Agent consumption via org-caps.jq"
+        "playbook twin of dag set limit global <acus>: that command writes one explicit user-supplied number; slg computes every org's number and writes the whole layer after one CONFIRM DAG WRITE"
+        "not dag set-limits-global: that seeds only currently-uncapped orgs zero-sum from capped-org headroom; slg replans every org, capped or not"
+        "cloud_agent caps are never touched — PATCH bodies carry only the local_agent key"
       )
       ;;
     set-limits)

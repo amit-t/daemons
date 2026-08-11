@@ -52,6 +52,8 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
 | `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
+| `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
+| `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag boost over` / `dag over` | ✅ user limits + ledger | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
 | `dag boost warning` / `dag warning` | ✅ user limits + ledger | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
@@ -204,6 +206,23 @@ dag set-limit global 2400 "Platform Eng"  # alias + org name
 ```
 
 `0` is allowed and blocks Local Agent usage for that org until increased or cleared.
+
+## `dag slg` — Plan and set org caps for every org
+
+Playbook twin of `dag set limit global <acus>`: instead of the user supplying one number, the agent session computes a recommended org-level Local Agent cap for **every billing org** and writes the whole layer in one confirmed batch. Distinct from `dag set-limits-global`, which only seeds caps for currently-uncapped orgs zero-sum — `slg` replans every org, capped or not.
+
+Flow (playbook `playbooks/slg.md`):
+1. Read the cycle, org roster, per-org Local Agent consumption (`cascade + terminal` only — the org gate does not govern Devin Cloud), last-7-day run rates, and each org's current explicit caps.
+2. Run `lib/org-caps.jq`: every org gets a floor of `ceil(consumed) + min_headroom` (default 250, ≤ 500 by policy — no org is ever insta-blocked), and the remaining pool is distributed proportionally to consumption share (evenly when all orgs are idle). Σ proposed caps never exceeds `DAG_MONTHLY_ACU_POOL`; rounding slack is reported as `unallocated`, never silently spent. If the pool cannot cover every floor, the program errors with the shortfall and nothing is written.
+3. Preview: `cap_before → cap_after` per org, sums vs pool, warnings for orgs projected to hit their new gate before cycle end, and flags where Σ member per-user caps exceeds the proposed org cap. Then stop.
+4. After `CONFIRM DAG WRITE`: PATCH each changed org (`local_agent` key only — cloud caps untouched), live-GET verify each, update the ledger's `orgs` entries, report.
+
+```zsh
+dag slg                        # recommend + set all org caps (after CONFIRM DAG WRITE)
+dag set-limit-global-plan      # alias
+```
+
+Takes no arguments — `dag slg 3000` exits 2 and points at `dag set limit global <acus>` for explicit numbers.
 
 ## `dag boost <email> [acus]` — Boost + Borrow
 

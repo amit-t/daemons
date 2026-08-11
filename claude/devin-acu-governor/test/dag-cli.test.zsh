@@ -173,6 +173,35 @@ assert_contains "set limit global usage intact" "$out" "non-negative integer"
 # usage help lists set-limits-global.
 out=$(run_dag 2>&1)
 assert_contains "usage lists set-limits-global" "$out" "dag set-limits-global"
+
+# 5b3. slg: playbook twin of dag set limit global — recommend every org's cap,
+#      write after CONFIRM DAG WRITE. Two spellings, no args.
+out=$(run_dag slg); rc=$?
+assert_exit "slg rc" 0 $rc
+assert_contains "slg playbook" "$out" "# Playbook: slg"
+assert_contains "slg command" "$out" "command: slg"
+assert_contains "slg requested" "$out" "requested shell command: dag slg"
+assert_contains "slg scope every org" "$out" "EVERY billing org"
+assert_contains "slg org caps jq listed" "$out" "org-caps.jq"
+assert_contains "slg pool budget" "$out" "DAG_MONTHLY_ACU_POOL"
+assert_contains "slg org roster api" "$out" "/v3/enterprise/organizations"
+assert_contains "slg org limits api" "$out" "/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits"
+assert_contains "slg local agent product sum" "$out" "acus_by_product.cascade + acus_by_product.terminal"
+assert_contains "slg cloud gate untouched" "$out" "cloud_agent caps are never touched"
+assert_contains "slg write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "slg explicit-setter pointer" "$out" "dag set limit global"
+assert_contains "slg distinct from seeding" "$out" "not dag set-limits-global"
+# Spelling: dag set-limit-global-plan.
+out=$(run_dag set-limit-global-plan); rc=$?
+assert_exit "set-limit-global-plan rc" 0 $rc
+assert_contains "set-limit-global-plan playbook" "$out" "# Playbook: slg"
+assert_contains "set-limit-global-plan requested" "$out" "requested shell command: dag set-limit-global-plan"
+# No positional args.
+out=$(run_dag slg 3000 2>&1); rc=$?; assert_exit "slg extra arg" 2 $rc
+assert_contains "slg extra arg hint" "$out" "dag set limit global <acus>"
+# usage help lists slg.
+out=$(run_dag 2>&1)
+assert_contains "usage lists slg" "$out" "dag slg"
 # all-commands surfaces the set-limits-global playbook too.
 out=$(run_dag all-commands)
 assert_contains "all-commands set-limits-global available" "$out" "# Playbook: set-limits-global"
