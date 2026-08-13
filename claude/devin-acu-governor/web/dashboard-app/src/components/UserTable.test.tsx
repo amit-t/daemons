@@ -91,3 +91,35 @@ describe('UserTable explicit email/detail actions', () => {
     expect(onSelect).toHaveBeenCalledWith(alice)
   })
 })
+
+describe('UserTable donor status', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  // A recorded current-cycle donor whose cap DAG reduced (raw over, low real
+  // usage) is rendered with the 'donor' badge + filter chip, not 'over'.
+  const donorRow: UserRow = {
+    ...alice,
+    user_id: 'email|dana',
+    email: 'dana@example.com',
+    name: 'Dana Donor',
+    consumed: 1,
+    effective_cycle_acu_limit: 1,
+    headroom: 0,
+    pct_limit: 1,
+    status: 'donor',
+    raw_status: 'over',
+    donor: { baseline_cap: 500, given_total: 250, last_given_at: null, suppressed: true },
+  }
+
+  test('donor status renders badge and filter chip', () => {
+    render(<UserTable users={[alice, donorRow]} onSelect={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: 'donor (1)' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'over (1)' })).not.toBeInTheDocument()
+    const badge = screen.getByText('donor', { selector: 'span.badge' })
+    expect(badge).toHaveClass('badge-donor')
+  })
+})

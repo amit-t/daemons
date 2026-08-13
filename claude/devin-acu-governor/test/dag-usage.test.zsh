@@ -87,6 +87,7 @@ writes="${tmpdir}/writes.log"; : > "$writes"
 run_usage() {
   PATH="${tmpdir}/bin:$PATH" DAG_TEST_WRITES="$writes" \
     DEVIN_COG_KEY=test-cog-key DAG_NOW_EPOCH=345600 \
+    DAG_STATE_DIR="${tmpdir}/state" \
     zsh "$dag" usage "$@"
 }
 
@@ -227,6 +228,55 @@ out=$(run_usage --group Missing Group 2>&1); rc=$?
 assert_exit "usage --group missing rc" 1 $rc
 assert_contains "usage --group missing msg" "$out" "no users found for IDP group 'Missing Group'"
 assert_contains "usage --group missing candidates" "$out" "Core Eng"
+
+# 6i. Donor record (cycle-scoped): a recorded donor whose usage sits under 85%
+#     of their pre-reduction baseline cap is DONOR, not OVER/NEAR; the raw state
+#     and baseline stay visible in JSON. Fixture cycle_start is 0.
+mkdir -p "${tmpdir}/state"
+cat > "${tmpdir}/state/donors.json" <<'EOF'
+{"cycle_start": 0, "cycle_end": 500000, "updated": "1970-01-05T00:00:00Z",
+ "donors": {"a@x.io": {"user_id": "u1", "baseline_cap": 500, "cap_after": 300,
+   "given_total": 200, "last_given_at": "1970-01-05T00:00:00Z", "reductions": []}}}
+EOF
+js=$(run_usage --json 2>/dev/null); rc=$?
+assert_exit "usage donor json rc" 0 $rc
+assert_eq "usage donor state" "DONOR" "$(jq -r '.rows[]|select(.email=="a@x.io").state' <<<"$js")"
+assert_eq "usage donor raw state" "OVER" "$(jq -r '.rows[]|select(.email=="a@x.io").raw_state' <<<"$js")"
+assert_eq "usage donor baseline" "500" "$(jq -r '.rows[]|select(.email=="a@x.io").donor_baseline' <<<"$js")"
+assert_eq "usage donor n_over drops" "0" "$(jq -r '.totals.n_over' <<<"$js")"
+assert_eq "usage donor n_donor" "1" "$(jq -r '.totals.n_donor' <<<"$js")"
+assert_eq "usage donor others untouched" "OK" "$(jq -r '.rows[]|select(.email=="c@x.io").state' <<<"$js")"
+out=$(run_usage 2>/dev/null)
+assert_contains "usage donor table state" "$out" "DONOR"
+assert_contains "usage donor totals line" "$out" "DONOR 1"
+
+# 6i2. High usage vs baseline is NOT suppressed (350 >= 0.85 * 400 = 340).
+cat > "${tmpdir}/state/donors.json" <<'EOF'
+{"cycle_start": 0, "cycle_end": 500000, "updated": "1970-01-05T00:00:00Z",
+ "donors": {"a@x.io": {"user_id": "u1", "baseline_cap": 400, "cap_after": 300,
+   "given_total": 100, "last_given_at": "1970-01-05T00:00:00Z", "reductions": []}}}
+EOF
+js=$(run_usage --json 2>/dev/null); rc=$?
+assert_exit "usage hot donor rc" 0 $rc
+assert_eq "usage hot donor stays over" "OVER" "$(jq -r '.rows[]|select(.email=="a@x.io").state' <<<"$js")"
+
+# 6i3. Stale record (cycle_start mismatch) is ignored — the billing-cycle wipe.
+cat > "${tmpdir}/state/donors.json" <<'EOF'
+{"cycle_start": 999999, "cycle_end": 1500000, "updated": "1970-01-05T00:00:00Z",
+ "donors": {"a@x.io": {"user_id": "u1", "baseline_cap": 500, "cap_after": 300,
+   "given_total": 200, "last_given_at": "1970-01-05T00:00:00Z", "reductions": []}}}
+EOF
+js=$(run_usage --json 2>/dev/null); rc=$?
+assert_exit "usage stale donor rc" 0 $rc
+assert_eq "usage stale donor over again" "OVER" "$(jq -r '.rows[]|select(.email=="a@x.io").state' <<<"$js")"
+assert_eq "usage stale donor baseline null" "null" "$(jq -r '.rows[]|select(.email=="a@x.io").donor_baseline' <<<"$js")"
+
+# 6i4. Invalid donor record degrades to "no record" without failing.
+print -r -- 'not json' > "${tmpdir}/state/donors.json"
+js=$(run_usage --json 2>/dev/null); rc=$?
+assert_exit "usage bad donor rc" 0 $rc
+assert_eq "usage bad donor ignored" "OVER" "$(jq -r '.rows[]|select(.email=="a@x.io").state' <<<"$js")"
+rm -f "${tmpdir}/state/donors.json"
 
 # 7. Missing cog key -> exit 1 with setup hint.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY="" DAG_NOW_EPOCH=1000 zsh "$dag" usage 2>&1); rc=$?

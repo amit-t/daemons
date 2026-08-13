@@ -430,6 +430,21 @@ _dag_dashboard_write_data() {
     print -r -- "$default_limit_json" > "${work}/user-default-limit.json" || return 1
     _dag_dash_emit "$out_dir" 22 "default caps" "" "$prev_gen"
 
+    # Donor record: cycle-scoped Borrow memory written by dag boost/set-limits
+    # runs (see playbooks/_common.md). Live only when its cycle_start equals the
+    # current cycle's start epoch — a record from a previous billing cycle is
+    # dead data and is ignored, which is what wipes DONOR-state suppression at
+    # every cycle roll. Missing/invalid/stale all degrade to "no record".
+    local donor_src="${DAG_STATE_DIR:-}/donors.json"
+    if [[ -n "${DAG_STATE_DIR:-}" && -f "$donor_src" ]] \
+      && jq -e --argjson after "$after" '.cycle_start == $after' "$donor_src" >/dev/null 2>&1 \
+      && jq -c '{available: true, cycle_start: .cycle_start, donors: (.donors // {})}' \
+           "$donor_src" > "${work}/donor-record.json" 2>/dev/null; then
+      :
+    else
+      print -r -- '{"available": false, "donors": {}}' > "${work}/donor-record.json" || return 1
+    fi
+
     # Devin Cloud sessions: enrichment for the per-user detail view. Any
     # failure (including a missing ViewOrgSessions permission) degrades to
     # "unavailable" instead of nuking the whole dashboard.
@@ -510,6 +525,7 @@ _dag_dashboard_write_data() {
       --slurpfile userd "${work}/user-dailies.json" \
       --slurpfile userl "${work}/user-limits.json" \
       --slurpfile defaultl "${work}/user-default-limit.json" \
+      --slurpfile donorrec "${work}/donor-record.json" \
       --slurpfile sessions "${work}/sessions.json" \
       --slurpfile modela "${work}/model-analytics.json" \
       -f "${daemon_dir}/lib/dashboard.jq" > "${out_dir}/data.json.tmp"; then

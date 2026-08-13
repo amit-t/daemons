@@ -54,10 +54,11 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
-| `dag boost <email> [acus]` | ✅ user limits + ledger | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
-| `dag boost over` / `dag over` | ✅ user limits + ledger | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
-| `dag boost warning` / `dag warning` | ✅ user limits + ledger | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
-| `dag boost critical` / `dag critical` | ✅ user limits + ledger | Boost only users in the red zone (dashboard CRITICAL: 95–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the critical set live |
+| `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
+| `dag boost all` / `dag boost` / `dag boost-all` | ✅ user limits + ledger + donor record | One combined batch for **every** user needing attention — OVER + CRITICAL + WARNING — most urgent first, one shared donor pool, one preview, one `CONFIRM DAG WRITE`; DONOR-suppressed users (cap reduced by DAG, low real usage) are excluded and listed separately |
+| `dag boost over` / `dag over` | ✅ user limits + ledger + donor record | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
+| `dag boost warning` / `dag warning` | ✅ user limits + ledger + donor record | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
+| `dag boost critical` / `dag critical` | ✅ user limits + ledger + donor record | Boost only users in the red zone (dashboard CRITICAL: 95–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the critical set live |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
 | `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
 | `dag usage --group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Local exact-IDP-group report; prompts when name is omitted; adds last-3-days per-user usage/product/status detail |
@@ -310,6 +311,33 @@ dag critical          # same thing, shorter
 Argument rules:
 - Takes no positional arguments — `dag boost critical alice@corp.com` exits 2. The recipients are whoever is in the critical band at run time.
 
+## `dag boost all` — One plan for everyone needing attention
+
+Goal: one command that looks at every attention label at once. Bare `dag boost` (and `dag boost all` / `dag boost-all`) discovers the `OVER`, `CRITICAL`, and `WARNING` sets live and prepares a single combined Boost + Borrow plan for all of them: one shared donor pool, one zero-sum batch preview, one `CONFIRM DAG WRITE`.
+
+Recipients are ordered most urgent first — over (most-over first), then critical, then warning (highest ratio first). Recipients whose run-rate projection stays under their current cap are dropped from the plan with a note; a badge alone never moves ACUs. DONOR-suppressed users (see the donor record below) are excluded from every recipient set and listed separately.
+
+```zsh
+dag boost            # bare boost = boost all
+dag boost all        # same thing, explicit
+dag boost-all        # alias
+```
+
+Argument rules:
+- Takes no positional arguments — `dag boost all alice@corp.com` exits 2. Use `dag boost <email>` for one target.
+
+## Donor record — cycle-scoped Borrow memory + DONOR state
+
+Every Borrow lowers somebody's cap. Without memory, a consistent donor (cap reduced far below what they started with, real usage tiny) eventually trips the dashboard's `warning`/`critical`/`over` labels and gets pointlessly re-boosted every cycle review. The donor record fixes that.
+
+- **File:** `$DAG_STATE_DIR/donors.json` (`donor_record` in every playbook's Run context). JSON, no database.
+- **Written by:** every flow that reduces a user cap — `boost`, `boost all`, `boost over/warning/critical`, targeted `set-limits <email>`, `set-limits-new` — right after the confirmed PATCHes and ledger update. Each entry keeps a **sticky `baseline_cap`** (the cap before the first reduction this cycle), latest `cap_after`, `given_total`, and per-reduction history.
+- **DONOR state:** a recorded donor whose raw state is `warning`/`critical`/`over` but whose `consumed < 0.85 × baseline_cap` is labeled `donor` (dashboard) / `DONOR` (`dag usage`) instead — the pressure badge is an artifact of the DAG reduction, not real usage. They drop out of the dashboard's warning/critical/over chips and warnings, and out of every `boost over/warning/critical/all` recipient discovery. They remain first-class Borrow donor candidates. Once real usage reaches 85% of the baseline, suppression ends and normal states apply.
+- **Billing-cycle wipe:** the record is valid only while its `cycle_start` matches the live cycle's start epoch (cycles run mid-month to mid-month, e.g. the 16th through the 15th). A stale record is ignored everywhere and overwritten on the next donor write; `dag new-cycle` rewrites it empty. No cron needed — the wipe is the cycle comparison.
+- A recipient whose boost restores their cap to `baseline_cap` or above gets their donor entry removed — they are made whole.
+
+Policy lives in `playbooks/_common.md` (Donor record section + hard rule 13); consumers are `lib/dashboard.jq` (status `donor`, `raw_status`, `donor` fields per user row), `lib/usage.jq` (`DONOR` state, `n_donor` total), and every boost-family playbook.
+
 ## `dag user <email>`
 
 Read-only. Reports:
@@ -337,7 +365,7 @@ Flow:
 5. Per user: GET `/v3/enterprise/consumption/daily/users/{user_id}` for cycle consumption and GET `/v3beta1/enterprise/users/{user_id}/consumption/acu-limits` for the explicit override (`user_id` is URL-encoded; a `404` means no override).
 6. `lib/usage.jq` resolves each user's effective cap (override → default → none), computes `ratio = consumed/cap`, tags state, and sorts most-pressured first.
 
-Effective cap precedence: explicit per-user override, else default user limit, else none (an override replaces, not adds to, the default). State tags: `OVER` (ratio ≥ 1), `NEAR` (≥ 0.8), `OK`, `UNLIMITED` (no cap → `∞`, sorts last), `BLOCKED` (cap 0, unused).
+Effective cap precedence: explicit per-user override, else default user limit, else none (an override replaces, not adds to, the default). State tags: `OVER` (ratio ≥ 1), `NEAR` (≥ 0.8), `DONOR` (recorded current-cycle donor with `consumed < 0.85 × baseline_cap` — would be OVER/NEAR only because DAG reduced their cap; see the donor record section), `OK`, `UNLIMITED` (no cap → `∞`, sorts last), `BLOCKED` (cap 0, unused).
 
 ```zsh
 dag usage                 # full table, sorted by consumed/cap ratio desc
@@ -567,7 +595,7 @@ The dashboard shows:
 - **per-user detail view**: click a user row's `Details` button to open a drawer with that user's daily ACU line chart over the cycle (with a dashed "cap pace" reference line), Devin Cloud session stats (sessions initiated this cycle + their summed ACUs, from `/v3/enterprise/sessions`), the user's product split (devin/cascade/terminal/review), and — when the optional Windsurf service key is configured — the model split and surface split (Devin Desktop / Windsurf / JetBrains / Devin CLI) of their Devin Desktop & Local usage, with billed ACUs and message counts per row. Close with `Esc`, the `✕` button, or a click outside;
 - **per-org detail page**: click an org row's `Details` button to open a full page (hash route `#/org/<org_id>`, bookmarkable, survives reload) with both enforcement gates as cards (consumed/cap, meter, projection), the org's daily burn chart (stacked product bars over the cycle), product split, a **Local Agent activity panel** — per-member cascade+terminal ACU bars tagged with each member's top model, with Windsurf message counts, plus the org's full model split (GPT, Claude, and every other model members drive), because Local Agent (Devin Desktop / Windsurf plugins / Devin CLI) has **no session-list API** and would otherwise be invisible next to the cloud session table — a **members table** (every user carrying that `billing_org_id`: consumed, Local Agent ACUs, Cloud ACUs, cloud session count + session ACUs, % of cap, status, and a `Details` button into the per-user drawer), and the org's **Devin Cloud session list** for the cycle — created time, title (with an `open` link to the session), resolved user (member email, service user, or raw id), origin, status, ACUs, and PR count, sortable and text-filterable. Service-user sessions count toward the org's session stats (they burn the org's cloud gate). Snapshots generated before this page existed degrade with a "regenerate with `dag dashboard`" hint.
 
-Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that.
+Dashboard cap statuses follow the same zero-cap contract as `dag usage`: no cap is `uncapped`; a zero cap with zero consumed ACUs is `blocked` and does **not** emit an over-cap warning; a zero cap with any consumed ACUs is `over`; positive caps become `over` when consumed ACUs meet or exceed the cap, with `warning`/`critical` thresholds before that. One override: a user in the current-cycle donor record (`$DAG_STATE_DIR/donors.json`) whose `consumed < 0.85 × baseline_cap` shows `donor` instead of `warning`/`critical`/`over` — their pressure is an artifact of a DAG cap reduction. The row keeps `raw_status` and a `donor` object (baseline, given total), the user drawer shows a donor note, and suppressed donors are excluded from the over-cap warnings list. A record from a previous cycle is ignored (the billing-cycle wipe).
 
 **First run builds the app once** (`npm install && npm run build` in `web/dashboard-app/`; requires Node.js). Later runs reuse the build; `--rebuild` forces a fresh one (run after pulling app changes).
 
@@ -668,7 +696,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_PRINT_LAUNCHER` | unset | For agent commands, print the resolved launcher and exit |
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
-| `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger/dashboard state directory |
+| `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger (`allocations.json`), donor record (`donors.json`), dashboard state directory |
 | `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit; useful for verifying included playbooks, run context, and global instructions |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |
@@ -699,6 +727,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 - `playbooks/_common.md` carries a DAG execution contract: the assembled prompt is the complete DAG policy for the session, conflicting saved memories/global instructions are ignored, and dag sessions never modify, commit, or push repository files. The one carve-out is report artifacts: a playbook that names a Run-context output directory (currently only `sessions`) may write its report files there without a `CONFIRM DAG WRITE` token, because those are local read-only reporting artifacts rather than API or ledger state.
 - `dag sessions` is API-read-only and writes only into its own output directory; that directory holds verbatim prompt text and is `chmod 700`ed, with suspected credentials flagged by session id and never reproduced in the overview.
 - Windsurf consumption calls are rate-limit aware.
+- Every confirmed cap reduction is recorded in the cycle-scoped donor record (hard rule 13); DONOR-state users (reduced cap, low real usage) are never re-boosted by band discovery and never shown as warning/critical/over.
 - Keys never appear in prompts, stdout, generated dashboard files, or ledgers.
 
 ## Future parity hardening (untested)
@@ -746,7 +775,7 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,new-cycle,boost,over,user,status,sessions,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,new-cycle,boost,boost-all,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes

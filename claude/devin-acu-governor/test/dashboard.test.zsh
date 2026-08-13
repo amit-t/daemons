@@ -840,6 +840,87 @@ else
   _ok
 fi
 
+# 19b. Donor record (cycle-scoped): a current-cycle donor whose usage is under
+#      85% of their pre-reduction baseline cap shows 'donor', not over — and
+#      drops out of the OVER warning list. Non-suppressed rows keep raw status.
+donor_state="${tmpdir}/state"
+mkdir -p "$donor_state"
+cat > "${donor_state}/donors.json" <<'EOF'
+{"cycle_start": 1778918400, "cycle_end": 1781596800, "updated": "2026-06-14T00:00:00Z",
+ "donors": {
+   "chandra@example.com": {"user_id": "okta|Team|chandra", "baseline_cap": 500,
+     "cap_after": 250, "given_total": 250, "last_given_at": "2026-06-14T00:00:00Z",
+     "reductions": [{"at": "2026-06-14T00:00:00Z", "given": 250, "cap_before": 500,
+                     "cap_after": 250, "recipient": "alice@example.com", "command": "boost"}]},
+   "alice@example.com": {"user_id": "email|alice", "baseline_cap": 300,
+     "cap_after": 200, "given_total": 100, "last_given_at": "2026-06-14T00:00:00Z",
+     "reductions": []}
+ }}
+EOF
+out=$(run_dash --json-only --out "${tmpdir}/dash-donor" 2>&1); rc=$?
+assert_exit "donor rc" 0 $rc
+dnf() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-donor/data.json" }
+# chandra: consumed 260, cap 250 -> raw over; 260 < 0.85*500 -> suppressed donor.
+assert_eq "donor status" "donor" "$(dnf chandra@example.com .status)"
+assert_eq "donor raw status kept" "over" "$(dnf chandra@example.com .raw_status)"
+assert_eq "donor baseline" "500" "$(dnf chandra@example.com .donor.baseline_cap)"
+assert_eq "donor given total" "250" "$(dnf chandra@example.com .donor.given_total)"
+assert_eq "donor suppressed flag" "true" "$(dnf chandra@example.com .donor.suppressed)"
+if [[ "$(jq -r '.warnings | join("|")' "${tmpdir}/dash-donor/data.json")" == *chandra@example.com* ]]; then
+  _fail "suppressed donor must not appear in OVER warnings"
+else
+  _ok
+fi
+# alice: raw status ok (120.25/200) -> donor entry recorded but NOT suppressed.
+assert_eq "donor non-band status untouched" "ok" "$(dnf alice@example.com .status)"
+assert_eq "donor non-band suppressed flag" "false" "$(dnf alice@example.com .donor.suppressed)"
+# bob has no donor entry -> donor null.
+assert_eq "non-donor field null" "null" "$(dnf bob@example.com .donor)"
+
+# 19c. High-usage donor is NOT suppressed: consumed >= 0.85 * baseline keeps the
+#      real over badge (baseline 260 -> threshold 221 < 260 consumed).
+cat > "${donor_state}/donors.json" <<'EOF'
+{"cycle_start": 1778918400, "cycle_end": 1781596800, "updated": "2026-06-14T00:00:00Z",
+ "donors": {"chandra@example.com": {"user_id": "okta|Team|chandra", "baseline_cap": 260,
+   "cap_after": 250, "given_total": 10, "last_given_at": "2026-06-14T00:00:00Z",
+   "reductions": []}}}
+EOF
+out=$(run_dash --json-only --out "${tmpdir}/dash-donor-hot" 2>&1); rc=$?
+assert_exit "donor hot rc" 0 $rc
+dhf() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-donor-hot/data.json" }
+assert_eq "hot donor stays over" "over" "$(dhf chandra@example.com .status)"
+assert_eq "hot donor suppressed flag" "false" "$(dhf chandra@example.com .donor.suppressed)"
+assert_contains "hot donor still warns" "$(jq -r '.warnings | join("|")' "${tmpdir}/dash-donor-hot/data.json")" "chandra@example.com"
+
+# 19d. Stale donor record (previous cycle) is ignored entirely — this is the
+#      billing-cycle wipe: after the cycle rolls, old donor state is dead data.
+cat > "${donor_state}/donors.json" <<'EOF'
+{"cycle_start": 999, "cycle_end": 1778918400, "updated": "2026-05-01T00:00:00Z",
+ "donors": {"chandra@example.com": {"user_id": "okta|Team|chandra", "baseline_cap": 500,
+   "cap_after": 250, "given_total": 250, "last_given_at": "2026-05-01T00:00:00Z",
+   "reductions": []}}}
+EOF
+out=$(run_dash --json-only --out "${tmpdir}/dash-donor-stale" 2>&1); rc=$?
+assert_exit "donor stale rc" 0 $rc
+dsf() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-donor-stale/data.json" }
+assert_eq "stale donor status over" "over" "$(dsf chandra@example.com .status)"
+assert_eq "stale donor field null" "null" "$(dsf chandra@example.com .donor)"
+assert_contains "stale donor warns again" "$(jq -r '.warnings | join("|")' "${tmpdir}/dash-donor-stale/data.json")" "chandra@example.com"
+
+# 19e. Invalid donor record JSON degrades to "no record" without failing.
+print -r -- 'not json' > "${donor_state}/donors.json"
+out=$(run_dash --json-only --out "${tmpdir}/dash-donor-bad" 2>&1); rc=$?
+assert_exit "donor bad rc" 0 $rc
+assert_eq "bad donor record ignored" "over" \
+  "$(jq -r '.users[] | select(.email=="chandra@example.com").status' "${tmpdir}/dash-donor-bad/data.json")"
+rm -f "${donor_state}/donors.json"
+
+# 19f. Web app surfaces the donor status: filter chip, badge color, donor note.
+assert_contains "user table donor status chip" "$user_table_src_body" "'donor'"
+assert_contains "types donor status" "$(<"${script_dir}/../web/dashboard-app/src/types.ts")" "'donor'"
+assert_contains "css donor badge" "$(<"${script_dir}/../web/dashboard-app/src/app.css")" ".badge-donor"
+assert_contains "detail donor note" "$detail_src" "Recorded donor this cycle"
+
 # 20. Refresh-status channel helpers (unit): status.json schema + state machine
 #     and the human-friendly duration the terminal countdown / browser share.
 daemon_dir="${script_dir:A}/.."

@@ -479,6 +479,16 @@ td.dim { color: var(--text-dim); }
 .badge-critical { color: var(--orange); background: var(--orange-soft); }
 .badge-over { color: var(--red); background: var(--red-soft); }
 .badge-forecast_over { color: var(--red); background: var(--red-soft); outline: 1px dashed rgba(248, 113, 113, 0.4); }
+.badge-donor { color: var(--blue); background: rgba(96, 165, 250, 0.13); }
+.detail-donor-note {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 8px;
+  background: rgba(96, 165, 250, 0.08);
+  color: var(--blue);
+  font-size: 12px;
+}
 .badge-blocked { color: var(--text-dim); background: rgba(111, 132, 121, 0.12); }
 .badge-uncapped { color: var(--text-dim); background: rgba(111, 132, 121, 0.12); }
 

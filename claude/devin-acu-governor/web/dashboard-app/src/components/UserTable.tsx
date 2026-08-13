@@ -5,7 +5,7 @@ import { copyToClipboard } from '../clipboard'
 import { SortableTable, type Column } from './SortableTable'
 import { Meter, StatusBadge } from './StatusBadge'
 
-const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'blocked', 'uncapped']
+const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'donor', 'blocked', 'uncapped']
 const CAP_SOURCES: CapSource[] = ['explicit', 'default', 'uncapped']
 
 // Email cell: static address plus explicit copy action. Copy never opens

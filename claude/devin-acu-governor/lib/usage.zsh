@@ -396,6 +396,20 @@ dag_usage_report() {
     defbody=$(_dag_usage_fetch "${base}/v3beta1/enterprise/users/consumption/acu-limits" "$hdr" 1) || return 1
     default_cap=$(jq -c '.local_agent.cycle_acu_limit // null' <<<"$defbody")
 
+    # 2b. Donor record (cycle-scoped Borrow memory, playbooks/_common.md hard
+    # rule 13): {email: baseline_cap} for the current cycle only. A record whose
+    # cycle_start differs from the live cycle is stale and ignored — that is
+    # what wipes DONOR-state suppression at every cycle roll.
+    local donor_baselines='{}'
+    local donor_src="${DAG_STATE_DIR:-${HOME}/.local/state/devin-acu-governor}/donors.json"
+    if [[ -f "$donor_src" ]]; then
+      donor_baselines=$(jq -c --argjson after "$after" '
+        if (type == "object") and (.cycle_start == $after)
+        then ((.donors // {}) | map_values(.baseline_cap // 0))
+        else {} end' "$donor_src" 2>/dev/null) || donor_baselines='{}'
+      [[ -n "$donor_baselines" ]] || donor_baselines='{}'
+    fi
+
     if (( user_mode )); then
       local generated_at after_d before_d resolved uid encid cbody obody override data
       generated_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
@@ -553,9 +567,10 @@ dag_usage_report() {
       --argjson pool "$pool" --arg gen "$generated_at" \
       --argjson after "$after" --argjson before "$before" \
       --argjson default_cap "$default_cap" \
+      --argjson donor_baselines "$donor_baselines" \
       --slurpfile users "$users" \
       '{pool:$pool, generated_at:$gen, cycle:{after:$after, before:$before},
-        default_cap:$default_cap, users:$users[0:]}' \
+        default_cap:$default_cap, donor_baselines:$donor_baselines, users:$users[0:]}' \
       | jq -f "${daemon_dir}/lib/usage.jq") || {
         print -ru2 -- "dag usage: failed to compute usage table (lib/usage.jq)"
         return 1
@@ -611,7 +626,7 @@ dag_usage_report() {
 
       jq -r '.totals |
         "Group totals: \(.users) users  cycle \((.total_consumed*10|round)/10)  last3 \((.last3_acus*10|round)/10)  sum_caps \(.sum_caps)  " +
-        "OVER \(.n_over)  NEAR \(.n_near)  UNLIMITED \(.n_unlimited)  BLOCKED \(.n_blocked)"' <<<"$data"
+        "OVER \(.n_over)  NEAR \(.n_near)  DONOR \(.n_donor // 0)  UNLIMITED \(.n_unlimited)  BLOCKED \(.n_blocked)"' <<<"$data"
       jq -r '.totals.last3_by_product |
         "last3 product mix: devin \((.devin*10|round)/10)  cascade \((.cascade*10|round)/10)  terminal \((.terminal*10|round)/10)  review \((.review*10|round)/10)"' <<<"$data"
       print -r -- "UI: app.devin.ai > Enterprise Settings > Consumption shows current-cycle Local Agent usage by product/user; Local Agent limits are API-managed."
@@ -645,7 +660,7 @@ dag_usage_report() {
 
     jq -r '.totals |
       "Totals: \(.users) users  consumed \((.total_consumed*10|round)/10)  sum_caps \(.sum_caps)  " +
-      "OVER \(.n_over)  NEAR \(.n_near)  UNLIMITED \(.n_unlimited)  BLOCKED \(.n_blocked)"' <<<"$data"
+      "OVER \(.n_over)  NEAR \(.n_near)  DONOR \(.n_donor // 0)  UNLIMITED \(.n_unlimited)  BLOCKED \(.n_blocked)"' <<<"$data"
     print -r -- "UI: app.devin.ai > Enterprise Settings > Consumption shows current-cycle Local Agent usage by product/user; Local Agent limits are API-managed."
     return 0
   } always {

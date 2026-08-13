@@ -160,6 +160,18 @@ export function UserDetail({ user, cycle, modelAnalytics, onClose }: Props) {
           </div>
         </header>
 
+        {user.donor ? (
+          <div className="detail-donor-note">
+            Recorded donor this cycle: gave {fmt(user.donor.given_total)} ACUs
+            {user.donor.baseline_cap !== null
+              ? ` · cap before reductions ${fmt(user.donor.baseline_cap)}`
+              : ''}
+            {user.donor.suppressed
+              ? ' · pressure badge suppressed — usage is well under the pre-reduction cap'
+              : ''}
+          </div>
+        ) : null}
+
         <div className="cards detail-cards">
           <div className="card accent">
             <div className="card-label">Cycle ACUs</div>

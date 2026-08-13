@@ -1,7 +1,7 @@
 // Shape of data.json as produced by lib/dashboard.jq.
 
 export type OrgStatus = 'ok' | 'warning' | 'critical' | 'forecast_over' | 'over' | 'blocked' | 'uncapped'
-export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'blocked' | 'uncapped'
+export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'blocked' | 'uncapped' | 'donor'
 export type CapSource = 'explicit' | 'default' | 'uncapped'
 
 export interface CycleInfo {
@@ -110,6 +110,17 @@ export interface IdeUsage {
   messages: number
 }
 
+// Cycle-scoped donor record (lib/dashboard.jq joins DAG_STATE_DIR/donors.json):
+// present when DAG Borrows reduced this user's cap in the current cycle.
+// suppressed=true means the row's status was rewritten to 'donor' because
+// consumed < 0.85 × baseline_cap — the pressure badge was a reduction artifact.
+export interface UserDonorInfo {
+  baseline_cap: number | null
+  given_total: number
+  last_given_at: string | null
+  suppressed: boolean
+}
+
 export interface UserRow {
   user_id: string
   email: string
@@ -123,6 +134,9 @@ export interface UserRow {
   headroom: number | null
   pct_limit: number | null
   status: UserStatus
+  // Optional: absent in data.json snapshots generated before the donor record.
+  raw_status?: UserStatus
+  donor?: UserDonorInfo | null
   daily: DailyPoint[]
   product_totals: UserProductTotals
   sessions: UserSessions | null

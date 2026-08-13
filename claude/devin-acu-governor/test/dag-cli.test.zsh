@@ -34,8 +34,9 @@ assert_exit "help rc" 0 $rc
 out=$(run_dag frobnicate 2>&1); rc=$?
 assert_exit "unknown rc" 2 $rc
 
-# 4. boost arg validation (amount now optional).
-out=$(run_dag boost 2>&1); rc=$?; assert_exit "boost noargs" 2 $rc
+# 4. boost arg validation (amount now optional; bare boost = boost all).
+out=$(run_dag boost); rc=$?; assert_exit "boost noargs = boost all" 0 $rc
+assert_contains "boost noargs playbook" "$out" "# Playbook: boost all"
 out=$(run_dag boost not-an-email 50 2>&1); rc=$?; assert_exit "boost bad email" 2 $rc
 out=$(run_dag boost a@b.co xx 2>&1); rc=$?; assert_exit "boost bad amount" 2 $rc
 out=$(run_dag boost a@b.co 2>&1); rc=$?; assert_exit "boost no amount ok" 0 $rc
@@ -250,6 +251,56 @@ assert_contains "boost headroom hard rule" "$out" "Direct cap headroom ceiling"
 assert_contains "boost donor run rate" "$out" "run_rate"
 assert_contains "boost write gate token" "$out" "CONFIRM DAG WRITE"
 assert_contains "boost never lower thresholds" "$out" "Never lower donor safety thresholds"
+# Donor record (hard rule 13) reaches every boost-family prompt.
+assert_contains "boost donor record section" "$out" "## Donor record (cycle-scoped Borrow memory)"
+assert_contains "boost donor hard rule" "$out" "Record every Borrow; respect DONOR state"
+assert_contains "boost donor record context path" "$out" "donor_record:"
+assert_contains "boost donor sticky baseline" "$out" "baseline_cap"
+assert_contains "boost donor suppression threshold" "$out" "consumed < 0.85 × baseline_cap"
+for donor_cmd in over warning critical; do
+  out=$(run_dag boost $donor_cmd)
+  assert_contains "boost ${donor_cmd} donor suppression step" "$out" "donor-record suppression (hard rule 13)"
+  assert_contains "boost ${donor_cmd} donor record update" "$out" "update the donor record per hard rule 13"
+done
+# new-cycle wipes the donor record fresh.
+out=$(run_dag new-cycle)
+assert_contains "new-cycle donor wipe" "$out" "rewrite the donor record"
+assert_contains "new-cycle donor wipe empty" "$out" '"donors": {}'
+
+# 6a0. boost all: one combined plan for every OVER/CRITICAL/WARNING user.
+out=$(run_dag boost all); rc=$?
+assert_exit "boost all rc" 0 $rc
+assert_contains "boost all playbook" "$out" "# Playbook: boost all"
+assert_contains "boost all command" "$out" "command: boost-all"
+assert_contains "boost all requested" "$out" "requested shell command: dag boost all"
+assert_contains "boost all scope" "$out" "every user needing attention in one combined zero-sum run"
+assert_contains "boost all bands" "$out" "OVER (consumed >= effective Local Agent cap)"
+assert_contains "boost all order" "$out" "most urgent first: over (most-over first), then critical, then warning"
+assert_contains "boost all no target" "$out" "no explicit target — discover all three sets live"
+assert_contains "boost all donor suppression" "$out" "donor-record suppression (hard rule 13)"
+assert_contains "boost all plan jq" "$out" "boost-plan.jq"
+assert_contains "boost all user acu endpoint" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "boost all write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "boost all donor record path" "$out" "donor_record:"
+# Bare `dag boost` is the same run, labeled as such.
+out=$(run_dag boost); rc=$?
+assert_exit "bare boost rc" 0 $rc
+assert_contains "bare boost playbook" "$out" "# Playbook: boost all"
+assert_contains "bare boost requested" "$out" "requested shell command: dag boost"
+# Alias: dag boost-all.
+out=$(run_dag boost-all); rc=$?
+assert_exit "boost-all alias rc" 0 $rc
+assert_contains "boost-all alias playbook" "$out" "# Playbook: boost all"
+assert_contains "boost-all alias requested" "$out" "requested shell command: dag boost-all"
+# boost all takes no positional args.
+out=$(run_dag boost all alice@corp.com 2>&1); rc=$?; assert_exit "boost all extra arg" 2 $rc
+out=$(run_dag boost-all alice@corp.com 2>&1); rc=$?; assert_exit "boost-all extra arg" 2 $rc
+# usage help lists boost all.
+out=$(run_dag 2>&1)
+assert_contains "usage lists boost all" "$out" "dag boost all"
+# all-commands surfaces the boost-all playbook too.
+out=$(run_dag all-commands)
+assert_contains "all-commands boost-all available" "$out" "# Playbook: boost all"
 
 # 6a. boost over: no email required, discovers the over set at run time.
 out=$(run_dag boost over); rc=$?

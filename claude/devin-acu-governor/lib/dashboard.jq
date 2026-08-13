@@ -11,6 +11,9 @@
 #     --slurpfile userd    <stream of {user_id, daily} docs, one per user> \
 #     --slurpfile userl    <stream of {user_id, limits} docs, one per user> \
 #     --slurpfile defaultl <default user ACU-limit response> \
+#     --slurpfile donorrec <{available, donors} cycle-scoped donor record: users
+#                           whose caps DAG Borrows reduced this cycle; stale or
+#                           missing records arrive as {available:false,donors:{}}> \
 #     --slurpfile sessions <{available, items} Devin Cloud sessions for the cycle> \
 #     --slurpfile modela   <{available, stale, reason, fetched_at, rows} Windsurf model/IDE analytics> \
 #     -f lib/dashboard.jq
@@ -81,6 +84,16 @@ def user_status($consumed; $limit):
   elif ($consumed / $limit) >= 0.85 then "warning"
   else "ok"
   end;
+
+# DONOR-state suppression (playbooks/_common.md hard rule 13): a recorded
+# current-cycle donor whose raw state is warning/critical/over ONLY because a
+# DAG Borrow lowered their cap — real usage still under 85% of the cap they
+# started the cycle with — shows "donor", not a pressure badge.
+def donor_suppressed($raw; $consumed; $drec):
+  $drec != null
+  and (($drec.baseline_cap // 0) > 0)
+  and (["warning", "critical", "over"] | index($raw) != null)
+  and ($consumed < 0.85 * $drec.baseline_cap);
 
 ($refresh_minutes | if . == "" then null else tonumber end) as $refresh_min
 | ceil_(($before - $after) / 86400) as $cycle_days
@@ -158,6 +171,7 @@ def user_status($consumed; $limit):
 | ($userd | map({key: .user_id, value: (.daily.total_acus // 0)}) | from_entries) as $user_consumed
 | ($userl | map({key: .user_id, value: (.limits // {})}) | from_entries) as $user_limits
 | ($defaultl[0].local_agent.cycle_acu_limit // null) as $default_user_limit
+| (($donorrec[0] // {available: false, donors: {}}) | .donors // {}) as $donor_map
 | ($userd | map({key: .user_id, value: (.daily.consumption_by_date // [])}) | from_entries) as $user_daily
 | (($sess.items // []) | map(select(.user_id != null)) | group_by(.user_id)
    | map({key: .[0].user_id,
@@ -183,6 +197,9 @@ def user_status($consumed; $limit):
     | (if $explicit_limit == null then $default_user_limit else $explicit_limit end) as $effective_limit
     | (($user_daily[$u.user_id] // []) | day_points) as $udaily
     | ($ma_by_user[$u.user_id] // $ma_by_email[$u.email] // []) as $ma_rows
+    | ($donor_map[$u.email // ""] // null) as $drec
+    | user_status($uc; $effective_limit) as $raw_status
+    | donor_suppressed($raw_status; $uc; $drec) as $suppressed
     | {
         user_id: $u.user_id,
         email: ($u.email // ""),
@@ -206,7 +223,14 @@ def user_status($consumed; $limit):
         headroom: (if $effective_limit == null then null else (($effective_limit - $uc) | r2) end),
         pct_limit: (if ($effective_limit // 0) == 0 then null
                     else (($uc / $effective_limit) | r3) end),
-        status: user_status($uc; $effective_limit),
+        status: (if $suppressed then "donor" else $raw_status end),
+        raw_status: $raw_status,
+        donor: (if $drec == null then null else {
+          baseline_cap: ($drec.baseline_cap // null),
+          given_total: ($drec.given_total // 0),
+          last_given_at: ($drec.last_given_at // null),
+          suppressed: $suppressed
+        } end),
         daily: $udaily,
         product_totals: {
           devin: (([$udaily[].devin] | add // 0) | r2),
