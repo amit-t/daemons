@@ -53,7 +53,7 @@ cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
 - Never describe Borrow donor reductions as “negative ACUs.”
 EOF
 run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
-for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--dey"; do
+for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--des" "--del" "--det" "--dey"; do
   if [[ -n "$agent_args" ]]; then
     out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
   else
@@ -467,7 +467,7 @@ for profile in co cf; do
 done
 # devin-family profiles get a `--` separator so the prompt lands as devin's
 # positional PROMPT (devin only accepts the prompt past `--`).
-for profile in deo def dey; do
+for profile in deo def des del det dey; do
   out=$(run_dag_launcher "--${profile}" status); rc=$?
   assert_exit "profile ${profile} rc" 0 $rc
   assert_eq "profile ${profile} launcher" "${profile} --" "$out"
@@ -488,6 +488,12 @@ out=$(DAG_LAUNCHER_DEO="my-deo" run_dag_launcher --deo status)
 assert_eq "deo launcher override" "my-deo --" "$out"
 out=$(DAG_LAUNCHER_DEF="my-def" run_dag_launcher --def status)
 assert_eq "def launcher override" "my-def --" "$out"
+out=$(DAG_LAUNCHER_DES="my-des" run_dag_launcher --des status)
+assert_eq "des launcher override" "my-des --" "$out"
+out=$(DAG_LAUNCHER_DEL="my-del" run_dag_launcher --del status)
+assert_eq "del launcher override" "my-del --" "$out"
+out=$(DAG_LAUNCHER_DET="my-det" run_dag_launcher --det status)
+assert_eq "det launcher override" "my-det --" "$out"
 out=$(DAG_LAUNCHER_DEY="my-dey" run_dag_launcher --dey status)
 assert_eq "dey launcher override" "my-dey --" "$out"
 # Devin-ness of the default launcher is detected from its command text.
@@ -514,7 +520,7 @@ out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVIC
 assert_exit "agent prompt rc" 0 $rc
 assert_contains "agent prompt playbook" "$out" "# Playbook: set-limits"
 if [[ "$out" == *--agent* ]]; then _fail "--agent leaked into prompt"; else _ok; fi
-for profile in co cf deo def; do
+for profile in co cf deo def des del det; do
   out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" "--${profile}" status); rc=$?
   assert_exit "profile prompt rc ${profile}" 0 $rc
   assert_contains "profile prompt playbook ${profile}" "$out" "# Playbook: status"
@@ -523,7 +529,10 @@ done
 # Usage mentions agent selection.
 out=$(run_dag help)
 assert_contains "usage agent flag" "$out" "--agent claude|codex|devin"
-assert_contains "usage profile flags" "$out" "--co|--cf|--deo|--def"
+assert_contains "usage profile flags" "$out" "--co|--cf|--deo|--def|--des|--del|--det"
 assert_contains "usage profile launcher config" "$out" "DAG_LAUNCHER_CO"
+assert_contains "usage des launcher config" "$out" "DAG_LAUNCHER_DES"
+assert_contains "usage del launcher config" "$out" "DAG_LAUNCHER_DEL"
+assert_contains "usage det launcher config" "$out" "DAG_LAUNCHER_DET"
 
 report

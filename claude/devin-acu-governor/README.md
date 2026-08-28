@@ -4,8 +4,8 @@
 
 Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
-- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`, `--dey`), since devin only accepts the prompt as a positional past `--`.
-- Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, `--def` launches Devin Fable through `def`, and `--dey` launches default-model Devin through `dey`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only.
+- The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`, `--des`, `--del`, `--det`, `--dey`), since devin only accepts the prompt as a positional past `--`.
+- Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, `--def` launches Devin Fable through `def`, `--des`/`--del`/`--det` launch Devin GPT-5.6 Sol/Luna/Terra through `des`/`del`/`det`, and `--dey` launches default-model Devin through `dey`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only.
 - The assembled playbook prompt is identical for every agent and launcher profile.
 - Every agent prompt also includes Amit's durable global instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. That file carries shell preferences only — all DAG policy lives in `playbooks/_common.md`, which is injected into every dag session for every engine.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
@@ -18,6 +18,9 @@ dag --co status
 dag --cf status
 dag --deo status
 dag --def status
+dag --des status
+dag --del boost over
+dag --det boost over
 dag --dey set-limits-new
 ```
 
@@ -692,6 +695,9 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_LAUNCHER_CF` | `cf` | Claude Fable profile launcher used by `--cf` |
 | `DAG_LAUNCHER_DEO` | `deo` | Devin Opus profile launcher used by `--deo` |
 | `DAG_LAUNCHER_DEF` | `def` | Devin Fable profile launcher used by `--def` |
+| `DAG_LAUNCHER_DES` | `des` | Devin GPT-5.6 Sol profile launcher used by `--des` |
+| `DAG_LAUNCHER_DEL` | `del` | Devin GPT-5.6 Luna profile launcher used by `--del` |
+| `DAG_LAUNCHER_DET` | `det` | Devin GPT-5.6 Terra profile launcher used by `--det` |
 | `DAG_LAUNCHER_DEY` | `dey` | Default-model Devin profile launcher used by `--dey` |
 | `DAG_PRINT_LAUNCHER` | unset | For agent commands, print the resolved launcher and exit |
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
@@ -796,6 +802,9 @@ zsh -n claude/devin-acu-governor/bin/dag
 zsh -n claude/devin-acu-governor/lib/*.zsh
 DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --co status
 DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --def status
+DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --des status
+DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --del boost over
+DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --det boost over
 DAG_PRINT_LAUNCHER=1 DEVIN_COG_KEY=x dag --dey set-limits-new
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits
 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag set-limits alice@corp.com
