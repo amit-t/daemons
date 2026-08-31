@@ -80,7 +80,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag setup-extract` | ❌ local secret output | Print pasteable target-machine `security add-generic-password` commands containing the currently configured DAG keys |
 | `dag help` | ❌ | Usage text |
 
-Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, then stops — writes happen only after the user sends the exact token `CONFIRM DAG WRITE` in the same session (see `playbooks/_common.md` "DAG execution contract"). The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
+Every agent-driven API write is gated: the agent shows endpoint, old value, new value, body, then stops — writes happen only after the user sends a same-session message containing the exact string `CONFIRM DAG WRITE` — surrounding text, including unexpanded text-expander residue like `%cdw`/`%cd`, doesn't invalidate it (see `playbooks/_common.md` "DAG execution contract"). The local `dag set limit global` command is itself the explicit one-time write command and verifies immediately.
 
 ## `dag set-limits`
 
@@ -729,7 +729,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 - Every write is verified with a GET of the same ACU-limit resource.
 - Math lives in jq, not agent mental arithmetic.
 - Direct cap headroom policy in every flow: default plans pass `max_headroom: 250` to the jq programs; 250–500 only on explicit in-session user request; above 500 never — the jq built-in 500 default is the backstop clamp, and raising it means changing repository policy, not a session instruction.
-- Writes require the exact in-session token `CONFIRM DAG WRITE` after the preview; shell commands, scope confirmations, and requested increments are planning input only.
+- Writes require an in-session message containing the exact string `CONFIRM DAG WRITE` after the preview (extra text or `%cdw`/`%cd` expander residue alongside it is fine); shell commands, scope confirmations, and requested increments are planning input only.
 - `playbooks/_common.md` carries a DAG execution contract: the assembled prompt is the complete DAG policy for the session, conflicting saved memories/global instructions are ignored, and dag sessions never modify, commit, or push repository files. The one carve-out is report artifacts: a playbook that names a Run-context output directory (currently only `sessions`) may write its report files there without a `CONFIRM DAG WRITE` token, because those are local read-only reporting artifacts rather than API or ledger state.
 - `dag sessions` is API-read-only and writes only into its own output directory; that directory holds verbatim prompt text and is `chmod 700`ed, with suspected credentials flagged by session id and never reproduced in the overview.
 - Windsurf consumption calls are rate-limit aware.
