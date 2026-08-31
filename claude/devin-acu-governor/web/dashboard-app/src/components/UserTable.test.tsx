@@ -3,7 +3,20 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import { UserTable } from './UserTable'
-import type { UserRow } from '../types'
+import type { OrgRow, UserRow } from '../types'
+
+const platformOrg: OrgRow = {
+  org_id: 'org_8f3a91',
+  name: 'Platform Engineering',
+  consumed: 500,
+  daily_run_rate: 50,
+  projected: 1550,
+  max_session_acu_limit: 100,
+  products: { devin: 100, cascade: 300, terminal: 80, review: 20 },
+  local: { consumed: 380, limit: 1000, daily_run_rate: 38, projected: 1178, pct_limit: 0.38, status: 'ok' },
+  cloud: { consumed: 100, limit: 500, daily_run_rate: 10, projected: 310, pct_limit: 0.2, status: 'ok' },
+  status: 'ok',
+}
 
 const alice: UserRow = {
   user_id: 'email|alice',
@@ -14,7 +27,7 @@ const alice: UserRow = {
   default_cycle_acu_limit: 200,
   effective_cycle_acu_limit: 100,
   cap_source: 'explicit',
-  billing_org_id: 'platform',
+  billing_org_id: 'org_8f3a91',
   headroom: 58,
   pct_limit: 0.42,
   daily_run_rate: 1.4,
@@ -36,7 +49,7 @@ function setup() {
     value: { writeText },
     configurable: true,
   })
-  render(<UserTable users={[alice]} onSelect={onSelect} />)
+  render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={onSelect} />)
   return { onSelect, writeText, user }
 }
 
@@ -118,12 +131,73 @@ describe('UserTable donor status', () => {
   }
 
   test('donor status renders badge and filter chip', () => {
-    render(<UserTable users={[alice, donorRow]} onSelect={vi.fn()} />)
+    render(<UserTable users={[alice, donorRow]} orgs={[platformOrg]} onSelect={vi.fn()} />)
 
     expect(screen.getByRole('button', { name: 'donor (1)' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'over (1)' })).not.toBeInTheDocument()
     const badge = screen.getByText('donor', { selector: 'span.badge' })
     expect(badge).toHaveClass('badge-donor')
+  })
+})
+
+describe('UserTable billing org column', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  test('renders the org name, not the org id', () => {
+    render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={vi.fn()} />)
+
+    const link = screen.getByRole('link', { name: 'Platform Engineering' })
+    expect(link).toBeInTheDocument()
+    // The id stays reachable: tooltip carries it, link opens the org page.
+    expect(link).toHaveAttribute('title', expect.stringContaining('org_8f3a91'))
+    expect(link).toHaveAttribute('href', '#/org/org_8f3a91')
+    // The raw id is no longer printed in the cell.
+    expect(screen.queryByText('org_8f3a91')).not.toBeInTheDocument()
+  })
+
+  test('falls back to the raw id when no org in snapshot matches', () => {
+    const orphan: UserRow = { ...alice, user_id: 'email|bob', email: 'bob@example.com', billing_org_id: 'org_gone' }
+    render(<UserTable users={[orphan]} orgs={[platformOrg]} onSelect={vi.fn()} />)
+
+    expect(screen.getByText('org_gone')).toBeInTheDocument()
+  })
+
+  test('renders a dash for users without a billing org', () => {
+    const nomad: UserRow = { ...alice, user_id: 'email|eve', email: 'eve@example.com', billing_org_id: null }
+    render(<UserTable users={[nomad]} orgs={[platformOrg]} onSelect={vi.fn()} />)
+
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  test('search filter matches the org name and the org id', async () => {
+    const user = userEvent.setup()
+    render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={vi.fn()} />)
+    const search = screen.getByPlaceholderText('filter by name / email / org…')
+
+    await user.type(search, 'platform eng')
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+
+    await user.clear(search)
+    await user.type(search, 'org_8f3a91')
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+
+    await user.clear(search)
+    await user.type(search, 'no-such-org')
+    expect(screen.queryByText('alice@example.com')).not.toBeInTheDocument()
+  })
+
+  test('clicking the org link does not open the user detail drawer', async () => {
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={onSelect} />)
+
+    await user.click(screen.getByRole('link', { name: 'Platform Engineering' }))
+
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })
 
@@ -134,7 +208,7 @@ describe('UserTable forecast column', () => {
   })
 
   test('renders projected value and colored forecast badge', () => {
-    render(<UserTable users={[alice]} onSelect={vi.fn()} />)
+    render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={vi.fn()} />)
 
     expect(screen.getByText('Projected')).toBeInTheDocument()
     expect(screen.getByText('Forecast')).toBeInTheDocument()
@@ -151,7 +225,7 @@ describe('UserTable forecast column', () => {
       projected: 180,
       forecast: 'over',
     }
-    render(<UserTable users={[hot]} onSelect={vi.fn()} />)
+    render(<UserTable users={[hot]} orgs={[platformOrg]} onSelect={vi.fn()} />)
 
     const badge = screen.getByText('over', { selector: 'span.badge' })
     expect(badge).toHaveClass('badge-forecast_over')
@@ -164,7 +238,7 @@ describe('UserTable forecast column', () => {
     delete legacy.daily_run_rate
     delete legacy.projected
     delete legacy.forecast
-    render(<UserTable users={[legacy]} onSelect={vi.fn()} />)
+    render(<UserTable users={[legacy]} orgs={[platformOrg]} onSelect={vi.fn()} />)
 
     expect(screen.queryByText('under', { selector: 'span.badge' })).not.toBeInTheDocument()
     expect(screen.getAllByText('—').length).toBeGreaterThan(0)

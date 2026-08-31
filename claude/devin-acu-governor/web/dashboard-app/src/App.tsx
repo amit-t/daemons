@@ -175,7 +175,7 @@ export default function App() {
               billing_org_id) — org caps cannot gate that usage.
             </div>
           )}
-          <UserTable users={data.users} onSelect={(u) => setSelectedUserId(u.user_id)} />
+          <UserTable users={data.users} orgs={data.orgs} onSelect={(u) => setSelectedUserId(u.user_id)} />
         </>
       )}
 
@@ -184,6 +184,7 @@ export default function App() {
           user={selectedUser}
           cycle={cycle}
           modelAnalytics={data.model_analytics}
+          orgs={data.orgs}
           onClose={() => setSelectedUserId(null)}
         />
       )}

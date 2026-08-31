@@ -386,6 +386,15 @@ tr.clickable:hover td { background: rgba(255, 178, 36, 0.07); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.dim { color: var(--text-dim); }
 
+/* Billing-org cell in the user table: name links to #/org/<id>; the raw id
+   lives in the tooltip. Dotted underline keeps the phosphor look. */
+.org-link {
+  color: var(--text-dim);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.org-link:hover { color: var(--amber); }
+
 .row-count {
   font-size: 11px;
   color: var(--text-faint);

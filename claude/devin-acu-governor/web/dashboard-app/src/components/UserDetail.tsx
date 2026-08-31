@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { CycleInfo, ModelAnalyticsInfo, UserRow } from '../types'
+import type { CycleInfo, ModelAnalyticsInfo, OrgRow, UserRow } from '../types'
 import { fmt, fmtPct, shortDay } from '../format'
 import { ForecastBadge, StatusBadge } from './StatusBadge'
 import { CopyEmail } from './CopyEmail'
@@ -34,6 +34,7 @@ interface Props {
   user: UserRow
   cycle: CycleInfo
   modelAnalytics: ModelAnalyticsInfo
+  orgs: OrgRow[]
   onClose: () => void
 }
 
@@ -100,7 +101,8 @@ function BarList({
 // Per-user drill-down drawer: daily ACU line over the cycle, Devin Cloud
 // session stats, and (when the Windsurf analytics key is configured) the
 // model and IDE split for Devin Desktop / Local usage.
-export function UserDetail({ user, cycle, modelAnalytics, onClose }: Props) {
+export function UserDetail({ user, cycle, modelAnalytics, orgs, onClose }: Props) {
+  const orgName = user.billing_org_id ? (orgs.find((o) => o.org_id === user.billing_org_id)?.name ?? null) : null
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -149,7 +151,11 @@ export function UserDetail({ user, cycle, modelAnalytics, onClose }: Props) {
             <div className="detail-sub">
               {user.email && <CopyEmail email={user.email} />}
               <span className="dim">{user.user_id}</span>
-              {user.billing_org_id && <span className="dim">org: {user.billing_org_id}</span>}
+              {user.billing_org_id && (
+                <span className="dim">
+                  org: {orgName ? `${orgName} (${user.billing_org_id})` : user.billing_org_id}
+                </span>
+              )}
             </div>
           </div>
           <div className="detail-header-right">

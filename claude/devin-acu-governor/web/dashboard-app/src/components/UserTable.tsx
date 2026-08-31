@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { CapSource, UserForecast, UserRow, UserStatus } from '../types'
+import type { CapSource, OrgRow, UserForecast, UserRow, UserStatus } from '../types'
 import { fmt, fmtPct } from '../format'
 import { copyToClipboard } from '../clipboard'
 import { SortableTable, type Column } from './SortableTable'
@@ -50,7 +50,23 @@ function DetailsButton({ user, onSelect }: { user: UserRow; onSelect: (u: UserRo
   )
 }
 
-function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
+// Billing org cell: org name (id only when the org is missing from the
+// snapshot), linked to the org page. Tooltip carries the raw id.
+function OrgCell({ orgId, orgName }: { orgId: string | null; orgName: string | null }) {
+  if (!orgId) return <span className="dim">—</span>
+  return (
+    <a
+      className="dim org-link"
+      href={`#/org/${encodeURIComponent(orgId)}`}
+      title={`org id: ${orgId} — click to open org page`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {orgName ?? orgId}
+    </a>
+  )
+}
+
+function makeColumns(onSelect: (u: UserRow) => void, orgNameOf: (id: string | null) => string | null): Column<UserRow>[] {
   return [
     {
       key: 'name',
@@ -126,8 +142,9 @@ function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
     {
       key: 'org',
       label: 'Billing org',
-      sortValue: (u) => u.billing_org_id,
-      render: (u) => <span className="dim">{u.billing_org_id ?? '—'}</span>,
+      sortValue: (u) =>
+        u.billing_org_id ? (orgNameOf(u.billing_org_id) ?? u.billing_org_id).toLowerCase() : null,
+      render: (u) => <OrgCell orgId={u.billing_org_id} orgName={orgNameOf(u.billing_org_id)} />,
     },
     {
       key: 'details',
@@ -137,11 +154,23 @@ function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
   ]
 }
 
-export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u: UserRow) => void }) {
+export function UserTable({
+  users,
+  orgs,
+  onSelect,
+}: {
+  users: UserRow[]
+  orgs: OrgRow[]
+  onSelect: (u: UserRow) => void
+}) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Set<UserStatus>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<CapSource>>(new Set())
-  const columns = useMemo(() => makeColumns(onSelect), [onSelect])
+  const orgNames = useMemo(() => new Map(orgs.map((o) => [o.org_id, o.name])), [orgs])
+  const columns = useMemo(
+    () => makeColumns(onSelect, (id) => (id ? (orgNames.get(id) ?? null) : null)),
+    [onSelect, orgNames],
+  )
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -152,12 +181,13 @@ export function UserTable({ users, onSelect }: { users: UserRow[]; onSelect: (u:
         q &&
         !u.email.toLowerCase().includes(q) &&
         !(u.name || '').toLowerCase().includes(q) &&
-        !(u.billing_org_id || '').toLowerCase().includes(q)
+        !(u.billing_org_id || '').toLowerCase().includes(q) &&
+        !((u.billing_org_id && orgNames.get(u.billing_org_id)) || '').toLowerCase().includes(q)
       )
         return false
       return true
     })
-  }, [users, query, statusFilter, sourceFilter])
+  }, [users, query, statusFilter, sourceFilter, orgNames])
 
   function toggleIn<T>(set: Set<T>, v: T, apply: (s: Set<T>) => void) {
     const next = new Set(set)
