@@ -85,6 +85,17 @@ def user_status($consumed; $limit):
   else "ok"
   end;
 
+# Cycle-end forecast vs the allocated (effective) cap: linear run-rate
+# projection. "close" mirrors the 0.85 warning threshold — projected lands in
+# the last 15% of the cap without crossing it. No cap → nothing to forecast.
+def user_forecast($projected; $limit):
+  if $limit == null then null
+  elif $limit == 0 then (if $projected > 0 then "over" else "under" end)
+  elif $projected > $limit then "over"
+  elif $projected >= 0.85 * $limit then "close"
+  else "under"
+  end;
+
 # DONOR-state suppression (playbooks/_common.md hard rule 13): a recorded
 # current-cycle donor whose raw state is warning/critical/over ONLY because a
 # DAG Borrow lowered their cap — real usage still under 85% of the cap they
@@ -198,6 +209,7 @@ def donor_suppressed($raw; $consumed; $drec):
     | (($user_daily[$u.user_id] // []) | day_points) as $udaily
     | ($ma_by_user[$u.user_id] // $ma_by_email[$u.email] // []) as $ma_rows
     | ($donor_map[$u.email // ""] // null) as $drec
+    | ($uc / $elapsed_days * $cycle_days) as $uproj
     | user_status($uc; $effective_limit) as $raw_status
     | donor_suppressed($raw_status; $uc; $drec) as $suppressed
     | {
@@ -223,6 +235,9 @@ def donor_suppressed($raw; $consumed; $drec):
         headroom: (if $effective_limit == null then null else (($effective_limit - $uc) | r2) end),
         pct_limit: (if ($effective_limit // 0) == 0 then null
                     else (($uc / $effective_limit) | r3) end),
+        daily_run_rate: (($uc / $elapsed_days) | r2),
+        projected: ($uproj | r2),
+        forecast: user_forecast($uproj; $effective_limit),
         status: (if $suppressed then "donor" else $raw_status end),
         raw_status: $raw_status,
         donor: (if $drec == null then null else {

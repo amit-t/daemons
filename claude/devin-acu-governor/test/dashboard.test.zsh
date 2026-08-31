@@ -360,6 +360,28 @@ else
   _ok
 fi
 
+# 7i. Per-user cycle-end forecast: linear run-rate projection + under/close/over
+#     verdict vs the effective cap. Fixture day 30 of 31.
+assert_eq "alice run rate" "4.01" "$(user_field alice@example.com .daily_run_rate)"
+assert_eq "alice projected" "124.26" "$(user_field alice@example.com .projected)"
+assert_eq "alice forecast under" "under" "$(user_field alice@example.com .forecast)"
+assert_eq "bob projected" "82.67" "$(user_field bob@example.com .projected)"
+assert_eq "bob forecast under" "under" "$(user_field bob@example.com .forecast)"
+assert_eq "chandra projected" "268.67" "$(user_field chandra@example.com .projected)"
+assert_eq "chandra forecast over" "over" "$(user_field chandra@example.com .forecast)"
+assert_eq "zero forecast under" "under" "$(user_field zero@example.com .forecast)"
+
+# 7i-bis. "close" branch: with every explicit user cap forced to 130, alice's
+#         projection (124.26) lands inside the last 15% of the cap (>= 110.5,
+#         <= 130) → close; chandra (268.67) stays over; bob (82.67) stays under.
+out=$(FAKE_USER_LIMIT_BODY='{"local_agent":{"cycle_acu_limit":130}}' \
+  run_dash --json-only --out "${tmpdir}/dash-forecast-close" 2>&1); rc=$?
+assert_exit "forecast close rc" 0 $rc
+fcl() { jq -r --arg email "$1" ".users[] | select(.email==\$email)$2" "${tmpdir}/dash-forecast-close/data.json" }
+assert_eq "forecast close alice" "close" "$(fcl alice@example.com .forecast)"
+assert_eq "forecast close chandra still over" "over" "$(fcl chandra@example.com .forecast)"
+assert_eq "forecast close bob still under" "under" "$(fcl bob@example.com .forecast)"
+
 # 7e. Per-user detail data: daily series with both date forms + product split.
 assert_eq "alice daily count" "2" "$(user_field alice@example.com '.daily | length')"
 assert_eq "alice daily[0] epoch" "1778918400" "$(user_field alice@example.com '.daily[0].epoch')"
@@ -497,6 +519,10 @@ assert_contains "user table copy button label" "$user_table_src_body" 'aria-labe
 assert_contains "user table copy uses clipboard" "$user_table_src_body" "copyToClipboard(user.email)"
 assert_contains "user table details button label" "$user_table_src_body" 'aria-label={`Open details for ${user.email || user.name || user.user_id}`}'
 assert_contains "user table details selects user" "$user_table_src_body" "onSelect(user)"
+assert_contains "user table projected column" "$user_table_src_body" "label: 'Projected'"
+assert_contains "user table forecast column" "$user_table_src_body" "label: 'Forecast'"
+assert_contains "user table forecast badge" "$user_table_src_body" "ForecastBadge"
+assert_contains "detail projected card" "$detail_src" "Projected @ cycle end"
 if [[ "$user_table_src_body" == *"onRowClick={onSelect}"* ]]; then
   _fail "user table does not forward row click: unexpected onRowClick={onSelect}"
 else
@@ -632,6 +658,7 @@ assert_exit "504 default-limit degrade rc" 0 $rc
 assert_contains "504 default-limit warned" "$out" "default ACU-limit endpoint unavailable"
 udd() { jq -r --arg e "$1" ".users[] | select(.email==\$e)$2" "${tmpdir}/dash-504-defdeg/data.json" }
 assert_eq "504 default-limit bob uncapped" "uncapped" "$(udd bob@example.com .status)"
+assert_eq "504 default-limit bob forecast null" "null" "$(udd bob@example.com .forecast)"
 assert_eq "504 default-limit alice explicit kept" "explicit" "$(udd alice@example.com .cap_source)"
 
 # 8h. A hard 500 (not a gateway-timeout class) on a per-user limit stays FATAL —

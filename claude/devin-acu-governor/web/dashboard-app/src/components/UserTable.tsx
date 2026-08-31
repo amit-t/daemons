@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { CapSource, UserRow, UserStatus } from '../types'
+import type { CapSource, UserForecast, UserRow, UserStatus } from '../types'
 import { fmt, fmtPct } from '../format'
 import { copyToClipboard } from '../clipboard'
 import { SortableTable, type Column } from './SortableTable'
-import { Meter, StatusBadge } from './StatusBadge'
+import { ForecastBadge, Meter, StatusBadge } from './StatusBadge'
 
 const STATUSES: UserStatus[] = ['ok', 'warning', 'critical', 'over', 'donor', 'blocked', 'uncapped']
+const FORECAST_ORDER: UserForecast[] = ['under', 'close', 'over']
 const CAP_SOURCES: CapSource[] = ['explicit', 'default', 'uncapped']
 
 // Email cell: static address plus explicit copy action. Copy never opens
@@ -95,6 +96,20 @@ function makeColumns(onSelect: (u: UserRow) => void): Column<UserRow>[] {
           {fmtPct(u.pct_limit)}
         </>
       ),
+    },
+    {
+      key: 'projected',
+      label: 'Projected',
+      numeric: true,
+      sortValue: (u) => u.projected ?? null,
+      render: (u) => fmt(u.projected),
+    },
+    {
+      key: 'forecast',
+      label: 'Forecast',
+      // Uncapped / pre-forecast snapshots sort to the bottom like other nulls.
+      sortValue: (u) => (u.forecast ? FORECAST_ORDER.indexOf(u.forecast) : null),
+      render: (u) => <ForecastBadge forecast={u.forecast} />,
     },
     {
       key: 'status',

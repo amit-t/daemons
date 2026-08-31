@@ -2,6 +2,8 @@
 
 export type OrgStatus = 'ok' | 'warning' | 'critical' | 'forecast_over' | 'over' | 'blocked' | 'uncapped'
 export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'blocked' | 'uncapped' | 'donor'
+// Cycle-end run-rate forecast vs the allocated cap. null = uncapped.
+export type UserForecast = 'under' | 'close' | 'over'
 export type CapSource = 'explicit' | 'default' | 'uncapped'
 
 export interface CycleInfo {
@@ -133,6 +135,11 @@ export interface UserRow {
   billing_org_id: string | null
   headroom: number | null
   pct_limit: number | null
+  // Optional: absent in data.json snapshots generated before the forecast
+  // column — the UI renders '—' until the snapshot is regenerated.
+  daily_run_rate?: number
+  projected?: number
+  forecast?: UserForecast | null
   status: UserStatus
   // Optional: absent in data.json snapshots generated before the donor record.
   raw_status?: UserStatus

@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import type { CycleInfo, ModelAnalyticsInfo, UserRow } from '../types'
 import { fmt, fmtPct, shortDay } from '../format'
-import { StatusBadge } from './StatusBadge'
+import { ForecastBadge, StatusBadge } from './StatusBadge'
 import { CopyEmail } from './CopyEmail'
 
 const PRODUCT_COLORS: Record<string, string> = {
@@ -187,6 +187,21 @@ export function UserDetail({ user, cycle, modelAnalytics, onClose }: Props) {
               {fmt(user.headroom)}
             </div>
             <div className="card-sub">ACUs left under cap</div>
+          </div>
+          <div className={`card ${user.forecast === 'over' ? 'bad' : ''}`}>
+            <div className="card-label">Projected @ cycle end</div>
+            <div className={`card-value ${user.forecast === 'over' ? 'bad' : ''}`}>
+              {fmt(user.projected)}
+            </div>
+            <div className="card-sub">
+              {user.projected === undefined ? (
+                'regenerate data.json for the forecast'
+              ) : (
+                <>
+                  run rate {fmt(user.daily_run_rate)}/day · <ForecastBadge forecast={user.forecast} />
+                </>
+              )}
+            </div>
           </div>
           <div className="card">
             <div className="card-label">Devin Cloud sessions</div>

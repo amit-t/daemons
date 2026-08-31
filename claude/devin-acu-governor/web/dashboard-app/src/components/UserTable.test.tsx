@@ -17,6 +17,9 @@ const alice: UserRow = {
   billing_org_id: 'platform',
   headroom: 58,
   pct_limit: 0.42,
+  daily_run_rate: 1.4,
+  projected: 43.4,
+  forecast: 'under',
   status: 'ok',
   daily: [],
   product_totals: { devin: 40, cascade: 1, terminal: 1, review: 0 },
@@ -121,5 +124,49 @@ describe('UserTable donor status', () => {
     expect(screen.queryByRole('button', { name: 'over (1)' })).not.toBeInTheDocument()
     const badge = screen.getByText('donor', { selector: 'span.badge' })
     expect(badge).toHaveClass('badge-donor')
+  })
+})
+
+describe('UserTable forecast column', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  test('renders projected value and colored forecast badge', () => {
+    render(<UserTable users={[alice]} onSelect={vi.fn()} />)
+
+    expect(screen.getByText('Projected')).toBeInTheDocument()
+    expect(screen.getByText('Forecast')).toBeInTheDocument()
+    expect(screen.getByText('43.4')).toBeInTheDocument()
+    const badge = screen.getByText('under', { selector: 'span.badge' })
+    expect(badge).toHaveClass('badge-ok')
+  })
+
+  test('forecast over renders the dashed forecast_over palette', () => {
+    const hot: UserRow = {
+      ...alice,
+      user_id: 'email|hot',
+      email: 'hot@example.com',
+      projected: 180,
+      forecast: 'over',
+    }
+    render(<UserTable users={[hot]} onSelect={vi.fn()} />)
+
+    const badge = screen.getByText('over', { selector: 'span.badge' })
+    expect(badge).toHaveClass('badge-forecast_over')
+  })
+
+  // data.json snapshots generated before the forecast column carry no
+  // projected/forecast fields — cells degrade to '—', nothing crashes.
+  test('legacy snapshot without forecast fields renders dashes', () => {
+    const legacy: UserRow = { ...alice }
+    delete legacy.daily_run_rate
+    delete legacy.projected
+    delete legacy.forecast
+    render(<UserTable users={[legacy]} onSelect={vi.fn()} />)
+
+    expect(screen.queryByText('under', { selector: 'span.badge' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
   })
 })
