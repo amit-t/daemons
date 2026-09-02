@@ -8,8 +8,16 @@
 # {
 #   "donor_buffer": <number=0.10>,                          # keep each donor this fraction above its consumed
 #   "max_headroom": <number=500>,                            # maximum new cap headroom per recipient
-#   "donor_floor_min": <number=0>,                           # absolute minimum cap left to any donor (never raises a cap)
-#   "days_left": <number=0>,                                 # cycle days left, for donor run-rate projection
+#   "min_donor_cap_after": <number=50>,                      # absolute minimum cap left to any donor after
+#                                                            # borrowing (never raises a cap); alias of legacy
+#                                                            # "donor_floor_min"
+#   "min_donor_headroom": <number=25>,                       # minimum headroom kept above a donor's (projected)
+#                                                            # consumption — floor is at least consumed+this
+#   "require_forecast": <bool=true>,                         # donors without run_rate are excluded from lending
+#                                                            # (see donors_excluded) unless set false
+#   "days_left": <number=0>,                                 # cycle days left, for donor run-rate projection;
+#                                                            # required (key must be present) if any donor
+#                                                            # carries run_rate, else {error}
 #   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
 #                                                            # uncapped users (no explicit cap today)
 #   "donors":     [{"email","user_id"?,"cap","consumed","run_rate"?,"member"?,"active"?}, ...]
@@ -18,14 +26,19 @@
 #
 # Donor run_rate (recent ACUs/day, e.g. last-7-day average): when present, the donor's
 # protected floor covers projected end-of-cycle consumption, not just current burn —
-# floor = max(ceil(consumed*(1+donor_buffer)), ceil((consumed + run_rate*days_left)*(1+donor_buffer))).
+# floor = max(ceil(consumed*(1+donor_buffer)), ceil((consumed + run_rate*days_left)*(1+donor_buffer)),
+#             ceil(consumed) + min_donor_headroom, min_donor_cap_after).
 # available = cap - floor. Donors are ranked highest available first, consumed as tie-break.
-# Absent run_rate the floor is exactly the legacy ceil(consumed*(1+donor_buffer)).
+# Absent run_rate the forecast term drops out but the min_donor_headroom and
+# min_donor_cap_after floors still apply. A donor with run_rate absent is excluded from
+# lending entirely (donors_excluded, reason "no_run_rate_forecast") whenever require_forecast
+# is true (the default); pass require_forecast:false to lend from consumed-only floors instead.
 #
 # Output:
 # {
 #   mode: "even_share" | "min_cover" | "partial",
-#   donor_buffer, total_available, recipients_total, borrowed,
+#   donor_buffer, max_headroom, min_donor_cap_after, min_donor_headroom, require_forecast,
+#   total_available, recipients_total, borrowed,
 #   share?,                                  # even_share only
 #   recipients_capped: [{email,user_id?,consumed,cap}],
 #   recipients_skipped: [{email,user_id?,consumed}],   # could not be funded zero-sum
@@ -33,7 +46,12 @@
 #   recipients_excluded, donors_excluded, eligible_recipient_count,
 #   eligible_donor_count, sum_donor_before, sum_donor_after, sum_before,
 #   sum_after, zero_sum, warnings
-# }  or  {error} on empty/fully-ineligible recipient set.
+# }  or  {error} on empty/fully-ineligible recipient set, or when donor run_rate is
+#   supplied without a top-level days_left key.
+#
+# donors_excluded reasons include the existing "not_current_member"/"inactive" audit
+# rows plus, when require_forecast is true, donors lacking run_rate with reason
+# ["no_run_rate_forecast"].
 #
 # Modes:
 #   even_share  donors can fund floor(consumed)+share for every recipient (share>=1),
@@ -89,14 +107,20 @@ def excluded_donor_row:
 
 (.donor_buffer // 0.10) as $dbuf
 | (.max_headroom // 500) as $max_headroom
-| (.donor_floor_min // 0) as $floor_min
+| (.min_donor_cap_after // .donor_floor_min // 50) as $floor_min
+| (.min_donor_headroom // 25) as $min_headroom
+| (if has("require_forecast") then .require_forecast else true end) as $require_forecast
+| (has("days_left")) as $has_days
 | (.days_left // 0) as $days_left
 | (.recipients // []) as $all_recips
 | (.donors // [])     as $all_donors
 | ([ $all_recips[] | select(eligible) ]) as $recips
-| ([ $all_donors[] | select(eligible) ]) as $donors
+| ([ $all_donors[] | select(eligible) ]) as $donors_all
+| ([ $donors_all[] | select(($require_forecast | not) or ((.run_rate // null) != null)) ]) as $donors
+| ([ $donors_all[] | select($require_forecast and ((.run_rate // null) == null))
+     | excluded_donor_row | .reasons = ["no_run_rate_forecast"] ]) as $donors_noforecast
 | ([ $all_recips[] | select(eligible | not) | excluded_recipient_row ]) as $recips_excluded
-| ([ $all_donors[] | select(eligible | not) | excluded_donor_row ]) as $donors_excluded
+| (([ $all_donors[] | select(eligible | not) | excluded_donor_row ]) + $donors_noforecast) as $donors_excluded
 | ($recips | length)  as $n
 | if ($all_recips | length) == 0 then
     {error: "no uncapped users to seed",
@@ -110,6 +134,8 @@ def excluded_donor_row:
      eligible_donor_count: ($donors | length),
      recipients_excluded: $recips_excluded,
      donors_excluded: $donors_excluded}
+  elif ($has_days | not) and ([ $donors[] | select((.run_rate // null) != null) ] | length) > 0 then
+    {error: "days_left missing while donor run_rate supplied — forecast floors would collapse to consumed-only; pass days_left"}
   else
     # Donor headroom above a buffer over consumption — projected to cycle end when a
     # run_rate is known — ranked by highest safe surplus.
@@ -118,7 +144,7 @@ def excluded_donor_row:
        | (if (.run_rate // null) != null
             then ([$base_floor, (((.consumed + (.run_rate * $days_left)) * (1 + $dbuf)) | ceil)] | max)
             else $base_floor end) as $proj_floor
-       | ([$proj_floor, $floor_min] | max) as $floor
+       | ([$proj_floor, ((.consumed | ceil) + $min_headroom), $floor_min] | max) as $floor
        | {email, consumed, cap, floor: $floor, available: ([.cap - $floor, 0] | max)} + uid ]
      | sort_by(-.available, .consumed)) as $cands
     | ([ $cands[].available ] | add // 0)      as $total_available
@@ -161,7 +187,9 @@ def excluded_donor_row:
         mode: $plan.mode,
         donor_buffer: $dbuf,
         max_headroom: $max_headroom,
-        donor_floor_min: $floor_min,
+        min_donor_cap_after: $floor_min,
+        min_donor_headroom: $min_headroom,
+        require_forecast: $require_forecast,
         total_available: $total_available,
         recipients_total: $n,
         eligible_recipient_count: $n,
@@ -184,6 +212,8 @@ def excluded_donor_row:
                then ["donor headroom (\($total_available)) cannot fund all \($n) users zero-sum; \($plan.skipped | length) left uncapped: \([$plan.skipped[].email] | join(", "))"] else [] end)
           + (if $borrowed == 0
                then ["no caps applied: no donor headroom to borrow"] else [] end)
+          + (if ($donors_noforecast | length) > 0
+               then ["\($donors_noforecast | length) donor(s) excluded: no run_rate forecast (require_forecast). Pass run_rate, or require_forecast:false to accept consumed-only floors: \([$donors_noforecast[].email] | join(", "))"] else [] end)
         )
       }
     | (if ($plan | has("share")) then . + {share: $plan.share} else . end)
