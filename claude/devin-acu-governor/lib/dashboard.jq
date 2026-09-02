@@ -260,6 +260,23 @@ def donor_suppressed($raw; $consumed; $drec):
         ides: dim_split($ma_rows; "ide")
       }
   ) | sort_by(-.consumed, .email)) as $user_rows
+# Org-gate overcommit: sum explicit user caps attributed to each org and
+# compare against that org's Local Agent cap. Even though each user's own
+# cap has headroom, the org-level Local Agent cap can still block them if
+# the sum of every member's explicit cap outstrips it — surface that before
+# anyone hits a mysterious block. Rebinding $org_rows here (jq's later
+# binding shadows the earlier one at line 175) so `orgs:` and `warnings:`
+# below both see the enriched rows.
+| ($user_rows
+   | map(select(.explicit_cycle_acu_limit != null and .billing_org_id != null))
+   | group_by(.billing_org_id)
+   | map({key: .[0].billing_org_id, value: ([.[].explicit_cycle_acu_limit] | add)})
+   | from_entries) as $org_explicit_caps
+| ($org_rows | map(. + {
+    sum_explicit_user_caps: ($org_explicit_caps[.org_id] // 0),
+    user_cap_overcommit: (if .local.limit == null then null
+      else (($org_explicit_caps[.org_id] // 0) - .local.limit) end)
+  })) as $org_rows
 | {
     generated_at: $generated_at,
     refresh: {
@@ -373,5 +390,8 @@ def donor_suppressed($raw; $consumed; $drec):
       + (if $unattributed > 0
          then ["\($unattributed | r2) ACUs (\((($unattributed / ([$consumed, 0.0001] | max)) * 100) | round)% of enterprise burn) are attributed to no organization — users without billing_org_id; org caps cannot gate that usage"]
          else [] end)
+      + [$org_rows[]
+         | select(.user_cap_overcommit != null and .user_cap_overcommit > 0)
+         | "\(.name) org Local Agent cap \(.local.limit) < Σ member explicit user caps \(.sum_explicit_user_caps) (overcommit \(.user_cap_overcommit)) — users with personal headroom can be blocked by the org gate; raise the org cap (dag set limit global) or clear it"]
     )
   }
