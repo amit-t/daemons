@@ -15,8 +15,8 @@ assert_contains "day1 flat" "$out" '"flat_cap":12000'
 #    share floor(600/2)=300 -> caps 400 and 600. sum_caps=1000 <= pool.
 out=$(run_jq '{"pool":1000,"users":[{"email":"a@x","consumed":100},{"email":"b@x","consumed":300}]}')
 assert_contains "mid mode" "$out" '"mode":"per_user"'
-assert_contains "mid capA" "$out" '{"email":"a@x","consumed":100,"cap":400}'
-assert_contains "mid capB" "$out" '{"email":"b@x","consumed":300,"cap":600}'
+assert_contains "mid capA" "$out" '{"email":"a@x","consumed":100,"cap":400,"projected":null}'
+assert_contains "mid capB" "$out" '{"email":"b@x","consumed":300,"cap":600,"projected":null}'
 
 # 2b. User IDs pass through for v3beta1 per-user PATCH targets.
 out=$(run_jq '{"pool":1000,"users":[{"user_id":"email|a","email":"a@x","consumed":100},{"user_id":"email|b","email":"b@x","consumed":300}]}')
@@ -60,7 +60,7 @@ out=$(run_jq '{"pool":1000,"users":[
   {"user_id":"email|former","email":"former@x","consumed":400,"member":false,"active":false}
 ]}')
 assert_contains "active-only count" "$out" '"eligible_user_count":1'
-assert_contains "active-only cap" "$out" '{"email":"active@x","consumed":100,"user_id":"email|active","cap":1000}'
+assert_contains "active-only cap" "$out" '{"email":"active@x","consumed":100,"user_id":"email|active","cap":1000,"projected":null}'
 if [[ "$out" == *'"email":"inactive@x","consumed":300,"user_id":"email|inactive","cap"'* ]]; then
   _fail "inactive user received cap"
 else
@@ -79,5 +79,17 @@ fi
 assert_contains "inactive excluded audit" "$out" '{"email":"inactive@x","user_id":"email|inactive","consumed":300,"member":true,"active":false,"reasons":["inactive"]}'
 assert_contains "inactive string excluded audit" "$out" '{"email":"inactive-string@x","user_id":"email|inactive-string","consumed":50,"member":true,"active":false,"reasons":["inactive"]}'
 assert_contains "former excluded audit" "$out" '{"email":"former@x","user_id":"email|former","consumed":400,"member":false,"active":false,"reasons":["not_current_member","inactive"]}'
+
+# 9. Forecast warnings: heavy burner flagged.
+#    P1. Heavy burner flagged: pool 1000, 2 users. consumed 100+100, share 400.
+#        u1 run_rate 30 x days_left 20 -> projected 700 > cap 500: warn.
+out=$(run_jq '{"pool":1000,"days_left":20,"users":[
+  {"email":"u1@x","consumed":100,"run_rate":30},
+  {"email":"u2@x","consumed":100,"run_rate":1}]}')
+assert_contains "P1 projected" "$out" '"projected":700'
+assert_contains "P1 warn" "$out" 'u1@x projected 700 ACUs by cycle end exceeds proposed cap 500'
+# P2. No run_rate -> projected null, no forecast warning.
+out=$(run_jq '{"pool":1000,"users":[{"email":"u1@x","consumed":100}]}')
+assert_contains "P2 no projected" "$out" '"projected":null'
 
 report
