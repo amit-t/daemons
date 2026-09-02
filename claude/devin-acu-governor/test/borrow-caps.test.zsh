@@ -10,7 +10,7 @@ run_jq() { print -r -- "$1" | jq -c -f "$jqf" }
 #    base_sum=100+200+300=600, donor avail=1000, share=floor((1000-600)/3)=133.
 #    caps 233/333/433 sum 999. borrowed 999 taken from the single lowest-consumer
 #    donor (cap 1000 -> 1). 1 ACU of headroom stays with the donor. Zero-sum.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100},{"email":"r2@x","consumed":200},{"email":"r3@x","consumed":300}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100},{"email":"r2@x","consumed":200},{"email":"r3@x","consumed":300}],
   "donors":[{"email":"d1@x","cap":1000,"consumed":0}]}')
 assert_contains "A mode" "$out" '"mode":"even_share"'
 assert_contains "A share" "$out" '"share":133'
@@ -26,7 +26,7 @@ assert_contains "A no warnings" "$out" '"warnings":[]'
 # B. min_cover: donors cover consumption exactly, no growth headroom (share would be 0).
 #    base_sum=300, donor avail=300, 300 >= base_sum(300)+n(2)? no -> constrained.
 #    Both funded at ceil(consumed): 100, 200. Zero-sum. Warn: consumption only.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100},{"email":"r2@x","consumed":200}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100},{"email":"r2@x","consumed":200}],
   "donors":[{"email":"d1@x","cap":300,"consumed":0}]}')
 assert_contains "B mode" "$out" '"mode":"min_cover"'
 assert_contains "B cap r1" "$out" '{"email":"r1@x","consumed":100,"cap":100}'
@@ -38,7 +38,7 @@ assert_contains "B zero_sum" "$out" '"zero_sum":true'
 
 # C. partial: donor avail (200) cannot fund everyone zero-sum. Cheapest funded
 #    first (r1=50, r2=100 -> 150 used), r3 (400) left uncapped. Zero-sum.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":50},{"email":"r2@x","consumed":100},{"email":"r3@x","consumed":400}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":50},{"email":"r2@x","consumed":100},{"email":"r3@x","consumed":400}],
   "donors":[{"email":"d1@x","cap":200,"consumed":0}]}')
 assert_contains "C mode" "$out" '"mode":"partial"'
 assert_contains "C cap r1" "$out" '{"email":"r1@x","consumed":50,"cap":50}'
@@ -51,7 +51,7 @@ assert_contains "C warn names" "$out" 'left uncapped: r3@x'
 assert_contains "C zero_sum" "$out" '"zero_sum":true'
 
 # D. No donors: nothing to borrow. All recipients skipped, no caps applied. Zero-sum (0==0).
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],"donors":[]}')
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100}],"donors":[]}')
 assert_contains "D mode" "$out" '"mode":"partial"'
 assert_contains "D borrowed" "$out" '"borrowed":0'
 assert_contains "D capped empty" "$out" '"recipients_capped":[]'
@@ -60,12 +60,12 @@ assert_contains "D warn none" "$out" 'no caps applied: no donor headroom'
 assert_contains "D zero_sum" "$out" '"zero_sum":true'
 
 # E. No recipients: error, no plan.
-out=$(run_jq '{"recipients":[],"donors":[{"email":"d1@x","cap":100,"consumed":10}]}')
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[],"donors":[{"email":"d1@x","cap":100,"consumed":10}]}')
 assert_contains "E error" "$out" '"error":"no uncapped users to seed"'
 
 # F. donor_buffer override (0): global 500-ACU direct-headroom ceiling still applies.
 #    donor cap 1000 consumed 100 -> avail 900; recipient cap=100+500=600.
-out=$(run_jq '{"donor_buffer":0,"recipients":[{"email":"r1@x","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"donor_buffer":0,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":1000,"consumed":100}]}')
 assert_contains "F donor_buffer" "$out" '"donor_buffer":0'
 assert_contains "F cap" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
@@ -76,7 +76,7 @@ assert_contains "F zero_sum" "$out" '"zero_sum":true'
 #    d2 (consumed 5) drained before d1 (consumed 100). d1 keeps a ~10% buffer above
 #    100 (FP: ceil(100*1.1)=111 -> floor 111, avail 39). 500-ACU recipient
 #    ceiling means d2 alone funds the 600-ACU cap. user_id flows to outputs.
-out=$(run_jq '{"recipients":[{"email":"r1@x","user_id":"email|r1","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","user_id":"email|r1","consumed":100}],
   "donors":[{"email":"d1@x","cap":150,"consumed":100},{"email":"d2@x","user_id":"email|d2","cap":1000,"consumed":5}]}')
 assert_contains "G recipient user_id" "$out" '"user_id":"email|r1"'
 assert_contains "G draw d2 first" "$out" '{"email":"d2@x","cap_before":1000,"cap_after":400,"given":600,"user_id":"email|d2"}'
@@ -85,7 +85,7 @@ assert_contains "G zero_sum" "$out" '"zero_sum":true'
 # H. Multi-donor even_share, single recipient: draw spans donors lowest-first, buffer respected.
 #    d1 cap500 c0 avail500; d2 cap500 c200 floor ceil(200*1.1)=221 avail279. total 779.
 #    raw share is 679 but global ceiling gives cap 600. Draw d1(500) then d2(100): d2 cap_after 400.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":500,"consumed":0},{"email":"d2@x","cap":500,"consumed":200}]}')
 assert_contains "H cap" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
 assert_contains "H d1 drained" "$out" '{"email":"d1@x","cap_before":500,"cap_after":0,"given":500}'
@@ -95,7 +95,7 @@ assert_contains "H zero_sum" "$out" '"zero_sum":true'
 # I. Default reservation set excludes inactive or non-current-member users.
 #    Only active current-member recipients get seeded, and inactive/former donors
 #    do not inflate active-member cap reservations.
-out=$(run_jq '{"recipients":[
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[
     {"email":"r-active@x","user_id":"email|r-active","consumed":100,"member":true,"active":true},
     {"email":"r-inactive@x","user_id":"email|r-inactive","consumed":50,"member":true,"active":false},
     {"email":"r-former@x","user_id":"email|r-former","consumed":1,"member":false,"active":false}
@@ -126,7 +126,7 @@ assert_contains "I active donor take" "$out" '{"email":"d-active@x","cap_before"
 # J. Global direct-headroom ceiling: no new recipient gets more than 500 ACUs
 # above current consumption, even when donor availability would support more.
 # cap=floor(100)+500=600; only 600 is borrowed and donor keeps 400.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":1000,"consumed":0}]}')
 assert_contains "J default max headroom" "$out" '"max_headroom":500'
 assert_contains "J cap ceiling" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
@@ -135,7 +135,7 @@ assert_contains "J donor remainder" "$out" '{"email":"d1@x","cap_before":1000,"c
 
 # K. Prefer one high-surplus donor over draining many low-cap donors.  This keeps
 # the zero-sum plan legible while preserving each donor's safety floor.
-out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"small@x","cap":100,"consumed":0},{"email":"large@x","cap":1000,"consumed":0}]}')
 assert_contains "K high-surplus donor selected" "$out" '{"email":"large@x","cap_before":1000,"cap_after":400,"given":600}'
 if [[ "$out" == *'"email":"small@x","cap_before"'* ]]; then
@@ -151,7 +151,7 @@ fi
 #    consumed 300, run_rate 0 -> floor 330, available 70. total 299.
 #    recipient consumed 0 -> even_share share 299 (< 500 ceiling), cap 299.
 #    Draw highest-available first: burner gives 229 (never below its projected floor), idle gives 70.
-out=$(run_jq '{"days_left":10,"recipients":[{"email":"r1@x","consumed":0}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"days_left":10,"recipients":[{"email":"r1@x","consumed":0}],
   "donors":[{"email":"burner@x","cap":1000,"consumed":200,"run_rate":50},{"email":"idle@x","cap":400,"consumed":300,"run_rate":0}]}')
 assert_contains "L cap" "$out" '{"email":"r1@x","consumed":0,"cap":299}'
 assert_contains "L burner projected floor" "$out" '{"email":"burner@x","cap_before":1000,"cap_after":771,"given":229}'
@@ -164,7 +164,7 @@ assert_contains "L zero_sum" "$out" '"zero_sum":true'
 #    floor 771 (FP) > cap -> available 0. idle: cap 170, consumed 100, run_rate 0 ->
 #    floor ceil(100*1.1)=111 (FP), available 59 (only 70 ACUs nominal headroom, but weeks idle = safe).
 #    recipient consumed 40 -> even_share share floor((59-40)/1)=19, cap 59.
-out=$(run_jq '{"days_left":20,"recipients":[{"email":"r1@x","consumed":40}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"days_left":20,"recipients":[{"email":"r1@x","consumed":40}],
   "donors":[{"email":"burner@x","cap":600,"consumed":100,"run_rate":30},{"email":"idle@x","cap":170,"consumed":100,"run_rate":0}]}')
 assert_contains "M idle funds" "$out" '{"email":"idle@x","cap_before":170,"cap_after":111,"given":59}'
 if [[ "$out" == *'"email":"burner@x","cap_before"'* ]]; then
@@ -176,10 +176,86 @@ assert_contains "M zero_sum" "$out" '"zero_sum":true'
 
 # N. Backward compatible: donors without run_rate behave exactly as before even
 # when days_left is supplied (same as case J).
-out=$(run_jq '{"days_left":15,"recipients":[{"email":"r1@x","consumed":100}],
+out=$(run_jq '{"min_donor_cap_after":0,"min_donor_headroom":0,"require_forecast":false,"days_left":15,"recipients":[{"email":"r1@x","consumed":100}],
   "donors":[{"email":"d1@x","cap":1000,"consumed":0}]}')
 assert_contains "N cap ceiling" "$out" '{"email":"r1@x","consumed":100,"cap":600}'
 assert_contains "N no run_rate unchanged" "$out" '{"email":"d1@x","cap_before":1000,"cap_after":400,"given":600}'
 assert_contains "N zero_sum" "$out" '"zero_sum":true'
+
+# N1. Safe defaults: donor consumed 45 is NOT cut to 50. Floor =
+#     max(ceil(45*1.1)=50, ceil(45)+25=70, 50) = 70. cap 150 -> avail 80.
+#     require_forecast off (no run_rate data in this fixture).
+out=$(run_jq '{"require_forecast":false,"recipients":[{"email":"r1@x","consumed":10}],
+  "donors":[{"email":"d1@x","cap":150,"consumed":45}]}')
+assert_contains "N1 floor keeps 25 headroom" "$out" '"cap_after":70'
+assert_contains "N1 min_donor_headroom out" "$out" '"min_donor_headroom":25'
+assert_contains "N1 min_donor_cap_after out" "$out" '"min_donor_cap_after":50'
+
+# N2. Absolute floor: idle donor (consumed 0) never cut below 50.
+#     floor = max(0, 0+25, 50) = 50. cap 300 -> avail 250.
+out=$(run_jq '{"require_forecast":false,"recipients":[{"email":"r1@x","consumed":200}],
+  "donors":[{"email":"d1@x","cap":300,"consumed":0}]}')
+assert_contains "N2 floor 50" "$out" '"cap_after":50'
+
+# N3. days_left guard: donor run_rate without days_left key = hard error.
+out=$(run_jq '{"recipients":[{"email":"r1@x","consumed":10}],
+  "donors":[{"email":"d1@x","cap":300,"consumed":20,"run_rate":5}]}')
+assert_contains "N3 error" "$out" 'days_left missing while donor run_rate supplied'
+
+# N4. require_forecast default: donor without run_rate excluded, listed with reason.
+out=$(run_jq '{"days_left":10,"recipients":[{"email":"r1@x","consumed":10}],
+  "donors":[{"email":"d-blind@x","cap":300,"consumed":20},
+            {"email":"d-fc@x","cap":300,"consumed":20,"run_rate":0}]}')
+assert_contains "N4 excluded" "$out" '"email":"d-blind@x"'
+assert_contains "N4 reason" "$out" 'no_run_rate_forecast'
+assert_contains "N4 warn" "$out" 'excluded: no run_rate forecast'
+assert_contains "N4 fc donor used" "$out" '"email":"d-fc@x","cap_before":300'
+
+# N5. Forecast floor still binds: run_rate 10 x days_left 10 on consumed 20
+#     -> proj floor ceil((20+100)*1.1)=132 > consumed floor. cap 300 -> avail 168.
+out=$(run_jq '{"days_left":10,"recipients":[{"email":"r1@x","consumed":150}],
+  "donors":[{"email":"d1@x","cap":300,"consumed":20,"run_rate":10}]}')
+assert_contains "N5 proj floor" "$out" '"cap_after":132'
+
+# FB1. Forecast-first seeding: donors untouched when headroom covers borrowed.
+#      recipient consumed 100 -> min_cover-style cap 100 via forecast only.
+out=$(run_jq '{"require_forecast":false,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":24000,"projected_cycle_total":20454},
+  "recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":300,"consumed":250}]}')
+assert_contains "FB1 headroom" "$out" '"forecast_headroom":1773'
+assert_contains "FB1 fc funded > 0" "$out" '"forecast_funded":'
+assert_contains "FB1 not zero-sum" "$out" '"zero_sum":false'
+assert_contains "FB1 warn" "$out" 'funded from enterprise forecast headroom'
+
+# FB2. Split: forecast 40 + donors fund the rest; donor_takes shrink accordingly.
+out=$(run_jq '{"require_forecast":false,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "FB2 headroom 40" "$out" '"forecast_headroom":40'
+assert_contains "FB2 fc funded 40" "$out" '"forecast_funded":40'
+assert_contains "FB2 given 500" "$out" '"given":500'
+assert_contains "FB2 cap 540" "$out" '"cap":540'
+
+# FB3. Malformed forecast.
+out=$(run_jq '{"forecast":{"pool":1000},"recipients":[{"email":"r1@x","consumed":1}],"donors":[]}')
+assert_contains "FB3 error" "$out" '"error":"forecast requires pool and projected_cycle_total"'
+
+# FW2. Partial-mode warning names both parts of available headroom (donor vs forecast),
+#      never labels the combined total_available as donor headroom alone.
+#      donor avail 60 (cap 60, floors zeroed); forecast headroom 40 (pool 1000,
+#      projected 920, util 0.5) -> total_available 100. Two recipients consumed 60
+#      each (base_sum+n=122 > 100) -> partial: r1 funded (cap 60), r2 skipped.
+out=$(run_jq '{"require_forecast":false,"donor_buffer":0,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipients":[{"email":"r1@x","consumed":60},{"email":"r2@x","consumed":60}],
+  "donors":[{"email":"d1@x","cap":60,"consumed":0}]}')
+assert_contains "FW2 mode" "$out" '"mode":"partial"'
+assert_contains "FW2 donor_available" "$out" '"donor_available":60'
+assert_contains "FW2 forecast_headroom" "$out" '"forecast_headroom":40'
+assert_contains "FW2 warn donor part" "$out" 'donor 60'
+assert_contains "FW2 warn forecast part" "$out" 'forecast 40'
+assert_contains "FW2 warn phrasing" "$out" 'available headroom (donor 60 + forecast 40) cannot fund all 2 users'
 
 report
