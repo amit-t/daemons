@@ -180,4 +180,14 @@ out=$(run_jq '{"pool":1000,"share":100,"forecast":{"pool":1000},
   "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":1,"days_left":10},"donors":[]}')
 assert_contains "F4 error" "$out" '"error":"forecast requires pool and projected_cycle_total"'
 
+# F5. Shared-budget clamp: computed headroom 1773 but remaining budget 30
+#     -> forecast_headroom 30, forecast_funded 30, donors fund the rest (delta 150).
+out=$(run_jq '{"pool":24000,"share":100,"days_left":10,"require_forecast":false,"min_donor_headroom":0,
+  "forecast":{"pool":24000,"projected_cycle_total":20454,"remaining":30},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":8,"days_left":10,"delta_override":150},
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "F5 clamped headroom" "$out" '"forecast_headroom":30'
+assert_contains "F5 fc funded 30" "$out" '"forecast_funded":30'
+assert_contains "F5 donor funded 120" "$out" '"donor_funded":120'
+
 report

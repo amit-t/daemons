@@ -14,7 +14,13 @@
 #   "require_forecast"?: <bool=true>,         # exclude donors without run_rate from the pool (forecast-safe)
 #   "days_left"?: <number>,                   # cycle days left for donor run-rate projection (defaults to recipient.days_left)
 #   "forecast"?: {"pool": <int>, "projected_cycle_total": <number>,
-#                  "utilization": <number=0.5, clamped 0..1>},  # enterprise forecast headroom, funded before donors
+#                  "utilization": <number=0.5, clamped 0..1>,
+#                  "remaining"?: <number>},                    # enterprise forecast headroom, funded before donors;
+#                                                                # optional "remaining" clamps forecast_headroom to a
+#                                                                # shared budget still unspent this run — batch flows
+#                                                                # (dag boost all) pass the run's remaining shared
+#                                                                # forecast budget here so sequential recipient plans
+#                                                                # cannot each re-spend the full computed headroom
 #   "recipient": {"email","cap","consumed","run_rate","days_left", "delta_override"?},
 #   "donors": [{"email","cap","consumed","run_rate"?}, ...]   # candidate donor pool
 # }
@@ -45,8 +51,13 @@
 #
 # Forecast headroom (optional "forecast" input): forecast_headroom =
 # max(0, floor((pool - projected_cycle_total) * utilization)); utilization defaults to 0.5,
-# clamped to [0,1]. A malformed forecast (missing pool or projected_cycle_total) returns
-# {error: "..."} instead of a plan. Funding order is forecast-FIRST: forecast_funded =
+# clamped to [0,1]. When "remaining" is also present (non-negative number), forecast_headroom
+# is further clamped to it: max(0, min(floor((pool - projected_cycle_total) * utilization),
+# floor(remaining))) — this is how a batch of sequential recipient plans shares one forecast
+# budget instead of each recomputing and re-spending the full undiminished headroom; absent
+# "remaining", behavior is exactly the unclamped formula above. A malformed forecast (missing
+# pool or projected_cycle_total) returns {error: "..."} instead of a plan — "remaining" is
+# always optional and never required. Funding order is forecast-FIRST: forecast_funded =
 # min(delta, forecast_headroom) is drawn before the donor allocator runs on the remainder
 # (donor_funded); funded = forecast_funded + donor_funded. zero_sum is false whenever
 # forecast_funded > 0, since forecast funding grows Σ explicit caps rather than
@@ -70,8 +81,9 @@
 | (.forecast // null) as $fc
 | (if $fc == null then 0
    elif (($fc | has("pool")) and ($fc | has("projected_cycle_total"))) | not then null
-   else ([0, ((($fc.pool - $fc.projected_cycle_total)
-               * ([([($fc.utilization // 0.5), 0] | max), 1] | min)) | floor)] | max)
+   else (([0, ((($fc.pool - $fc.projected_cycle_total)
+               * ([([($fc.utilization // 0.5), 0] | max), 1] | min)) | floor)] | max) as $raw
+         | if $fc | has("remaining") then ([$raw, ($fc.remaining | floor)] | min) else $raw end)
    end) as $forecast_headroom
 | if $forecast_headroom == null then
     {error: "forecast requires pool and projected_cycle_total"}
