@@ -143,4 +143,41 @@ assert_contains "N3 excluded list" "$out" '"donors_excluded_no_forecast":["d-bli
 assert_contains "N3 warn" "$out" 'excluded: no run_rate forecast'
 assert_contains "N3 fc donor gives" "$out" '"email":"d-fc@x"'
 
+# F1. Forecast-first: enterprise projected 3546 under pool, utilization 0.5
+#     -> forecast_headroom 1773 fully funds delta; NO donor is cut.
+out=$(run_jq '{"pool":24000,"share":100,"days_left":10,"require_forecast":false,
+  "forecast":{"pool":24000,"projected_cycle_total":20454},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":8,"days_left":10,"delta_override":150},
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "F1 headroom" "$out" '"forecast_headroom":1773'
+assert_contains "F1 funded" "$out" '"forecast_funded":150'
+assert_contains "F1 no donor cut" "$out" '"takes":[]'
+assert_contains "F1 not zero-sum" "$out" '"zero_sum":false'
+assert_contains "F1 recipient" "$out" '"cap_after":250'
+assert_contains "F1 warn" "$out" 'funded from enterprise forecast headroom'
+
+# F2. Split funding: forecast covers 40, donors the rest.
+#     utilization 0.5 on (1000-920)=80 -> headroom 40; delta 100 -> donors give 60.
+out=$(run_jq '{"pool":1000,"share":100,"days_left":10,"require_forecast":false,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":1,"days_left":10,"delta_override":100},
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "F2 headroom" "$out" '"forecast_headroom":40'
+assert_contains "F2 fc funded" "$out" '"forecast_funded":40'
+assert_contains "F2 donor funded" "$out" '"donor_funded":60'
+assert_contains "F2 donor take" "$out" '"given":60'
+
+# F3. Projected OVER pool: headroom 0, behavior identical to zero-sum.
+out=$(run_jq '{"pool":1000,"share":100,"days_left":10,"require_forecast":false,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":1200},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":1,"days_left":10,"delta_override":50},
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "F3 headroom 0" "$out" '"forecast_headroom":0'
+assert_contains "F3 zero-sum" "$out" '"zero_sum":true'
+
+# F4. Malformed forecast input.
+out=$(run_jq '{"pool":1000,"share":100,"forecast":{"pool":1000},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":1,"days_left":10},"donors":[]}')
+assert_contains "F4 error" "$out" '"error":"forecast requires pool and projected_cycle_total"'
+
 report
