@@ -217,4 +217,29 @@ out=$(run_jq '{"days_left":10,"recipients":[{"email":"r1@x","consumed":150}],
   "donors":[{"email":"d1@x","cap":300,"consumed":20,"run_rate":10}]}')
 assert_contains "N5 proj floor" "$out" '"cap_after":132'
 
+# FB1. Forecast-first seeding: donors untouched when headroom covers borrowed.
+#      recipient consumed 100 -> min_cover-style cap 100 via forecast only.
+out=$(run_jq '{"require_forecast":false,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":24000,"projected_cycle_total":20454},
+  "recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":300,"consumed":250}]}')
+assert_contains "FB1 headroom" "$out" '"forecast_headroom":1773'
+assert_contains "FB1 fc funded > 0" "$out" '"forecast_funded":'
+assert_contains "FB1 not zero-sum" "$out" '"zero_sum":false'
+assert_contains "FB1 warn" "$out" 'funded from enterprise forecast headroom'
+
+# FB2. Split: forecast 40 + donors fund the rest; donor_takes shrink accordingly.
+out=$(run_jq '{"require_forecast":false,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipients":[{"email":"r1@x","consumed":100}],
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "FB2 headroom 40" "$out" '"forecast_headroom":40'
+assert_contains "FB2 fc funded 40" "$out" '"forecast_funded":40'
+assert_contains "FB2 given 500" "$out" '"given":500'
+assert_contains "FB2 cap 540" "$out" '"cap":540'
+
+# FB3. Malformed forecast.
+out=$(run_jq '{"forecast":{"pool":1000},"recipients":[{"email":"r1@x","consumed":1}],"donors":[]}')
+assert_contains "FB3 error" "$out" '"error":"forecast requires pool and projected_cycle_total"'
+
 report

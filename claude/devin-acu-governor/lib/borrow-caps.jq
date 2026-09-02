@@ -18,6 +18,9 @@
 #   "days_left": <number=0>,                                 # cycle days left, for donor run-rate projection;
 #                                                            # required (key must be present) if any donor
 #                                                            # carries run_rate, else {error}
+#   "forecast"?: {"pool": <int>, "projected_cycle_total": <number>,
+#                  "utilization": <number=0.5, clamped 0..1>},  # enterprise forecast headroom, funded
+#                                                            # before donors (see below)
 #   "recipients": [{"email","user_id"?,"consumed","member"?,"active"?}, ...],
 #                                                            # uncapped users (no explicit cap today)
 #   "donors":     [{"email","user_id"?,"cap","consumed","run_rate"?,"member"?,"active"?}, ...]
@@ -34,10 +37,21 @@
 # lending entirely (donors_excluded, reason "no_run_rate_forecast") whenever require_forecast
 # is true (the default); pass require_forecast:false to lend from consumed-only floors instead.
 #
+# Forecast headroom (optional "forecast" input): forecast_headroom =
+# max(0, floor((pool - projected_cycle_total) * utilization)); utilization defaults to 0.5,
+# clamped to [0,1]. A malformed forecast (missing pool or projected_cycle_total) returns
+# {error: "..."} instead of a plan. donor_available is the donor-only headroom (Σ candidate
+# available); total_available = donor_available + forecast_headroom drives mode/plan
+# decisions. Funding order is forecast-FIRST: forecast_funded = min(borrowed, forecast_headroom)
+# is drawn before the donor allocator runs on the remainder; donors only give up
+# (borrowed - forecast_funded). zero_sum is false whenever forecast_funded > 0, since
+# forecast funding grows Σ explicit caps rather than redistributing them among participants.
+#
 # Output:
 # {
 #   mode: "even_share" | "min_cover" | "partial",
 #   donor_buffer, max_headroom, min_donor_cap_after, min_donor_headroom, require_forecast,
+#   donor_available, forecast_headroom, forecast_funded,
 #   total_available, recipients_total, borrowed,
 #   share?,                                  # even_share only
 #   recipients_capped: [{email,user_id?,consumed,cap}],
@@ -46,8 +60,9 @@
 #   recipients_excluded, donors_excluded, eligible_recipient_count,
 #   eligible_donor_count, sum_donor_before, sum_donor_after, sum_before,
 #   sum_after, zero_sum, warnings
-# }  or  {error} on empty/fully-ineligible recipient set, or when donor run_rate is
-#   supplied without a top-level days_left key.
+# }  or  {error} on empty/fully-ineligible recipient set, when donor run_rate is
+#   supplied without a top-level days_left key, or when "forecast" is present but
+#   missing pool or projected_cycle_total.
 #
 # donors_excluded reasons include the existing "not_current_member"/"inactive" audit
 # rows plus, when require_forecast is true, donors lacking run_rate with reason
@@ -58,8 +73,9 @@
 #               capped by max_headroom (500 ACUs by global policy).
 #   min_cover   donors can cover each recipient's consumed ACUs only (no growth headroom).
 #   partial     donors cannot fund everyone; cheapest recipients funded first, rest left uncapped.
-# Invariant: borrowed == Σ recipients_capped[].cap == Σ donor_takes[].given, and
-#            sum_after == sum_before (true zero-sum) in every mode.
+# Invariant: borrowed == Σ recipients_capped[].cap == forecast_funded + Σ donor_takes[].given,
+#            and sum_after == sum_before (true zero-sum) when forecast_funded == 0.
+#            With forecast funding: sum_after == sum_before + forecast_funded.
 
 def uid: if has("user_id") then {user_id} else {} end;
 
@@ -112,6 +128,12 @@ def excluded_donor_row:
 | (if has("require_forecast") then .require_forecast else true end) as $require_forecast
 | (has("days_left")) as $has_days
 | (.days_left // 0) as $days_left
+| (.forecast // null) as $fc
+| (if $fc == null then 0
+   elif (($fc | has("pool")) and ($fc | has("projected_cycle_total"))) | not then null
+   else ([0, ((($fc.pool - $fc.projected_cycle_total)
+               * ([([($fc.utilization // 0.5), 0] | max), 1] | min)) | floor)] | max)
+   end) as $forecast_headroom
 | (.recipients // []) as $all_recips
 | (.donors // [])     as $all_donors
 | ([ $all_recips[] | select(eligible) ]) as $recips
@@ -134,6 +156,8 @@ def excluded_donor_row:
      eligible_donor_count: ($donors | length),
      recipients_excluded: $recips_excluded,
      donors_excluded: $donors_excluded}
+  elif $forecast_headroom == null then
+    {error: "forecast requires pool and projected_cycle_total"}
   elif ($has_days | not) and ([ $donors[] | select((.run_rate // null) != null) ] | length) > 0 then
     {error: "days_left missing while donor run_rate supplied — forecast floors would collapse to consumed-only; pass days_left"}
   else
@@ -147,7 +171,8 @@ def excluded_donor_row:
        | ([$proj_floor, ((.consumed | ceil) + $min_headroom), $floor_min] | max) as $floor
        | {email, consumed, cap, floor: $floor, available: ([.cap - $floor, 0] | max)} + uid ]
      | sort_by(-.available, .consumed)) as $cands
-    | ([ $cands[].available ] | add // 0)      as $total_available
+    | ([ $cands[].available ] | add // 0)      as $donor_available
+    | ($donor_available + $forecast_headroom)  as $total_available
     | ([ $recips[].consumed | floor ] | add)   as $base_sum
     | ([ $donors[].cap ] | add // 0)           as $sum_donor_before
     # Plan recipient caps.
@@ -174,15 +199,18 @@ def excluded_donor_row:
             capped: .capped, skipped: .skipped}
        end) as $plan
     | ([ $plan.capped[].cap ] | add // 0) as $borrowed
-    # Draw exactly $borrowed from high-surplus donors first; consumption breaks ties.
-    | (reduce $cands[] as $d ({remaining: $borrowed, takes: []};
+    # Forecast-first: fund from forecast headroom before drawing down any donor.
+    | ([$borrowed, $forecast_headroom] | min) as $forecast_funded
+    | ($borrowed - $forecast_funded) as $donor_borrowed
+    # Draw the remainder from high-surplus donors first; consumption breaks ties.
+    | (reduce $cands[] as $d ({remaining: $donor_borrowed, takes: []};
          (if .remaining > 0 and $d.available > 0
             then ([$d.available, .remaining] | min) else 0 end) as $give
          | {remaining: (.remaining - $give),
             takes: (.takes + (if $give > 0
                       then [ ({email: $d.email, cap_before: $d.cap, cap_after: ($d.cap - $give), given: $give} + ($d | uid)) ]
                       else [] end))})) as $draw
-    | ($sum_donor_before - $borrowed) as $sum_donor_after
+    | ($sum_donor_before - $donor_borrowed) as $sum_donor_after
     | {
         mode: $plan.mode,
         donor_buffer: $dbuf,
@@ -190,6 +218,9 @@ def excluded_donor_row:
         min_donor_cap_after: $floor_min,
         min_donor_headroom: $min_headroom,
         require_forecast: $require_forecast,
+        donor_available: $donor_available,
+        forecast_headroom: $forecast_headroom,
+        forecast_funded: $forecast_funded,
         total_available: $total_available,
         recipients_total: $n,
         eligible_recipient_count: $n,
@@ -214,8 +245,10 @@ def excluded_donor_row:
                then ["no caps applied: no donor headroom to borrow"] else [] end)
           + (if ($donors_noforecast | length) > 0
                then ["\($donors_noforecast | length) donor(s) excluded: no run_rate forecast (require_forecast). Pass run_rate, or require_forecast:false to accept consumed-only floors: \([$donors_noforecast[].email] | join(", "))"] else [] end)
+          + (if $forecast_funded > 0
+               then ["\($forecast_funded) ACUs funded from enterprise forecast headroom (pool \($fc.pool) − projected \($fc.projected_cycle_total), utilization \($fc.utilization // 0.5)) — Σ explicit caps grows by \($forecast_funded); NOT zero-sum. Exposure is bounded by the linear projection only."] else [] end)
         )
       }
     | (if ($plan | has("share")) then . + {share: $plan.share} else . end)
-    | . + {zero_sum: (.sum_before == .sum_after)}
+    | . + {zero_sum: (($forecast_funded == 0) and (.sum_before == .sum_after))}
   end
