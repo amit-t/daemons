@@ -157,7 +157,9 @@
            then ["\($forecast_funded) ACUs funded from enterprise forecast headroom (pool \($fc.pool) − projected \($fc.projected_cycle_total), utilization \($fc.utilization // 0.5)) — Σ explicit caps grows by \($forecast_funded); NOT zero-sum. Exposure is bounded by the linear projection only."]
            else [] end)
       + (if $alloc.remaining > 0
-           then ["donors can only fund \($funded) of \($delta) ACUs under donor safety policy (min cap after \($mincap), min donor give \($mingive)); recipient raised by \($funded) only. Add more high-headroom donors, lower donor safety thresholds explicitly, or cover \($alloc.remaining) from pool headroom (creates overage risk)."]
+           then ["donors can only fund \($donor_funded) of \($delta) ACUs under donor safety policy (min cap after \($mincap), min donor give \($mingive)); recipient raised by \($funded) only."
+                 + (if $forecast_funded > 0 then " \($forecast_funded) ACUs of that came from forecast headroom separately." else "" end)
+                 + " Add more high-headroom donors, lower donor safety thresholds explicitly, or cover \($alloc.remaining) from pool headroom (creates overage risk)."]
            else [] end)
       + (if ($no_fc_donors | length) > 0
            then ["\($no_fc_donors | length) donor(s) excluded: no run_rate forecast (require_forecast). Pass run_rate, or require_forecast:false to accept consumed-only floors: \($no_fc_donors | join(", "))"]

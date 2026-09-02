@@ -242,4 +242,20 @@ assert_contains "FB2 cap 540" "$out" '"cap":540'
 out=$(run_jq '{"forecast":{"pool":1000},"recipients":[{"email":"r1@x","consumed":1}],"donors":[]}')
 assert_contains "FB3 error" "$out" '"error":"forecast requires pool and projected_cycle_total"'
 
+# FW2. Partial-mode warning names both parts of available headroom (donor vs forecast),
+#      never labels the combined total_available as donor headroom alone.
+#      donor avail 60 (cap 60, floors zeroed); forecast headroom 40 (pool 1000,
+#      projected 920, util 0.5) -> total_available 100. Two recipients consumed 60
+#      each (base_sum+n=122 > 100) -> partial: r1 funded (cap 60), r2 skipped.
+out=$(run_jq '{"require_forecast":false,"donor_buffer":0,"min_donor_cap_after":0,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipients":[{"email":"r1@x","consumed":60},{"email":"r2@x","consumed":60}],
+  "donors":[{"email":"d1@x","cap":60,"consumed":0}]}')
+assert_contains "FW2 mode" "$out" '"mode":"partial"'
+assert_contains "FW2 donor_available" "$out" '"donor_available":60'
+assert_contains "FW2 forecast_headroom" "$out" '"forecast_headroom":40'
+assert_contains "FW2 warn donor part" "$out" 'donor 60'
+assert_contains "FW2 warn forecast part" "$out" 'forecast 40'
+assert_contains "FW2 warn phrasing" "$out" 'available headroom (donor 60 + forecast 40) cannot fund all 2 users'
+
 report

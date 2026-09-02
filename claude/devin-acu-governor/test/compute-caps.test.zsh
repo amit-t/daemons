@@ -92,4 +92,9 @@ assert_contains "P1 warn" "$out" 'u1@x projected 700 ACUs by cycle end exceeds p
 out=$(run_jq '{"pool":1000,"users":[{"email":"u1@x","consumed":100}]}')
 assert_contains "P2 no projected" "$out" '"projected":null'
 
+# P3. days_left guard: user run_rate supplied, no top-level days_left key at all
+#     -> error instead of silently collapsing projections to consumed-only.
+out=$(run_jq '{"pool":1000,"users":[{"email":"u1@x","consumed":100,"run_rate":5}]}')
+assert_contains "P3 error" "$out" 'days_left missing while user run_rate supplied'
+
 report

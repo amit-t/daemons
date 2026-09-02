@@ -14,6 +14,11 @@
 # Forecast: projected = ceil(consumed + run_rate * days_left) when a user
 # carries run_rate, else null. No cap values change from a forecast; a
 # projected > cap only appends a warning.
+#
+# days_left guard: if any user carries run_rate but the top-level "days_left"
+# key is absent (key absence, not a falsy value — 0 is a valid days_left),
+# projections would silently collapse to consumed-only; returns {error: "..."}
+# instead of a plan.
 
 def uid: if has("user_id") then {user_id} else {} end;
 
@@ -61,7 +66,8 @@ def caprow($cap; $days_left):
      projected: (if (.run_rate // null) == null then null
                  else ((.consumed + .run_rate * $days_left) | ceil) end)};
 
-(.users // []) as $all_users
+(has("days_left")) as $has_days
+| (.users // []) as $all_users
 | (.days_left // 0) as $days_left
 | ([ $all_users[] | select(eligible) ]) as $users
 | ([ $all_users[] | select(eligible | not) | excludedrow ]) as $excluded
@@ -71,6 +77,8 @@ def caprow($cap; $days_left):
     {error: "no users in roster", eligible_user_count: 0, excluded_users: []}
   elif $n == 0 then
     {error: "no active current-member users in roster", eligible_user_count: 0, excluded_users: $excluded}
+  elif ($has_days | not) and any($all_users[]; (.run_rate // null) != null) then
+    {error: "days_left missing while user run_rate supplied — forecast projections would collapse to consumed-only; pass days_left"}
   else
     ([$users[].consumed] | add) as $total
     | ($pool - $total) as $remaining

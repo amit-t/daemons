@@ -240,7 +240,7 @@ def excluded_donor_row:
           + (if $plan.mode == "min_cover"
                then ["donor headroom covers each user's consumed ACUs only; capped at consumption, no growth headroom"] else [] end)
           + (if ($plan.skipped | length) > 0
-               then ["donor headroom (\($total_available)) cannot fund all \($n) users zero-sum; \($plan.skipped | length) left uncapped: \([$plan.skipped[].email] | join(", "))"] else [] end)
+               then ["available headroom (donor \($donor_available) + forecast \($forecast_headroom)) cannot fund all \($n) users zero-sum; \($plan.skipped | length) left uncapped: \([$plan.skipped[].email] | join(", "))"] else [] end)
           + (if $borrowed == 0
                then ["no caps applied: no donor headroom to borrow"] else [] end)
           + (if ($donors_noforecast | length) > 0

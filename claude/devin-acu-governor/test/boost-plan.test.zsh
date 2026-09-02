@@ -200,4 +200,20 @@ assert_contains "F6 headroom floored at 0" "$out" '"forecast_headroom":0'
 assert_contains "F6 fc funded 0" "$out" '"forecast_funded":0'
 assert_contains "F6 donor funded 150" "$out" '"donor_funded":150'
 
+# FW1. Shortfall warning names donor_funded, not the forecast+donor combined total,
+#      and separately calls out the forecast contribution when forecast_funded > 0.
+#      forecast headroom 40 (pool 1000, projected 920, util 0.5); recipient delta 200
+#      (delta_override); donor d1 cap 60 consumed 0 -> floor 50, avail 10, gives 10.
+#      forecast_funded 40, donor_funded 10, funded 50, shortfall 150.
+out=$(run_jq '{"pool":1000,"share":100,"days_left":10,"require_forecast":false,"min_donor_headroom":0,
+  "forecast":{"pool":1000,"projected_cycle_total":920},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":1,"days_left":10,"delta_override":200},
+  "donors":[{"email":"d1@x","cap":60,"consumed":0}]}')
+assert_contains "FW1 forecast_funded" "$out" '"forecast_funded":40'
+assert_contains "FW1 donor_funded" "$out" '"donor_funded":10'
+assert_contains "FW1 funded" "$out" '"funded":50'
+assert_contains "FW1 shortfall" "$out" '"shortfall":150'
+assert_contains "FW1 warn names donor_funded" "$out" 'donors can only fund 10 of 200'
+assert_contains "FW1 warn notes forecast separately" "$out" '40 ACUs of that came from forecast headroom separately'
+
 report
