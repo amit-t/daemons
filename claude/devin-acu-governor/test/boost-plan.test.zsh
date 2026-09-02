@@ -190,4 +190,14 @@ assert_contains "F5 clamped headroom" "$out" '"forecast_headroom":30'
 assert_contains "F5 fc funded 30" "$out" '"forecast_funded":30'
 assert_contains "F5 donor funded 120" "$out" '"donor_funded":120'
 
+# F6. Negative remaining must floor at 0, not go negative (would overdraw donors
+#     and vanish ACUs from Σ caps). Same fixture as F5 but remaining:-10.
+out=$(run_jq '{"pool":24000,"share":100,"days_left":10,"require_forecast":false,"min_donor_headroom":0,
+  "forecast":{"pool":24000,"projected_cycle_total":20454,"remaining":-10},
+  "recipient":{"email":"r@x","cap":100,"consumed":90,"run_rate":8,"days_left":10,"delta_override":150},
+  "donors":[{"email":"d1@x","cap":500,"consumed":0}]}')
+assert_contains "F6 headroom floored at 0" "$out" '"forecast_headroom":0'
+assert_contains "F6 fc funded 0" "$out" '"forecast_funded":0'
+assert_contains "F6 donor funded 150" "$out" '"donor_funded":150'
+
 report

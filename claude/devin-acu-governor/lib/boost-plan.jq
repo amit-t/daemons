@@ -83,7 +83,7 @@
    elif (($fc | has("pool")) and ($fc | has("projected_cycle_total"))) | not then null
    else (([0, ((($fc.pool - $fc.projected_cycle_total)
                * ([([($fc.utilization // 0.5), 0] | max), 1] | min)) | floor)] | max) as $raw
-         | if $fc | has("remaining") then ([$raw, ($fc.remaining | floor)] | min) else $raw end)
+         | if $fc | has("remaining") then ([0, ([$raw, ($fc.remaining | floor)] | min)] | max) else $raw end)
    end) as $forecast_headroom
 | if $forecast_headroom == null then
     {error: "forecast requires pool and projected_cycle_total"}
