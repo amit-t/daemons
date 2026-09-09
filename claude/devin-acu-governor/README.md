@@ -55,6 +55,8 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
 | `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every **non-parent** org and the parent org (`DAG_PARENT_ORG`, default `Vontier`) is reconciled to the sum of the others; live-GET verify each |
 | `dag set-limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
+| `dag slgl <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global local` |
+| `dag slgc <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global cloud` |
 | `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
@@ -214,6 +216,8 @@ dag set limit global 2400                  # every non-parent org's Local Agent 
 dag set limit global local 2400 org-xyz789 # explicit gate + org id (no parent reconcile needed if org-xyz789 is the parent)
 dag set limit global cloud 0               # zero every non-parent org's Devin Cloud gate; parent → 0
 dag set-limit global cloud 500 "Platform Eng"  # alias + raise one org's cloud gate, parent re-summed
+dag slgl 2400                              # shorthand: set limit global local
+dag slgc 0                                 # shorthand: set limit global cloud
 ```
 
 `0` is allowed and blocks that gate's usage for the org until increased or cleared. Policy default: org cloud gates stay at `0` (see `playbooks/_common.md`, hard rule 16); this command's `cloud` form is the only deliberate raiser.

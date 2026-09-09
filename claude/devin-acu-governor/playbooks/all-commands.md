@@ -47,7 +47,7 @@ Use the appended playbooks to route known tasks:
 - Use `dag boost <email> [acus]` for Boost/Borrow user cap adjustments.
 - Use `dag boost over` (alias `dag over`) to boost every user currently over budget in one zero-sum batch.
 - Use `dag boost warning` (alias `dag warning`) to boost every user approaching budget (dashboard WARNING/CRITICAL, 85–100% of cap) before they go over.
-- Use `dag set limit global [local|cloud] <acus> [org_id|org_name]` for deterministic org-level gate writes (`local` default; `cloud` is the only flow that raises an org's Devin Cloud gate — policy keeps cloud gates at 0). Parent-org rule applies (hard rule 16): all-org writes target non-parent orgs and reconcile the parent to the sum.
+- Use `dag set limit global [local|cloud] <acus> [org_id|org_name]` for deterministic org-level gate writes (`local` default; `cloud` is the only flow that raises an org's Devin Cloud gate — policy keeps cloud gates at 0). Parent-org rule applies (hard rule 16): all-org writes target non-parent orgs and reconcile the parent to the sum. Shorthands: `dag slgl <acus> [org]` (local) and `dag slgc <acus> [org]` (cloud).
 - Use `dag models [file|names...]` for model burn and Admin Portal allowlist walkthroughs.
 - Use `dag dashboard` for a local static burn-rate dashboard.
 - Use `dag doctor` for key/capability probes.

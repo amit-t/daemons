@@ -54,6 +54,10 @@ Usage:
                               default Vontier) is reconciled to the sum of the others
   dag set-limit global [local|cloud] <acus> [org_id|org_name]
                               Alias for: dag set limit global
+  dag slgl <acus> [org_id|org_name]
+                              Shorthand for: dag set limit global local
+  dag slgc <acus> [org_id|org_name]
+                              Shorthand for: dag set limit global cloud
   dag set-limits-global       Org-level set-limits-new: seed explicit org-level Local Agent
                               caps for orgs that have none, computed from live consumption
                               and funded zero-sum by Borrowing headroom from capped orgs
@@ -459,6 +463,16 @@ main() {
     set-limit-global)
       source "${daemon_dir}/lib/local-agent-limits.zsh"
       dag_set_limit_global "$@"
+      exit $?
+      ;;
+    slgl)
+      source "${daemon_dir}/lib/local-agent-limits.zsh"
+      dag_set_limit_global local "$@"
+      exit $?
+      ;;
+    slgc)
+      source "${daemon_dir}/lib/local-agent-limits.zsh"
+      dag_set_limit_global cloud "$@"
       exit $?
       ;;
     set-limits-global)

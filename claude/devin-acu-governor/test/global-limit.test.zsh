@@ -123,6 +123,23 @@ out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":0}}' run_global set-li
 assert_exit "set-limit cloud alias rc" 0 $rc
 assert_contains "set-limit cloud alias body" "$(cat "${tmpdir}/curl.log")" '{"cloud_agent":{"cycle_acu_limit":0}}'
 
+# --- shorthands: slgl (local) / slgc (cloud) ---
+: > "${tmpdir}/curl.log"
+out=$(run_global slgl 2400 org-one); rc=$?
+assert_exit "slgl rc" 0 $rc
+assert_contains "slgl confirmed" "$out" "confirmed local_agent.cycle_acu_limit=2400"
+assert_contains "slgl patch body" "$(cat "${tmpdir}/curl.log")" '{"local_agent":{"cycle_acu_limit":2400}}'
+
+: > "${tmpdir}/curl.log"
+out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":0}}' run_global slgc 0 org-one); rc=$?
+assert_exit "slgc rc" 0 $rc
+assert_contains "slgc confirmed" "$out" "confirmed cloud_agent.cycle_acu_limit=0"
+assert_contains "slgc patch body" "$(cat "${tmpdir}/curl.log")" '{"cloud_agent":{"cycle_acu_limit":0}}'
+
+out=$(run_global slgc 2>&1); rc=$?
+assert_exit "slgc no amount rc" 2 $rc
+assert_contains "slgc usage" "$out" "non-negative integer"
+
 # --- cloud verify mismatch ---
 out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":500}}' run_global set limit global cloud 0 2>&1); rc=$?
 assert_exit "cloud verify mismatch rc" 1 $rc
