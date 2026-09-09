@@ -8,6 +8,7 @@ import { OrgDetail } from './components/OrgDetail'
 import { UserTable } from './components/UserTable'
 import { UserDetail } from './components/UserDetail'
 import { RefreshControls } from './components/RefreshControls'
+import { orgCapTotals } from './orgCapTotals'
 
 // "#/org/<org_id>" routes to the per-org page; anything else is the console.
 // Hash-based so the static snapshot stays servable from a plain file server
@@ -54,6 +55,7 @@ export default function App() {
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
+  const orgCaps = orgCapTotals(data.orgs)
 
   return (
     <>
@@ -125,6 +127,14 @@ export default function App() {
               <div className="card-sub">
                 if {capTotals.capped_users} capped user{capTotals.capped_users === 1 ? '' : 's'} use full cap
                 {capTotals.uncapped_users > 0 ? ` · ${capTotals.uncapped_users} uncapped` : ''}
+              </div>
+            </div>
+            <div className="card accent">
+              <div className="card-label">Capped org total</div>
+              <div className="card-value">{fmt(orgCaps.limit_total)}</div>
+              <div className="card-sub">
+                local + cloud gates · {orgCaps.capped_orgs} capped org{orgCaps.capped_orgs === 1 ? '' : 's'}
+                {orgCaps.uncapped_orgs > 0 ? ` · ${orgCaps.uncapped_orgs} uncapped` : ''}
               </div>
             </div>
             <div className="card">
