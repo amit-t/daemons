@@ -25,7 +25,7 @@ npm test -- --run  # Vitest + React Testing Library interaction tests
 | `src/useDashboardData.ts` | Polls `status.json` (1 s) for refresh state, pulls `data.json` on a new `generated_at`, POSTs manual refresh requests, exposes in-flight feedback, keeps last good snapshot on fetch failure |
 | `src/components/RefreshControls.tsx` | Console-meta row: live countdown, immediate manual `Refreshing…` state, `Refreshing N%` progress bar, `Refresh now` button; isolates the per-second tick from the charts |
 | `src/App.tsx` | Layout: header with `RefreshControls`, cycle progress, KPI cards (single fixed row of 7 incl. capped user total and capped org total), panels; hash router — `#/org/<org_id>` swaps the console body for the per-org page |
-| `src/orgCapTotals.ts` | Capped-org-total KPI: Σ of each org's local + cloud gate limits plus capped/uncapped org counts, computed client-side from `data.orgs` so pre-existing `data.json` snapshots render it without regeneration |
+| `src/orgCapTotals.ts` | Capped-org-total KPI: Σ of each org's local + cloud gate limits plus capped/uncapped org counts, computed client-side from `data.orgs` so pre-existing `data.json` snapshots render it without regeneration; the parent org (`data.parent_org_id`, from `DAG_PARENT_ORG`, default Vontier) is excluded — its gates mirror the children's sum, so counting it would double-count |
 | `src/components/BurnChart.tsx` | Daily stacked product bars + cumulative/forecast view with pool reference line |
 | `src/components/ProductSplit.tsx` | Product donut + share table |
 | `src/components/OrgTable.tsx` | Org table: status filter chips, sortable columns, cap meters, Details button routing to the per-org page |

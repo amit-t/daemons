@@ -20,7 +20,7 @@ run_dag() { PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog
 out=$(run_dag 2>&1); rc=$?
 assert_exit "noargs rc" 2 $rc
 assert_contains "noargs usage" "$out" "Usage:"
-assert_contains "usage global command" "$out" "dag set limit global <acus>"
+assert_contains "usage global command" "$out" "dag set limit global [local|cloud] <acus>"
 assert_contains "usage targeted set-limits command" "$out" "dag set-limits <email>"
 assert_contains "usage all commands" "$out" "dag all commands [task...]"
 assert_contains "usage group command" "$out" "dag usage --group"

@@ -55,7 +55,10 @@ export default function App() {
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
-  const orgCaps = orgCapTotals(data.orgs)
+  const orgCaps = orgCapTotals(data.orgs, data.parent_org_id)
+  const parentOrgName = data.parent_org_id
+    ? (data.orgs.find((o) => o.org_id === data.parent_org_id)?.name ?? data.parent_org_id)
+    : null
 
   return (
     <>
@@ -135,6 +138,7 @@ export default function App() {
               <div className="card-sub">
                 local + cloud gates · {orgCaps.capped_orgs} capped org{orgCaps.capped_orgs === 1 ? '' : 's'}
                 {orgCaps.uncapped_orgs > 0 ? ` · ${orgCaps.uncapped_orgs} uncapped` : ''}
+                {orgCaps.parent_excluded && parentOrgName ? ` · excl. ${parentOrgName} (parent)` : ''}
               </div>
             </div>
             <div className="card">

@@ -116,6 +116,12 @@ def donor_suppressed($raw; $consumed; $drec):
 | ($consumed / $elapsed_days) as $rate
 | ($rate * $cycle_days) as $projected
 | ($orgs[0].items // []) as $orglist
+# Parent/umbrella billing org ($parent_org: org_id or exact case-insensitive
+# name; DAG_PARENT_ORG in the shell). Its org gates mirror the sum of every
+# other org's caps, so summary totals must not double-count it.
+| ([$orglist[] | select(.org_id == $parent_org
+     or ((.name // "") | ascii_downcase) == ($parent_org | ascii_downcase))]
+   | (.[0].org_id // null)) as $parent_org_id
 | ($orgd | map({key: .org_id, value: (.daily.total_acus // 0)}) | from_entries) as $org_consumed
 | ($orgd | map({key: .org_id, value: (
     [(.daily.consumption_by_date // [])[].acus_by_product]
@@ -279,6 +285,7 @@ def donor_suppressed($raw; $consumed; $drec):
   })) as $org_rows
 | {
     generated_at: $generated_at,
+    parent_org_id: $parent_org_id,
     refresh: {
       enabled: ($refresh_min != null),
       interval_minutes: $refresh_min,

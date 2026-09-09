@@ -45,9 +45,14 @@ Usage:
   dag new-cycle               Start-of-cycle full reset: verify the new billing cycle is
                               live, rebuild every active user's cap from the full monthly
                               pool, clear stale excluded-user overrides, rewrite the ledger
-  dag set limit global <acus> [org_id|org_name]
-                              Set org-level Local Agent limit(s), then live-GET verify each
-  dag set-limit global <acus> [org_id|org_name]
+  dag set limit global [local|cloud] <acus> [org_id|org_name]
+                              Set org-level agent limit(s), then live-GET verify each.
+                              Gate defaults to local (local_agent.cycle_acu_limit);
+                              pass cloud to write cloud_agent.cycle_acu_limit instead.
+                              Parent-org rule: without a selector the amount applies to
+                              every non-parent org and the parent org (DAG_PARENT_ORG,
+                              default Vontier) is reconciled to the sum of the others
+  dag set-limit global [local|cloud] <acus> [org_id|org_name]
                               Alias for: dag set limit global
   dag set-limits-global       Org-level set-limits-new: seed explicit org-level Local Agent
                               caps for orgs that have none, computed from live consumption
@@ -161,6 +166,9 @@ Config (environment.env; shell env vars override):
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
+  DAG_PARENT_ORG             parent/umbrella billing org, by org_id or exact name
+                             (default Vontier); its org gates are kept at the sum of
+                             every other org's caps by dag set limit global
   DAG_SESSIONS_NOW           pin `dag sessions` "now" epoch (deterministic tests/replays)
 
 Keys, one-time setup:
@@ -432,7 +440,7 @@ main() {
           "org caps come from computed live-consumption planning, not an explicit number — dag set limit global <acus> is the explicit deterministic setter"
         )
       else
-        print -ru2 -- "dag: unknown set command (expected: dag set limit global <acus> [org_id|org_name], or dag set limits global)"
+        print -ru2 -- "dag: unknown set command (expected: dag set limit global [local|cloud] <acus> [org_id|org_name], or dag set limits global)"
         dag_usage >&2
         exit 2
       fi
@@ -444,7 +452,7 @@ main() {
         dag_set_limit_global "$@"
         exit $?
       fi
-      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global <acus> [org_id|org_name]; omit selector to update all orgs)"
+      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global [local|cloud] <acus> [org_id|org_name]; omit selector to update all non-parent orgs and reconcile the parent)"
       dag_usage >&2
       exit 2
       ;;

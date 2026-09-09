@@ -37,11 +37,35 @@ describe('orgCapTotals', () => {
   })
 
   it('handles empty roster', () => {
-    expect(orgCapTotals([])).toEqual({ limit_total: 0, capped_orgs: 0, uncapped_orgs: 0 })
+    expect(orgCapTotals([])).toEqual({
+      limit_total: 0,
+      capped_orgs: 0,
+      uncapped_orgs: 0,
+      parent_excluded: false,
+    })
   })
 
   it('rounds fractional limits to 2 decimals', () => {
     const t = orgCapTotals([org('a', 10.005, 0.001)])
     expect(t.limit_total).toBe(10.01)
+  })
+
+  it('excludes the parent org from total and counts', () => {
+    const t = orgCapTotals([org('vnt', 200, 0), org('a', 100, 0), org('b', 100, 0)], 'vnt')
+    expect(t.limit_total).toBe(200)
+    expect(t.capped_orgs).toBe(2)
+    expect(t.uncapped_orgs).toBe(0)
+    expect(t.parent_excluded).toBe(true)
+  })
+
+  it('ignores a parent id absent from the roster', () => {
+    const t = orgCapTotals([org('a', 100, 0)], 'ghost')
+    expect(t.limit_total).toBe(100)
+    expect(t.parent_excluded).toBe(false)
+  })
+
+  it('does not exclude anything when parent id is null/undefined', () => {
+    expect(orgCapTotals([org('a', 100, 0)], null).limit_total).toBe(100)
+    expect(orgCapTotals([org('a', 100, 0)]).parent_excluded).toBe(false)
   })
 })

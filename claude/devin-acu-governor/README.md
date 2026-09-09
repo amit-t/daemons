@@ -53,8 +53,8 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
 | `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
-| `dag set limit global <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set every org's aggregate Local Agent limit when selector is omitted, or one selected org when passed; live-GET verify each |
-| `dag set-limit global <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
+| `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every **non-parent** org and the parent org (`DAG_PARENT_ORG`, default `Vontier`) is reconciled to the sum of the others; live-GET verify each |
+| `dag set-limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
@@ -163,7 +163,7 @@ dag set-limits-new
 
 Goal: the org-level counterpart of `dag set-limits-new`. Billing orgs with **no explicit org-level Local Agent cap** get one, computed from live current-cycle consumption and funded zero-sum by Borrowing headroom from orgs that already have explicit caps (run-rate-protected floors, no donor org cut below projected end-of-cycle consumption + buffer). Σ explicit org caps stays unchanged. Distinct from `dag set limit global <acus>`, which writes one explicit number deterministically with no planning.
 
-Flow: org roster (`/v3/enterprise/organizations`) → per-org consumption + run-rate → classify capped vs uncapped via `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` → scope confirmation → `lib/borrow-caps.jq` plan (org rows mapped into the program's row shape) → zero-sum preview → `CONFIRM DAG WRITE` → PATCH + live-GET verify each org → org-level ledger entries. If no capped donor orgs exist, the preview offers a pool-prorate fallback instead (consumption-proportional from `DAG_MONTHLY_ACU_POOL`) under the same write gate. Flags any org whose Σ per-user caps exceeds its proposed org cap.
+Flow: org roster (`/v3/enterprise/organizations`) → per-org consumption + run-rate → classify capped vs uncapped via `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` (parent org set aside — neither recipient nor donor) → scope confirmation → `lib/borrow-caps.jq` plan (org rows mapped into the program's row shape) → zero-sum preview incl. org **cloud-gate reset to 0** rows and the **parent reconciliation** row (parent `local_agent` cap → Σ non-parent caps) → `CONFIRM DAG WRITE` → PATCH + live-GET verify each org → org-level ledger entries. If no capped donor orgs exist, the preview offers a pool-prorate fallback instead (consumption-proportional from `DAG_MONTHLY_ACU_POOL`) under the same write gate. Flags any org whose Σ per-user caps exceeds its proposed org cap.
 
 ```zsh
 dag set-limits-global     # canonical
@@ -183,8 +183,9 @@ Flow:
 2. Full roster + per-user consumption + activity filter (same pattern as `set-limits`); confirm the active engineer set.
 3. Rebuild the cap table from scratch with `lib/compute-caps.jq` on the **full** pool (not the remaining pool).
 4. Clear stale explicit overrides on excluded inactive/former users with `{"local_agent":null}`.
-5. Preview, explicit confirmation, PATCH every active user, live-GET verify each write.
-6. **Rewrite the ledger fresh** with the new cycle's epochs — old-cycle data is never merged.
+5. **Zero every org's cloud gate**: read each org's `cloud_agent.cycle_acu_limit` and reset any non-zero (or unset) gate to `0` — the new cycle starts with Devin Cloud blocked at org level; only `dag set limit global cloud` raises it later.
+6. Preview (user caps + org cloud-gate reset table), explicit confirmation, PATCH every active user and every non-zero org cloud gate, live-GET verify each write.
+7. **Rewrite the ledger fresh** with the new cycle's epochs — old-cycle data is never merged.
 
 ```zsh
 dag new-cycle
@@ -192,37 +193,40 @@ dag new-cycle
 
 Takes no arguments — `dag new-cycle whatever` exits 2.
 
-## `dag set limit global <acus> [org_id|org_name]`
+## `dag set limit global [local|cloud] <acus> [org_id|org_name]`
 
-One-time local command for the org-level Local Agent gate. No agent launch. If `org_id|org_name` is omitted, it applies the same limit to **all organizations** returned by `/v3/enterprise/organizations`.
+One-time local command for the org-level agent gates. No agent launch. The optional gate word picks which gate is written: `local` (default) writes `local_agent.cycle_acu_limit`, `cloud` writes `cloud_agent.cycle_acu_limit`. Each PATCH body carries only its own gate key, so the other gate is never disturbed.
+
+**Parent-org rule** (`DAG_PARENT_ORG`, default `Vontier`, matched by org_id or exact case-insensitive name): members of child orgs also burn against the parent org's gates, so the parent's cap must equal Σ of every other org's cap for that gate. Without a selector the amount is applied to every **non-parent** org and the parent is then reconciled to the new sum (PATCH + verify). A write targeting a child org triggers the same reconciliation afterwards; reconciliation is skipped with a warning when any sibling org has no explicit cap for that gate (the sum is undefined). Targeting the parent itself writes the given number as-is with a divergence note. No parent in the roster → plain all-org behavior.
 
 Behavior:
 1. Resolves the `cog_` key.
-2. GETs `/v3/enterprise/organizations`.
-3. If no selector is passed, iterates over every organization returned by `/v3/enterprise/organizations`. If a selector is passed, matches it by `org_id` or exact case-insensitive name.
-4. PATCHes `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` with `{"local_agent":{"cycle_acu_limit":N}}`.
-5. GETs each changed resource and confirms `local_agent.cycle_acu_limit == N`.
-6. Prints UI instructions.
+2. GETs `/v3/enterprise/organizations` and resolves the parent org.
+3. If no selector is passed, iterates over every non-parent organization. If a selector is passed, matches it by `org_id` or exact case-insensitive name.
+4. PATCHes `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` with `{"local_agent":{"cycle_acu_limit":N}}` (or `cloud_agent` for the cloud gate).
+5. GETs each changed resource and confirms `<gate>_agent.cycle_acu_limit == N`.
+6. Reconciles the parent org to Σ non-parent caps for that gate (PATCH + verify), then prints UI instructions.
 
 Examples:
 
 ```zsh
-dag set limit global 2400                  # set every org's Local Agent cap to 2400 ACUs
-dag set limit global 2400 org-xyz789       # explicit org id
-dag set-limit global 2400 "Platform Eng"  # alias + org name
+dag set limit global 2400                  # every non-parent org's Local Agent cap → 2400; parent → Σ
+dag set limit global local 2400 org-xyz789 # explicit gate + org id (no parent reconcile needed if org-xyz789 is the parent)
+dag set limit global cloud 0               # zero every non-parent org's Devin Cloud gate; parent → 0
+dag set-limit global cloud 500 "Platform Eng"  # alias + raise one org's cloud gate, parent re-summed
 ```
 
-`0` is allowed and blocks Local Agent usage for that org until increased or cleared.
+`0` is allowed and blocks that gate's usage for the org until increased or cleared. Policy default: org cloud gates stay at `0` (see `playbooks/_common.md`, hard rule 16); this command's `cloud` form is the only deliberate raiser.
 
 ## `dag slg` — Plan and set org caps for every org
 
 Playbook twin of `dag set limit global <acus>`: instead of the user supplying one number, the agent session computes a recommended org-level Local Agent cap for **every billing org** and writes the whole layer in one confirmed batch. Distinct from `dag set-limits-global`, which only seeds caps for currently-uncapped orgs zero-sum — `slg` replans every org, capped or not.
 
 Flow (playbook `playbooks/slg.md`):
-1. Read the cycle, org roster, per-org Local Agent consumption (`cascade + terminal` only — the org gate does not govern Devin Cloud), last-7-day run rates, and each org's current explicit caps.
+1. Read the cycle, org roster (parent org set aside — it takes no prorated share), per-org Local Agent consumption (`cascade + terminal` only — the org gate does not govern Devin Cloud), last-7-day run rates, and each org's current explicit caps.
 2. Run `lib/org-caps.jq`: every org gets a floor of `ceil(consumed) + min_headroom` (default 250, ≤ 500 by policy — no org is ever insta-blocked), and the remaining pool is distributed proportionally to consumption share (evenly when all orgs are idle). Σ proposed caps never exceeds `DAG_MONTHLY_ACU_POOL`; rounding slack is reported as `unallocated`, never silently spent. If the pool cannot cover every floor, the program errors with the shortfall and nothing is written.
 3. Preview: `cap_before → cap_after` per org, sums vs pool, warnings for orgs projected to hit their new gate before cycle end, and flags where Σ member per-user caps exceeds the proposed org cap. Then stop.
-4. After `CONFIRM DAG WRITE`: PATCH each changed org (`local_agent` key only — cloud caps untouched), live-GET verify each, update the ledger's `orgs` entries, report.
+4. After `CONFIRM DAG WRITE`: PATCH each changed org (`local_agent` key only — cloud caps untouched), then reconcile the parent org (`DAG_PARENT_ORG`, excluded from the proration) to Σ non-parent caps, live-GET verify each, update the ledger's `orgs` entries, report.
 
 ```zsh
 dag slg                        # recommend + set all org caps (after CONFIRM DAG WRITE)

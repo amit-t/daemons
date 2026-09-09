@@ -42,13 +42,28 @@ case "$url" in
     emit "${FAKE_ORGS_BODY:-$default_orgs}" "${FAKE_ORGS_CODE:-200}" ;;
   */v3beta1/enterprise/organizations/*/consumption/acu-limits)
     if [[ "$method" == "PATCH" ]]; then
-      if [[ "$data" != '{"local_agent":{"cycle_acu_limit":2400}}' && "$data" != '{"local_agent":{"cycle_acu_limit":0}}' ]]; then
-        emit "{\"detail\":\"bad body $data\"}" "400"
-      else
+      if [[ "$data" == '{"local_agent":{"cycle_acu_limit":'<->'}}' || "$data" == '{"cloud_agent":{"cycle_acu_limit":'<->'}}' ]]; then
         emit "${FAKE_PATCH_BODY:-}" "${FAKE_PATCH_CODE:-204}"
+      else
+        emit "{\"detail\":\"bad body $data\"}" "400"
       fi
     else
-      emit "${FAKE_VERIFY_BODY:-$default_verify}" "${FAKE_VERIFY_CODE:-200}"
+      # Stateful verify: replay the last PATCH body recorded for this org's URL,
+      # so reconciliation reads see what the run just wrote. Env override wins.
+      last_patch=""
+      if [[ -z "${FAKE_VERIFY_BODY:-}" && -f "${CURL_LOG}" ]]; then
+        last_patch=$(awk -v u="url=${url}" '
+          /^method=/ {m=$0}
+          /^url=/ {cu=$0}
+          /^data=/ {if (m == "method=PATCH" && cu == u) body=substr($0, 6)}
+          END {print body}
+        ' "${CURL_LOG}")
+      fi
+      if [[ -n "$last_patch" ]]; then
+        emit "$last_patch" "200"
+      else
+        emit "${FAKE_VERIFY_BODY:-$default_verify}" "${FAKE_VERIFY_CODE:-200}"
+      fi
     fi ;;
   *) emit '{"detail":"unexpected endpoint"}' 404 ;;
 esac
@@ -85,6 +100,39 @@ log=$(cat "${tmpdir}/curl.log")
 assert_contains "patched org a" "$log" "/v3beta1/enterprise/organizations/org-a/consumption/acu-limits"
 assert_contains "patched org b" "$log" "/v3beta1/enterprise/organizations/org-b/consumption/acu-limits"
 
+# --- gate selector: cloud ---
+: > "${tmpdir}/curl.log"
+out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":0}}' run_global set limit global cloud 0); rc=$?
+assert_exit "cloud gate rc" 0 $rc
+assert_contains "cloud gate confirmed" "$out" "confirmed cloud_agent.cycle_acu_limit=0"
+assert_contains "cloud gate names gate" "$out" "cloud_agent.cycle_acu_limit=0 ACUs"
+log=$(cat "${tmpdir}/curl.log")
+assert_contains "cloud gate patch body" "$log" '{"cloud_agent":{"cycle_acu_limit":0}}'
+if [[ "$log" == *'"local_agent"'* ]]; then _fail "cloud gate touched local_agent"; else _ok; fi
+
+# --- gate selector: explicit local ---
+: > "${tmpdir}/curl.log"
+out=$(run_global set limit global local 2400 org-one); rc=$?
+assert_exit "explicit local rc" 0 $rc
+assert_contains "explicit local confirmed" "$out" "confirmed local_agent.cycle_acu_limit=2400"
+assert_contains "explicit local patch body" "$(cat "${tmpdir}/curl.log")" '{"local_agent":{"cycle_acu_limit":2400}}'
+
+# --- gate selector on aliases ---
+: > "${tmpdir}/curl.log"
+out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":0}}' run_global set-limit global cloud 0 org-one); rc=$?
+assert_exit "set-limit cloud alias rc" 0 $rc
+assert_contains "set-limit cloud alias body" "$(cat "${tmpdir}/curl.log")" '{"cloud_agent":{"cycle_acu_limit":0}}'
+
+# --- cloud verify mismatch ---
+out=$(FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":500}}' run_global set limit global cloud 0 2>&1); rc=$?
+assert_exit "cloud verify mismatch rc" 1 $rc
+assert_contains "cloud verify mismatch msg" "$out" "expected cloud_agent.cycle_acu_limit=0"
+
+# --- bad gate word ---
+out=$(run_global set limit global hybrid 2400 2>&1); rc=$?
+assert_exit "bad gate rc" 2 $rc
+assert_contains "bad gate usage" "$out" "[local|cloud]"
+
 out=$(run_global set limit global banana 2>&1); rc=$?
 assert_exit "bad amount rc" 2 $rc
 assert_contains "bad amount msg" "$out" "non-negative integer"
@@ -100,5 +148,35 @@ assert_contains "verify mismatch" "$out" "verification failed"
 out=$(FAKE_VERIFY_BODY='{}' run_global set limit global 0 2>&1); rc=$?
 assert_exit "zero mismatch rc" 1 $rc
 assert_contains "zero allowed attempted" "$out" "verification failed"
+
+# --- parent-org rule: all-mode writes children, reconciles parent to sum ---
+parent_orgs='{"items":[{"org_id":"org-vnt","name":"Vontier"},{"org_id":"org-a","name":"A"},{"org_id":"org-b","name":"B"}]}'
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global 100); rc=$?
+assert_exit "parent all-mode rc" 0 $rc
+assert_contains "parent all-mode targets children" "$out" "applying to all 2 non-parent organizations"
+assert_contains "parent all-mode child a" "$out" "confirmed local_agent.cycle_acu_limit=100 for org-a"
+assert_contains "parent all-mode child b" "$out" "confirmed local_agent.cycle_acu_limit=100 for org-b"
+assert_contains "parent all-mode reconcile msg" "$out" "reconciling Vontier local_agent cap to Σ non-parent caps = 200"
+assert_contains "parent all-mode parent sum" "$out" "confirmed local_agent.cycle_acu_limit=200 for org-vnt"
+log=$(cat "${tmpdir}/curl.log")
+assert_contains "parent patched to sum" "$log" '{"local_agent":{"cycle_acu_limit":200}}'
+
+# --- parent-org rule: child write reconciles; uncapped sibling blocks reconcile ---
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global cloud 0 org-a 2>&1); rc=$?
+assert_exit "parent uncapped sibling rc" 1 $rc
+assert_contains "child cloud write ok" "$out" "confirmed cloud_agent.cycle_acu_limit=0 for org-a"
+assert_contains "uncapped sibling blocks" "$out" "cannot reconcile parent cloud gate"
+assert_contains "uncapped sibling named" "$out" "org-b (B)"
+
+# --- parent-org rule: explicit parent target skips reconciliation ---
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global 500 Vontier); rc=$?
+assert_exit "explicit parent rc" 0 $rc
+assert_contains "explicit parent confirmed" "$out" "confirmed local_agent.cycle_acu_limit=500 for org-vnt"
+assert_contains "explicit parent note" "$out" "Explicit parent-org write"
+log=$(cat "${tmpdir}/curl.log")
+if [[ "$log" == *"org-a"* || "$log" == *"org-b"* ]]; then _fail "explicit parent touched children"; else _ok; fi
 
 report
