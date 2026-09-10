@@ -51,6 +51,40 @@ out2=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile donorrec $tmp/donorrec.json --slurpfile sessions $tmp/sessions.json \
   --slurpfile modela $tmp/modela.json -f $lib/dashboard.jq)
 assert_contains "parent org matched by name" "$out2" '"parent_org_id":"org-1"'
+
+# Cloud gate deliberately zeroed (policy default): idle zero gate reads
+# cloud_off and never drives the row badge; zero gate WITH burn stays over.
+tmp2=$(mktemp -d); trap "rm -rf $tmp $tmp2" EXIT
+print -r -- '{"total_acus":10,"consumption_by_date":[{"date":1756700000,"acus":10,"acus_by_product":{"devin":4,"cascade":6,"terminal":0,"review":0}}]}' > $tmp2/ent.json
+print -r -- '{"items":[{"org_id":"org-z","name":"Zero Idle","max_session_acu_limit":null,"max_cycle_acu_limit":null},{"org_id":"org-b","name":"Zero Burn","max_session_acu_limit":null,"max_cycle_acu_limit":null}]}' > $tmp2/orgs.json
+print -r -- '{"org_id":"org-z","daily":{"total_acus":6,"consumption_by_date":[{"date":1756700000,"acus":6,"acus_by_product":{"devin":0,"cascade":6,"terminal":0,"review":0}}]}}' > $tmp2/orgd.json
+print -r -- '{"org_id":"org-b","daily":{"total_acus":4,"consumption_by_date":[{"date":1756700000,"acus":4,"acus_by_product":{"devin":4,"cascade":0,"terminal":0,"review":0}}]}}' >> $tmp2/orgd.json
+print -r -- '{"org_id":"org-z","limits":{"local_agent":{"cycle_acu_limit":100},"cloud_agent":{"cycle_acu_limit":0}}}' > $tmp2/orgl.json
+print -r -- '{"org_id":"org-b","limits":{"local_agent":{"cycle_acu_limit":100},"cloud_agent":{"cycle_acu_limit":0}}}' >> $tmp2/orgl.json
+print -r -- '{"items":[]}' > $tmp2/users.json
+: > $tmp2/userd.json; : > $tmp2/userl.json
+print -r -- '{}' > $tmp2/defaultl.json
+print -r -- '{"available":false,"donors":{}}' > $tmp2/donorrec.json
+print -r -- '{"available":false,"items":[]}' > $tmp2/sessions.json
+print -r -- '{"available":false,"rows":[]}' > $tmp2/modela.json
+
+out3=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
+  --argjson after 1755302400 --argjson before 1757894400 \
+  --arg generated_at test --arg refresh_minutes "" \
+  --arg parent_org Vontier \
+  --slurpfile ent $tmp2/ent.json --slurpfile orgs $tmp2/orgs.json \
+  --slurpfile orgd $tmp2/orgd.json --slurpfile orgl $tmp2/orgl.json \
+  --slurpfile users $tmp2/users.json --slurpfile userd $tmp2/userd.json \
+  --slurpfile userl $tmp2/userl.json --slurpfile defaultl $tmp2/defaultl.json \
+  --slurpfile donorrec $tmp2/donorrec.json --slurpfile sessions $tmp2/sessions.json \
+  --slurpfile modela $tmp2/modela.json -f $lib/dashboard.jq)
+
+zrow=$(jq -c '.orgs[] | select(.org_id=="org-z")' <<<"$out3")
+brow=$(jq -c '.orgs[] | select(.org_id=="org-b")' <<<"$out3")
+assert_contains "idle zero cloud gate is cloud_off" "$(jq -r '.cloud.status' <<<"$zrow")" "cloud_off"
+assert_contains "cloud_off never drives row badge" "$(jq -r '.status' <<<"$zrow")" "ok"
+assert_contains "zero cloud gate with burn stays over" "$(jq -r '.cloud.status' <<<"$brow")" "over"
+assert_contains "over cloud gate drives row badge" "$(jq -r '.status' <<<"$brow")" "over"
 assert_contains "org overcommit" "$out" '"user_cap_overcommit":40'
 assert_contains "org gate warn" "$out" 'blocked by the org gate'
 

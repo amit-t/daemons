@@ -44,6 +44,15 @@ function localMessages(u: UserRow): number {
 
 // One enforcement gate as a card: consumed / cap, meter, projection.
 function GateCard({ label, meter }: { label: string; meter: OrgMeter }) {
+  if (meter.status === 'cloud_off') {
+    return (
+      <div className="card">
+        <div className="card-label">{label}</div>
+        <div className="card-value dim">off</div>
+        <div className="card-sub">cloud gate zeroed by policy · raise: dag set limit global cloud</div>
+      </div>
+    )
+  }
   const bad = meter.status === 'over' || meter.status === 'forecast_over'
   return (
     <div className={`card ${bad ? 'bad' : ''}`}>

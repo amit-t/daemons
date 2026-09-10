@@ -9,6 +9,13 @@ const STATUSES: OrgStatus[] = ['ok', 'warning', 'critical', 'forecast_over', 'ov
 // One enforcement gate rendered as "consumed / cap" plus a meter. The two
 // gates (Local Agent, Devin Cloud) are independent — never one shared cap.
 function GateCell({ meter }: { meter: OrgMeter }) {
+  if (meter.status === 'cloud_off') {
+    return (
+      <span className="gate-figures dim" title="cloud gate zeroed by policy — raise with dag set limit global cloud">
+        off
+      </span>
+    )
+  }
   return (
     <>
       <span className="gate-figures">

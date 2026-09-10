@@ -1,6 +1,17 @@
 // Shape of data.json as produced by lib/dashboard.jq.
 
-export type OrgStatus = 'ok' | 'warning' | 'critical' | 'forecast_over' | 'over' | 'blocked' | 'uncapped'
+// cloud_off: the org's cloud gate is deliberately zeroed (policy default —
+// only `dag set limit global cloud` raises it) with no cloud burn; neutral,
+// never drives the row badge.
+export type OrgStatus =
+  | 'ok'
+  | 'warning'
+  | 'critical'
+  | 'forecast_over'
+  | 'over'
+  | 'blocked'
+  | 'uncapped'
+  | 'cloud_off'
 export type UserStatus = 'ok' | 'warning' | 'critical' | 'over' | 'blocked' | 'uncapped' | 'donor'
 // Cycle-end run-rate forecast vs the allocated cap. null = uncapped.
 export type UserForecast = 'under' | 'close' | 'over'

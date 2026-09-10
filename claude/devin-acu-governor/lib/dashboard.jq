@@ -58,7 +58,7 @@ def org_status($consumed; $limit; $projected):
 # Worst-of for an org's two meters: the row-level status drives the table badge
 # and the filter chips, so it must reflect the more alarming meter.
 def status_rank:
-  {"ok": 0, "uncapped": 1, "blocked": 2, "warning": 3, "critical": 4,
+  {"cloud_off": -1, "ok": 0, "uncapped": 1, "blocked": 2, "warning": 3, "critical": 4,
    "forecast_over": 5, "over": 6}[.];
 def worst_status($a; $b): if ($a | status_rank) >= ($b | status_rank) then $a else $b end;
 
@@ -162,6 +162,12 @@ def donor_suppressed($raw; $consumed; $drec):
        else null end) as $cloud_limit
     | org_meter($p.cascade + $p.terminal; $local_limit; $elapsed_days; $cycle_days) as $local
     | org_meter($p.devin; $cloud_limit; $elapsed_days; $cycle_days) as $cloud
+    # Policy default keeps every org cloud gate at 0 (only `dag set limit
+    # global cloud` raises it), so a zeroed idle cloud gate is deliberate:
+    # rewrite blocked -> cloud_off (rank -1, never drives the row badge).
+    # Cloud 0 with consumption stays "over" — that burn predates the gate.
+    | (if $cloud.limit == 0 and $cloud.consumed == 0 then $cloud + {status: "cloud_off"}
+       else $cloud end) as $cloud
     | {
         org_id: $o.org_id,
         name: ($o.name // $o.org_id),
