@@ -121,17 +121,17 @@ function makeColumns(onSelect: (u: UserRow) => void, orgNameOf: (id: string | nu
       render: (u) => fmt(u.projected),
     },
     {
+      key: 'status',
+      label: 'Status',
+      sortValue: (u) => STATUSES.indexOf(u.status),
+      render: (u) => <StatusBadge status={u.status} />,
+    },
+    {
       key: 'forecast',
       label: 'Forecast',
       // Uncapped / pre-forecast snapshots sort to the bottom like other nulls.
       sortValue: (u) => (u.forecast ? FORECAST_ORDER.indexOf(u.forecast) : null),
       render: (u) => <ForecastBadge forecast={u.forecast} />,
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      sortValue: (u) => STATUSES.indexOf(u.status),
-      render: (u) => <StatusBadge status={u.status} />,
     },
     {
       key: 'cap_source',

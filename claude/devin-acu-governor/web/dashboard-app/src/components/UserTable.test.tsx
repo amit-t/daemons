@@ -217,6 +217,17 @@ describe('UserTable forecast column', () => {
     expect(badge).toHaveClass('badge-ok')
   })
 
+  test('status column comes before forecast column', () => {
+    render(<UserTable users={[alice]} orgs={[platformOrg]} onSelect={vi.fn()} />)
+
+    const headers = screen.getAllByRole('columnheader').map((th) => th.textContent)
+    const statusIdx = headers.findIndex((h) => h?.includes('Status'))
+    const forecastIdx = headers.findIndex((h) => h?.includes('Forecast'))
+    expect(statusIdx).toBeGreaterThan(-1)
+    expect(forecastIdx).toBeGreaterThan(-1)
+    expect(statusIdx).toBeLessThan(forecastIdx)
+  })
+
   test('forecast over renders the dashed forecast_over palette', () => {
     const hot: UserRow = {
       ...alice,
