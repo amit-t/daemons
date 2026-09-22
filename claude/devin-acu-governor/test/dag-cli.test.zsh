@@ -55,7 +55,7 @@ cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
 - Never describe Borrow donor reductions as “negative ACUs.”
 EOF
 run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
-for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--des" "--del" "--det" "--dey"; do
+for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--des" "--del" "--det" "--dey" "--defu"; do
   if [[ -n "$agent_args" ]]; then
     out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
   else
@@ -474,6 +474,9 @@ for profile in deo def des del det dey; do
   assert_exit "profile ${profile} rc" 0 $rc
   assert_eq "profile ${profile} launcher" "${profile} --" "$out"
 done
+out=$(run_dag_launcher --defu status); rc=$?
+assert_exit "profile defu rc" 0 $rc
+assert_eq "profile defu launcher" "defu --yolo --" "$out"
 
 # 13. Env overrides per-agent launchers; legacy DAG_LAUNCHER only applies without --agent.
 out=$(DAG_LAUNCHER_CODEX="my-codex" run_dag_launcher --codex status)
@@ -498,14 +501,21 @@ out=$(DAG_LAUNCHER_DET="my-det" run_dag_launcher --det status)
 assert_eq "det launcher override" "my-det --" "$out"
 out=$(DAG_LAUNCHER_DEY="my-dey" run_dag_launcher --dey status)
 assert_eq "dey launcher override" "my-dey --" "$out"
+out=$(DAG_LAUNCHER_DEFU="my-defu --mode" run_dag_launcher --defu status)
+assert_eq "defu launcher override" "my-defu --mode --" "$out"
 # Devin-ness of the default launcher is detected from its command text.
 out=$(DAG_LAUNCHER="deo" run_dag_launcher status)
 assert_eq "devin-like default launcher gets --" "deo --" "$out"
+out=$(DAG_LAUNCHER="defu --yolo" run_dag_launcher status)
+assert_eq "defu-like default launcher gets --" "defu --yolo --" "$out"
 out=$(DAG_LAUNCHER="my-default" run_dag_launcher status)
 assert_eq "non-devin default launcher no --" "my-default" "$out"
 # Single `--`, never doubled, for the canonical devin agent.
 out=$(run_dag_launcher --devin status)
 assert_eq "devin launcher single dashdash" "devin --permission-mode dangerous --" "$out"
+out=$(run_dag --defu setup-extract); rc=$?
+assert_exit "defu local setup-extract rc" 0 $rc
+assert_contains "defu local setup-extract stays local" "$out" "security add-generic-password"
 
 # 14. Invalid agent -> exit 2; agent flags rejected after the command.
 out=$(run_dag_launcher --agent gemini status 2>&1); rc=$?
@@ -522,7 +532,7 @@ out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVIC
 assert_exit "agent prompt rc" 0 $rc
 assert_contains "agent prompt playbook" "$out" "# Playbook: set-limits"
 if [[ "$out" == *--agent* ]]; then _fail "--agent leaked into prompt"; else _ok; fi
-for profile in co cf deo def des del det; do
+for profile in co cf deo def des del det defu; do
   out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" "--${profile}" status); rc=$?
   assert_exit "profile prompt rc ${profile}" 0 $rc
   assert_contains "profile prompt playbook ${profile}" "$out" "# Playbook: status"
@@ -532,9 +542,17 @@ done
 out=$(run_dag help)
 assert_contains "usage agent flag" "$out" "--agent claude|codex|devin"
 assert_contains "usage profile flags" "$out" "--co|--cf|--deo|--def|--des|--del|--det"
+assert_contains "usage defu profile flag" "$out" "--defu"
+assert_contains "usage defu launcher config" "$out" "DAG_LAUNCHER_DEFU"
 assert_contains "usage profile launcher config" "$out" "DAG_LAUNCHER_CO"
 assert_contains "usage des launcher config" "$out" "DAG_LAUNCHER_DES"
 assert_contains "usage del launcher config" "$out" "DAG_LAUNCHER_DEL"
 assert_contains "usage det launcher config" "$out" "DAG_LAUNCHER_DET"
+
+source "${script_dir}/../../../aliases.zsh"
+dag() { print -r -- "${(j:|:)@}" }
+out=$(dag--defu status --group "Platform Eng"); rc=$?
+assert_exit "dag--defu wrapper rc" 0 $rc
+assert_eq "dag--defu wrapper forwarding" "--defu|status|--group|Platform Eng" "$out"
 
 report

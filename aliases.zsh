@@ -67,6 +67,7 @@ aico--devin()  { aico --agent devin "$@" }
 dag--claude()  { dag --agent claude "$@" }
 dag--codex()   { dag --agent codex "$@" }
 dag--devin()   { dag --agent devin "$@" }
+dag--defu()   { dag --defu "$@" }
 dhm--claude()  { dhm --agent claude "$@" }
 dhm--cf()      { dhm --agent cf "$@" }
 dhm--codex()   { dhm --agent codex "$@" }
