@@ -22,16 +22,16 @@ The change is additive. Existing defaults, canonical `--agent` values, launcher 
 The profile resolves through:
 
 ```zsh
-${DAG_LAUNCHER_DEFU:-defu --yolo}
+${DAG_LAUNCHER_DEFU:-DEFU_YOLO=1 defu}
 ```
 
 DAG classifies `defu` as a Devin-family launcher and inserts the prompt separator:
 
 ```zsh
-defu --yolo -- "<assembled DAG prompt>"
+DEFU_YOLO=1 defu -- "<assembled DAG prompt>"
 ```
 
-`--yolo` is deliberate: the user selected dangerous permission mode for DAG-launched Defu sessions. Defu still owns Fusion model selection and its precision, boil-the-ocean, and caveman mode prompt.
+`DEFU_YOLO=1` is deliberate: the user selected dangerous permission mode for DAG-launched Defu sessions. The environment contract enables dangerous mode in the standalone binary without passing its wrapper-only `--yolo` flag through the Profiles `defu` function to Devin; that function already launches in dangerous mode. Defu still owns Fusion model selection and its precision, boil-the-ocean, and caveman mode prompt.
 
 ## CLI Behavior
 
@@ -54,7 +54,7 @@ If multiple selectors appear before the command, existing last-selector-wins beh
 1. Document `--defu` in usage, examples, and configuration output.
 2. Accept `--defu` in the profile-selector branch.
 3. Validate `defu` as a known profile.
-4. Resolve `defu` through `DAG_LAUNCHER_DEFU`, defaulting to `defu --yolo`.
+4. Resolve `defu` through `DAG_LAUNCHER_DEFU`, defaulting to `DEFU_YOLO=1 defu`.
 5. Include `defu` in Devin-family `--` separator handling, including default-launcher command-text detection.
 
 `aliases.zsh` will add the global `dag--defu` wrapper.
@@ -74,7 +74,7 @@ No playbook, API, key-resolution, write-gate, or prompt-content changes are requ
 Extend `claude/devin-acu-governor/test/dag-cli.test.zsh` test-first to prove:
 
 1. `--defu` receives the same assembled prompt and global instructions as every other profile.
-2. `DAG_PRINT_LAUNCHER=1 dag --defu status` resolves to `defu --yolo --`.
+2. `DAG_PRINT_LAUNCHER=1 dag --defu status` resolves to `DEFU_YOLO=1 defu --`.
 3. `DAG_LAUNCHER_DEFU` overrides the default and retains the separator.
 4. Help lists `--defu` and `DAG_LAUNCHER_DEFU`.
 5. Existing selectors continue to resolve unchanged.

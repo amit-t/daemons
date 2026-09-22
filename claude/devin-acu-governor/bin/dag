@@ -36,7 +36,7 @@ Usage:
                               --co/--cf (Claude Opus/Fable), --deo/--def (Devin
                               Opus/Fable), --des/--del/--det (Devin GPT-5.6
                               Sol/Luna/Terra), --dey (Devin default model),
-                              --defu (cheapest enabled Fusion pair via defu --yolo).
+                              --defu (cheapest enabled Fusion pair via DEFU_YOLO=1 defu).
                               Selectors go before the command.
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
   dag set-limits <email>      Cap only one uncapped active user, funded zero-sum by Borrowing
@@ -169,7 +169,7 @@ Config (environment.env; shell env vars override):
   DAG_LAUNCHER_DEL           launcher for --del (default del, GPT-5.6 Luna)
   DAG_LAUNCHER_DET           launcher for --det (default det, GPT-5.6 Terra)
   DAG_LAUNCHER_DEY           launcher for --dey (default dey)
-  DAG_LAUNCHER_DEFU          launcher for --defu (default: defu --yolo; cheapest enabled Fusion pair)
+  DAG_LAUNCHER_DEFU          launcher for --defu (default: DEFU_YOLO=1 defu; cheapest enabled Fusion pair)
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
@@ -319,7 +319,7 @@ dag_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command
     del)    print -r -- "${DAG_LAUNCHER_DEL:-del}" ;;
     det)    print -r -- "${DAG_LAUNCHER_DET:-det}" ;;
     dey)    print -r -- "${DAG_LAUNCHER_DEY:-dey}" ;;
-    defu)   print -r -- "${DAG_LAUNCHER_DEFU:-defu --yolo}" ;;
+    defu)   print -r -- "${DAG_LAUNCHER_DEFU:-DEFU_YOLO=1 defu}" ;;
     "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
     *)      return 2 ;;
   esac
@@ -334,7 +334,7 @@ dag_launcher_needs_dashdash() {  # $1 = selector
     claude|codex|co|cf) return 1 ;;
     "")
       local l="${DAG_LAUNCHER:-clscb}"
-      [[ "$l" == (deo|def|des|del|det|dey|defu|devin|devinc)* || "$l" == *devin* ]] && return 0
+      [[ "$l" == (deo|def|des|del|det|dey|defu|devin|devinc)* || "$l" == *devin* || "$l" == *defu* ]] && return 0
       return 1 ;;
     *) return 1 ;;
   esac

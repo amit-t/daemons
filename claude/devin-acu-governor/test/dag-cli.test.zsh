@@ -476,7 +476,7 @@ for profile in deo def des del det dey; do
 done
 out=$(run_dag_launcher --defu status); rc=$?
 assert_exit "profile defu rc" 0 $rc
-assert_eq "profile defu launcher" "defu --yolo --" "$out"
+assert_eq "profile defu launcher" "DEFU_YOLO=1 defu --" "$out"
 
 # 13. Env overrides per-agent launchers; legacy DAG_LAUNCHER only applies without --agent.
 out=$(DAG_LAUNCHER_CODEX="my-codex" run_dag_launcher --codex status)
@@ -506,8 +506,8 @@ assert_eq "defu launcher override" "my-defu --mode --" "$out"
 # Devin-ness of the default launcher is detected from its command text.
 out=$(DAG_LAUNCHER="deo" run_dag_launcher status)
 assert_eq "devin-like default launcher gets --" "deo --" "$out"
-out=$(DAG_LAUNCHER="defu --yolo" run_dag_launcher status)
-assert_eq "defu-like default launcher gets --" "defu --yolo --" "$out"
+out=$(DAG_LAUNCHER="DEFU_YOLO=1 defu" run_dag_launcher status)
+assert_eq "defu-like default launcher gets --" "DEFU_YOLO=1 defu --" "$out"
 out=$(DAG_LAUNCHER="my-default" run_dag_launcher status)
 assert_eq "non-devin default launcher no --" "my-default" "$out"
 # Single `--`, never doubled, for the canonical devin agent.

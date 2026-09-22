@@ -4,7 +4,7 @@
 
 **Goal:** Add `defu` as a configurable DAG launcher profile, exposed through `dag --defu` and `dag--defu`, for every agent-driven DAG command.
 
-**Architecture:** Extend DAG’s shared pre-command launcher selection so one profile automatically covers every agent-driven command without changing command routing or prompt assembly. Resolve the profile to `${DAG_LAUNCHER_DEFU:-defu --yolo}`, apply the Devin-family `--` separator, and leave local-only commands on their existing early-return paths.
+**Architecture:** Extend DAG’s shared pre-command launcher selection so one profile automatically covers every agent-driven command without changing command routing or prompt assembly. Resolve the profile to `${DAG_LAUNCHER_DEFU:-DEFU_YOLO=1 defu}`, apply the Devin-family `--` separator, and leave local-only commands on their existing early-return paths.
 
 **Tech Stack:** zsh, repository test harness, Markdown
 
@@ -44,7 +44,7 @@ Insert after the existing `deo def des del det dey` launcher loop:
 ```zsh
 out=$(run_dag_launcher --defu status); rc=$?
 assert_exit "profile defu rc" 0 $rc
-assert_eq "profile defu launcher" "defu --yolo --" "$out"
+assert_eq "profile defu launcher" "DEFU_YOLO=1 defu --" "$out"
 ```
 
 Insert after the existing `DAG_LAUNCHER_DEY` override assertion:
@@ -57,16 +57,16 @@ assert_eq "defu launcher override" "my-defu --mode --" "$out"
 Insert after the existing default `deo` classification assertion:
 
 ```zsh
-out=$(DAG_LAUNCHER="defu --yolo" run_dag_launcher status)
-assert_eq "defu-like default launcher gets --" "defu --yolo --" "$out"
+out=$(DAG_LAUNCHER="DEFU_YOLO=1 defu" run_dag_launcher status)
+assert_eq "defu-like default launcher gets --" "DEFU_YOLO=1 defu --" "$out"
 ```
 
 Insert after the canonical Devin single-separator assertion:
 
 ```zsh
-out=$(run_dag --defu help); rc=$?
-assert_exit "defu local help rc" 0 $rc
-assert_contains "defu local help stays local" "$out" "Usage:"
+out=$(run_dag --defu setup-extract); rc=$?
+assert_exit "defu local setup-extract rc" 0 $rc
+assert_contains "defu local setup-extract stays local" "$out" "security add-generic-password"
 ```
 
 Replace:
@@ -129,7 +129,7 @@ Change the profile description to:
                               --co/--cf (Claude Opus/Fable), --deo/--def (Devin
                               Opus/Fable), --des/--del/--det (Devin GPT-5.6
                               Sol/Luna/Terra), --dey (Devin default model),
-                              --defu (cheapest enabled Fusion pair via defu --yolo).
+                              --defu (cheapest enabled Fusion pair via DEFU_YOLO=1 defu).
 ```
 
 Add this example after `dag --dey set-limits-new`:
@@ -141,7 +141,7 @@ Add this example after `dag --dey set-limits-new`:
 Add this configuration line after `DAG_LAUNCHER_DEY`:
 
 ```text
-  DAG_LAUNCHER_DEFU          launcher for --defu (default: defu --yolo; cheapest enabled Fusion pair)
+  DAG_LAUNCHER_DEFU          launcher for --defu (default: DEFU_YOLO=1 defu; cheapest enabled Fusion pair)
 ```
 
 - [ ] **Step 2: Add resolver and separator support**
@@ -149,7 +149,7 @@ Add this configuration line after `DAG_LAUNCHER_DEY`:
 Add this resolver branch after `dey`:
 
 ```zsh
-    defu)   print -r -- "${DAG_LAUNCHER_DEFU:-defu --yolo}" ;;
+    defu)   print -r -- "${DAG_LAUNCHER_DEFU:-DEFU_YOLO=1 defu}" ;;
 ```
 
 Change explicit Devin-family classification to:
@@ -223,7 +223,7 @@ In `claude/devin-acu-governor/README.md`, extend the parent-agent wrapper list t
 Extend the launcher-profile paragraph with this sentence:
 
 ```markdown
-`--defu` launches the cheapest enabled Devin Fusion pair through `defu --yolo`; Defu owns dynamic pair selection plus its precision, boil-the-ocean, and caveman prompt, while DAG supplies the unchanged command playbook after `--`.
+`--defu` launches the cheapest enabled Devin Fusion pair through `DEFU_YOLO=1 defu`; Defu owns dynamic pair selection plus its precision, boil-the-ocean, and caveman prompt, while DAG supplies the unchanged command playbook after `--`.
 ```
 
 Add this launcher example:
@@ -237,12 +237,12 @@ dag --defu status
 Add this row after `DAG_LAUNCHER_DEY`:
 
 ```markdown
-| `DAG_LAUNCHER_DEFU` | `defu --yolo` | Cheapest-enabled-Fusion Devin launcher used by `--defu`; DAG appends `--` before its assembled prompt |
+| `DAG_LAUNCHER_DEFU` | `DEFU_YOLO=1 defu` | Cheapest-enabled-Fusion Devin launcher used by `--defu`; DAG appends `--` before its assembled prompt |
 ```
 
 - [ ] **Step 3: Update repository catalog**
 
-In the root `README.md` DAG catalog entry, add `--defu` → `defu --yolo` (cheapest enabled Fusion pair) to the launcher-profile list and state that `dag--defu` is the global wrapper.
+In the root `README.md` DAG catalog entry, add `--defu` → `DEFU_YOLO=1 defu` (cheapest enabled Fusion pair) to the launcher-profile list and state that `dag--defu` is the global wrapper.
 
 - [ ] **Step 4: Check documentation diff**
 
