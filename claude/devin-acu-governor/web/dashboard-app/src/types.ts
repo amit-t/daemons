@@ -228,9 +228,8 @@ export interface RefreshStatusFile {
 
 export interface DashboardData {
   generated_at: string
-  // Optional: absent in snapshots generated before the parent-org rule.
-  // org_id of the parent/umbrella billing org (DAG_PARENT_ORG, default
-  // Vontier); its org gates mirror Σ of every other org's caps.
+  // Legacy: emitted only by snapshots from the retired parent-org rule
+  // (2026-09-10..2026-09-24). Ignored — every org counts toward Σ org caps.
   parent_org_id?: string | null
   refresh: RefreshInfo
   cycle: CycleInfo

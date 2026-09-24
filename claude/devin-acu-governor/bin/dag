@@ -50,9 +50,10 @@ Usage:
                               Set org-level agent limit(s), then live-GET verify each.
                               Gate defaults to local (local_agent.cycle_acu_limit);
                               pass cloud to write cloud_agent.cycle_acu_limit instead.
-                              Parent-org rule: without a selector the amount applies to
-                              every non-parent org and the parent org (DAG_PARENT_ORG,
-                              default Vontier) is reconciled to the sum of the others
+                              Without a selector the amount applies to every org.
+                              Org ceiling: refused (exit 3, before any PATCH) when
+                              Σ of every org's local + cloud caps would rise above
+                              DAG_MONTHLY_ACU_POOL; shrinking writes always allowed
   dag set-limit global [local|cloud] <acus> [org_id|org_name]
                               Alias for: dag set limit global
   dag slgl <acus> [org_id|org_name]
@@ -173,9 +174,6 @@ Config (environment.env; shell env vars override):
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
-  DAG_PARENT_ORG             parent/umbrella billing org, by org_id or exact name
-                             (default Vontier); its org gates are kept at the sum of
-                             every other org's caps by dag set limit global
   DAG_SESSIONS_NOW           pin `dag sessions` "now" epoch (deterministic tests/replays)
 
 Keys, one-time setup:
@@ -290,6 +288,8 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- borrow_caps_jq: ${daemon_dir}/lib/borrow-caps.jq"
   print -r -- "- org_caps_jq: ${daemon_dir}/lib/org-caps.jq"
+  print -r -- "- org_rebalance_jq: ${daemon_dir}/lib/org-rebalance.jq"
+  print -r -- "- org ceiling: Σ every org's local + cloud caps <= ${DAG_MONTHLY_ACU_POOL} (DAG_MONTHLY_ACU_POOL); org-gate moves are zero-sum"
   print -r -- "- ledger: ${DAG_STATE_DIR}/allocations.json"
   print -r -- "- donor_record: ${DAG_STATE_DIR}/donors.json"
   if [[ -n "${_dag_have_cog_key:-}" ]]; then
@@ -460,7 +460,7 @@ main() {
         dag_set_limit_global "$@"
         exit $?
       fi
-      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global [local|cloud] <acus> [org_id|org_name]; omit selector to update all non-parent orgs and reconcile the parent)"
+      print -ru2 -- "dag: unknown set-limit command (expected: dag set-limit global [local|cloud] <acus> [org_id|org_name]; omit selector to update every org; Σ org caps may not rise above DAG_MONTHLY_ACU_POOL)"
       dag_usage >&2
       exit 2
       ;;
@@ -503,6 +503,7 @@ main() {
         "playbook twin of dag set limit global <acus>: that command writes one explicit user-supplied number; slg computes every org's number and writes the whole layer after one CONFIRM DAG WRITE"
         "not dag set-limits-global: that seeds only currently-uncapped orgs zero-sum from capped-org headroom; slg replans every org, capped or not"
         "cloud_agent caps are never touched — PATCH bodies carry only the local_agent key"
+        "every org is in scope, Vontier included (no parent/child org hierarchy); pass reserved = Σ org cloud caps so Σ local + cloud <= DAG_MONTHLY_ACU_POOL"
       )
       ;;
     set-limits)

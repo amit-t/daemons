@@ -41,7 +41,9 @@ describe('orgCapTotals', () => {
       limit_total: 0,
       capped_orgs: 0,
       uncapped_orgs: 0,
-      parent_excluded: false,
+      ceiling: null,
+      over_ceiling: false,
+      ceiling_headroom: null,
     })
   })
 
@@ -50,22 +52,29 @@ describe('orgCapTotals', () => {
     expect(t.limit_total).toBe(10.01)
   })
 
-  it('excludes the parent org from total and counts', () => {
-    const t = orgCapTotals([org('vnt', 200, 0), org('a', 100, 0), org('b', 100, 0)], 'vnt')
-    expect(t.limit_total).toBe(200)
-    expect(t.capped_orgs).toBe(2)
-    expect(t.uncapped_orgs).toBe(0)
-    expect(t.parent_excluded).toBe(true)
+  it('counts the umbrella org like any other org (no hierarchy)', () => {
+    const t = orgCapTotals([org('vnt', 200, 0), org('a', 100, 0), org('b', 100, 0)], 24000)
+    expect(t.limit_total).toBe(400)
+    expect(t.capped_orgs).toBe(3)
   })
 
-  it('ignores a parent id absent from the roster', () => {
-    const t = orgCapTotals([org('a', 100, 0)], 'ghost')
-    expect(t.limit_total).toBe(100)
-    expect(t.parent_excluded).toBe(false)
+  it('flags an org layer above the ceiling', () => {
+    const t = orgCapTotals([org('vnt', 23998, 100), org('ics', 13608, 100), org('p', 10390, 0)], 24000)
+    expect(t.limit_total).toBe(48196)
+    expect(t.over_ceiling).toBe(true)
+    expect(t.ceiling_headroom).toBe(-24196)
   })
 
-  it('does not exclude anything when parent id is null/undefined', () => {
-    expect(orgCapTotals([org('a', 100, 0)], null).limit_total).toBe(100)
-    expect(orgCapTotals([org('a', 100, 0)]).parent_excluded).toBe(false)
+  it('reports headroom under the ceiling', () => {
+    const t = orgCapTotals([org('a', 20000, 0), org('b', 3000, 0)], 24000)
+    expect(t.over_ceiling).toBe(false)
+    expect(t.ceiling_headroom).toBe(1000)
+  })
+
+  it('has no ceiling verdict without a ceiling', () => {
+    const t = orgCapTotals([org('a', 100, 0)])
+    expect(t.ceiling).toBeNull()
+    expect(t.over_ceiling).toBe(false)
+    expect(t.ceiling_headroom).toBeNull()
   })
 })

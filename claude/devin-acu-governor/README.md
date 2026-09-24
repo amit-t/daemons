@@ -54,7 +54,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
 | `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
-| `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every **non-parent** org and the parent org (`DAG_PARENT_ORG`, default `Vontier`) is reconciled to the sum of the others; live-GET verify each |
+| `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every org (Vontier included); refused before any PATCH (exit 3) when Σ of every org's local + cloud caps would rise above `DAG_MONTHLY_ACU_POOL`; live-GET verify each |
 | `dag set-limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Alias for `dag set limit global` |
 | `dag slgl <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global local` |
 | `dag slgc <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global cloud` |
@@ -105,7 +105,7 @@ Flow:
 11. GET each changed user limit after PATCH and confirm exact cap or cleared override.
 12. Write `$DAG_STATE_DIR/allocations.json` as audit/resume data; rewrite the donor record empty with the current cycle epochs — a full re-prorate re-bases every cap, so every recorded donor is made whole.
 13. List active users near/over cap; point to `dag boost` (or `dag boost over` to clear the whole over set at once, `dag boost warning` to clear the 85–100% warning band before it tips over, `dag boost critical` for only the red 95–100% zone).
-14. Org-gate check (hard rule 15): GET each affected billing org's ACU limits and report any org whose Σ explicit member user caps exceeds its `local_agent.cycle_acu_limit`, offering a PATCH preview (own `CONFIRM DAG WRITE`) to raise or clear it.
+14. Org-gate zero-sum rebalance (hard rule 15): `lib/org-rebalance.jq` plans org-gate moves from this run's net member-cap growth per billing org; they appear in the same preview and are written under the same `CONFIRM DAG WRITE`. Moves are zero-sum across orgs; unfunded room stays blocked at the org gate. See [Org ceiling](#org-ceiling--zero-sum-org-gates).
 
 Proration math for eligible active members: `cap_i = floor(consumed_i) + floor((pool − eligible_total_consumed) / N)`. If nothing has been consumed, everyone active gets `floor(pool / N)`. If pool is exhausted, caps freeze at current consumption and warnings print. Excluded inactive/former users receive no cap row and no pool reservation. Every user's row also carries `projected = ceil(consumed + run_rate × days_left)` (`null` without `run_rate`); a `projected` past the proposed `cap` appends a warning naming the user, without changing any cap value — even-share proration never reacts to the forecast on its own.
 
@@ -162,11 +162,31 @@ No recipient is ever capped below its own current consumption. Donor floor: `max
 dag set-limits-new
 ```
 
+## Org ceiling — zero-sum org gates
+
+Each ACU is billed to exactly one org, and each org gate caps only the usage billed to that org. There is no parent/child hierarchy and no enterprise-wide limit API. Evidence, captured live on 2026-09-24:
+
+- Σ per-org `total_acus` equals the enterprise `total_acus` exactly. For the 2026-08-16 → 09-16 cycle both are 21,833.45: Vontier 7,478 + ICS 11,391 + Passport 1,358 + i360 1,185 + iNFX 359 + Hub Core 45 + Orpak 16.
+- `/v3beta1/enterprise/consumption/acu-limits` returns 404, so no enterprise-level cap exists.
+
+So the real ceiling is Σ of **every** org's gates. If one org has a 20,000 cap and the others together have 24,000, the org layer allows 44,000, not 24,000. The retired 2026-09-10 rule set Vontier to Σ of the other orgs (23,998), which made the live local ceiling 47,996.
+
+Policy (hard rules 15–16 in `playbooks/_common.md`):
+
+| Layer | Rule |
+|---|---|
+| Per-user caps | May sum past the pool: that is the room people get to work. |
+| Org caps | Σ local + cloud over every org stays `<= DAG_MONTHLY_ACU_POOL` (24,000). |
+| Boost family | `lib/org-rebalance.jq` moves org cap from donor orgs with projected-safe surplus. Donors keep `ceil(max(consumed, projected)) + 250`. The move is in the same preview and uses the same `CONFIRM DAG WRITE`. There is no follow-up "raise the org" proposal. |
+| Unfunded room | Stays blocked at the org gate. That is the brake. |
+| `dag set limit global` | Refuses growth past the ceiling (exit 3). Shrinking writes are always allowed. |
+| Repair | `dag slg` replans every org (Vontier included) so Σ fits under the pool. |
+
 ## `dag set-limits-global` — Seed org-level caps for uncapped orgs, by Borrowing
 
 Goal: the org-level counterpart of `dag set-limits-new`. Billing orgs with **no explicit org-level Local Agent cap** get one, computed from live current-cycle consumption and funded zero-sum by Borrowing headroom from orgs that already have explicit caps (run-rate-protected floors, no donor org cut below projected end-of-cycle consumption + buffer). Σ explicit org caps stays unchanged. Distinct from `dag set limit global <acus>`, which writes one explicit number deterministically with no planning.
 
-Flow: org roster (`/v3/enterprise/organizations`) → per-org consumption + run-rate → classify capped vs uncapped via `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` (parent org set aside — neither recipient nor donor) → scope confirmation → `lib/borrow-caps.jq` plan (org rows mapped into the program's row shape) → zero-sum preview incl. org **cloud-gate reset to 0** rows and the **parent reconciliation** row (parent `local_agent` cap → Σ non-parent caps) → `CONFIRM DAG WRITE` → PATCH + live-GET verify each org → org-level ledger entries. If no capped donor orgs exist, the preview offers a pool-prorate fallback instead (consumption-proportional from `DAG_MONTHLY_ACU_POOL`) under the same write gate. Flags any org whose Σ per-user caps exceeds its proposed org cap.
+Flow: org roster (`/v3/enterprise/organizations`) → per-org consumption + run-rate → classify capped vs uncapped via `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` (every org, Vontier included — no hierarchy) → scope confirmation → `lib/borrow-caps.jq` plan (org rows mapped into the program's row shape) → zero-sum preview incl. org **cloud-gate reset to 0** rows and Σ org caps vs the `DAG_MONTHLY_ACU_POOL` ceiling → `CONFIRM DAG WRITE` → PATCH + live-GET verify each org → org-level ledger entries. If no capped donor orgs exist, the preview offers a pool-prorate fallback instead (consumption-proportional from `DAG_MONTHLY_ACU_POOL` minus Σ org cloud caps) under the same write gate. Flags any org whose Σ per-user caps exceeds its proposed org cap.
 
 ```zsh
 dag set-limits-global     # canonical
@@ -200,23 +220,22 @@ Takes no arguments — `dag new-cycle whatever` exits 2.
 
 One-time local command for the org-level agent gates. No agent launch. The optional gate word picks which gate is written: `local` (default) writes `local_agent.cycle_acu_limit`, `cloud` writes `cloud_agent.cycle_acu_limit`. Each PATCH body carries only its own gate key, so the other gate is never disturbed.
 
-**Parent-org rule** (`DAG_PARENT_ORG`, default `Vontier`, matched by org_id or exact case-insensitive name): members of child orgs also burn against the parent org's gates, so the parent's cap must equal Σ of every other org's cap for that gate. Without a selector the amount is applied to every **non-parent** org and the parent is then reconciled to the new sum (PATCH + verify). A write targeting a child org triggers the same reconciliation afterwards; reconciliation is skipped with a warning when any sibling org has no explicit cap for that gate (the sum is undefined). Targeting the parent itself writes the given number as-is with a divergence note. No parent in the roster → plain all-org behavior.
+**Org ceiling** (hard rule 16): Σ of every org's `local_agent` + `cloud_agent` caps, Vontier included, may not rise above `DAG_MONTHLY_ACU_POOL`. The command live-GETs every org's gates first and refuses with exit 3 — before any PATCH — when the write would push that Σ above the pool **and** above its current value. Writes that shrink an already-over layer are allowed and print how far over it remains. Orgs with no explicit `local_agent` cap are flagged: they are unlimited, so the ceiling is unenforceable until they are capped.
 
 Behavior:
 1. Resolves the `cog_` key.
-2. GETs `/v3/enterprise/organizations` and resolves the parent org.
-3. If no selector is passed, iterates over every non-parent organization. If a selector is passed, matches it by `org_id` or exact case-insensitive name.
-4. PATCHes `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` with `{"local_agent":{"cycle_acu_limit":N}}` (or `cloud_agent` for the cloud gate).
-5. GETs each changed resource and confirms `<gate>_agent.cycle_acu_limit == N`.
-6. Reconciles the parent org to Σ non-parent caps for that gate (PATCH + verify), then prints UI instructions.
+2. GETs `/v3/enterprise/organizations`; with no selector every org is targeted, otherwise the selector matches one org by `org_id` or exact case-insensitive name.
+3. GETs every org's `/v3beta1/enterprise/organizations/{org_id}/consumption/acu-limits` and prints `Σ org caps before → after` vs the ceiling; refuses (exit 3) on growth past the ceiling.
+4. PATCHes each target with `{"local_agent":{"cycle_acu_limit":N}}` (or `cloud_agent` for the cloud gate).
+5. GETs each changed resource and confirms `<gate>_agent.cycle_acu_limit == N`, then prints UI instructions.
 
 Examples:
 
 ```zsh
-dag set limit global 2400                  # every non-parent org's Local Agent cap → 2400; parent → Σ
-dag set limit global local 2400 org-xyz789 # explicit gate + org id (no parent reconcile needed if org-xyz789 is the parent)
-dag set limit global cloud 0               # zero every non-parent org's Devin Cloud gate; parent → 0
-dag set-limit global cloud 500 "Platform Eng"  # alias + raise one org's cloud gate, parent re-summed
+dag set limit global 2400                  # every org's Local Agent cap → 2400 (10 orgs × 2400 = 24000 fits)
+dag set limit global local 2400 org-xyz789 # explicit gate + org id
+dag set limit global cloud 0               # zero every org's Devin Cloud gate
+dag set-limit global cloud 500 "Platform Eng"  # alias + raise one org's cloud gate (counts toward the ceiling)
 dag slgl 2400                              # shorthand: set limit global local
 dag slgc 0                                 # shorthand: set limit global cloud
 ```
@@ -228,10 +247,10 @@ dag slgc 0                                 # shorthand: set limit global cloud
 Playbook twin of `dag set limit global <acus>`: instead of the user supplying one number, the agent session computes a recommended org-level Local Agent cap for **every billing org** and writes the whole layer in one confirmed batch. Distinct from `dag set-limits-global`, which only seeds caps for currently-uncapped orgs zero-sum — `slg` replans every org, capped or not.
 
 Flow (playbook `playbooks/slg.md`):
-1. Read the cycle, org roster (parent org set aside — it takes no prorated share), per-org Local Agent consumption (`cascade + terminal` only — the org gate does not govern Devin Cloud), last-7-day run rates, and each org's current explicit caps.
-2. Run `lib/org-caps.jq`: every org gets a floor of `ceil(consumed) + min_headroom` (default 250, ≤ 500 by policy — no org is ever insta-blocked), and the remaining pool is distributed proportionally to consumption share (evenly when all orgs are idle). Σ proposed caps never exceeds `DAG_MONTHLY_ACU_POOL`; rounding slack is reported as `unallocated`, never silently spent. If the pool cannot cover every floor, the program errors with the shortfall and nothing is written.
+1. Read the cycle, the full org roster (Vontier included — it gets a prorated share of its own attributed consumption), per-org Local Agent consumption (`cascade + terminal` only — the org gate does not govern Devin Cloud), last-7-day run rates, and each org's current explicit caps.
+2. Run `lib/org-caps.jq`: every org gets a floor of `ceil(consumed) + min_headroom` (default 250, ≤ 500 by policy — no org is ever insta-blocked), and the remaining budget (`DAG_MONTHLY_ACU_POOL` − `reserved`, where `reserved` = Σ org cloud caps) is distributed proportionally to consumption share (evenly when all orgs are idle). Σ proposed local caps + reserved never exceeds `DAG_MONTHLY_ACU_POOL`; rounding slack is reported as `unallocated`, never silently spent. If the pool cannot cover every floor, the program errors with the shortfall and nothing is written.
 3. Preview: `cap_before → cap_after` per org, sums vs pool, warnings for orgs projected to hit their new gate before cycle end, and flags where Σ member per-user caps exceeds the proposed org cap. Then stop.
-4. After `CONFIRM DAG WRITE`: PATCH each changed org (`local_agent` key only — cloud caps untouched), then reconcile the parent org (`DAG_PARENT_ORG`, excluded from the proration) to Σ non-parent caps, live-GET verify each, update the ledger's `orgs` entries, report.
+4. After `CONFIRM DAG WRITE`: PATCH each changed org (`local_agent` key only — cloud caps untouched; cuts before raises), live-GET verify each, update the ledger's `orgs` entries, report.
 
 ```zsh
 dag slg                        # recommend + set all org caps (after CONFIRM DAG WRITE)
@@ -608,7 +627,7 @@ The dashboard shows:
 - an attribution-gap note + warning when enterprise burn exceeds the org-attributed sum (users without `billing_org_id`; org caps cannot gate that usage);
 - user cap table: free-text search (name/email/org), status and cap-source filter chips, sortable columns, headroom and % of cap, where effective cap is explicit user override if present, otherwise the default per-user Local Agent cap; plus a **Projected** column (linear run-rate projection of cycle-end ACUs: `consumed / elapsed_days × cycle_days`) and a **Forecast** badge vs the allocated cap — `under`, `close` (projected inside the last 15% of the cap, mirroring the 0.85 warning threshold), or `over` (projected past the cap); uncapped users show no forecast, and snapshots generated before the column show `—` until regenerated; the billing-org column shows the org name (linked to its `#/org/<org_id>` page; the raw id sits in the tooltip and is the fallback when the org is missing from the snapshot); each email has an adjacent explicit `Copy` button, and each row has a dedicated `Details` button for opening the drawer;
 - top-bar refresh status: a live **`next refresh in 4m 32s`** countdown to the next backend refetch, a **`Refreshing N%`** progress bar (with the current phase, e.g. `user dailies (19/40)`) that replaces the `Refresh now` button while the backend is fetching, immediate `Refreshing…` feedback after manual clicks, and a `data refreshed X ago` resting state with a `Refresh now` button for static snapshots;
-- warnings for org cap risk and users already over effective cap, plus an **org-gate overcommit** warning per org: each org row carries `sum_explicit_user_caps` (Σ every member's explicit per-user Local Agent cap) and `user_cap_overcommit` (`sum_explicit_user_caps − local.limit`, `null` when the org has no local cap set); a positive overcommit means members with personal headroom left can still be blocked by the org gate, and the warning text says so and points at raising the org cap (`dag set limit global`) or clearing it;
+- warnings for org cap risk and users already over effective cap, plus an **org-gate overcommit** warning per org: each org row carries `sum_explicit_user_caps` (Σ every member's explicit per-user Local Agent cap) and `user_cap_overcommit` (`sum_explicit_user_caps − local.limit`, `null` when the org has no local cap set); a positive overcommit means members with personal headroom left can still be blocked by the org gate — the intended brake; the warning says boosts move org cap zero-sum and never raise Σ org caps past the pool;
 - **per-user detail view**: click a user row's `Details` button to open a drawer with that user's daily ACU line chart over the cycle (with a dashed "cap pace" reference line), a projected-at-cycle-end card (daily run rate + the same under/close/over forecast badge), Devin Cloud session stats (sessions initiated this cycle + their summed ACUs, from `/v3/enterprise/sessions`), the user's product split (devin/cascade/terminal/review), and — when the optional Windsurf service key is configured — the model split and surface split (Devin Desktop / Windsurf / JetBrains / Devin CLI) of their Devin Desktop & Local usage, with billed ACUs and message counts per row. Close with `Esc`, the `✕` button, or a click outside;
 - **per-org detail page**: click an org row's `Details` button to open a full page (hash route `#/org/<org_id>`, bookmarkable, survives reload) with both enforcement gates as cards (consumed/cap, meter, projection), the org's daily burn chart (stacked product bars over the cycle), product split, a **Local Agent activity panel** — per-member cascade+terminal ACU bars tagged with each member's top model, with Windsurf message counts, plus the org's full model split (GPT, Claude, and every other model members drive), because Local Agent (Devin Desktop / Windsurf plugins / Devin CLI) has **no session-list API** and would otherwise be invisible next to the cloud session table — a **members table** (every user carrying that `billing_org_id`: consumed, Local Agent ACUs, Cloud ACUs, cloud session count + session ACUs, % of cap, status, and a `Details` button into the per-user drawer), and the org's **Devin Cloud session list** for the cycle — created time, title (with an `open` link to the session), resolved user (member email, service user, or raw id), origin, status, ACUs, and PR count, sortable and text-filterable. Service-user sessions count toward the org's session stats (they burn the org's cloud gate). Snapshots generated before this page existed degrade with a "regenerate with `dag dashboard`" hint.
 
@@ -831,7 +850,7 @@ DAG_SESSIONS_NOW=1785000000 DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=x dag sessions   # 
 DEVIN_COG_KEY=x dag set limit global 2400 org-xyz789   # live command; use only with real intent
 ```
 
-Test coverage spans key resolution, setup-extract command generation, cap math (including per-user `projected` cycle-end forecast and its "exceeds proposed cap" warning), Boost/Borrow math (including the consumed+500 headroom clamp with and without an explicit increment, donor `run_rate` projected floors, `min_donor_headroom`/`min_donor_cap_after` backstops, `require_forecast` donor exclusion, forecast-headroom funding and its non-zero-sum accounting, and projected-surplus donor ranking), zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation, including forecast-headroom funding), CLI prompt assembly (`new-cycle` guard/ledger context and no-arg validation included), all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify, doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery, graceful per-user/default ACU-limit degradation, and the org-gate overcommit warning (`sum_explicit_user_caps`/`user_cap_overcommit`), `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards, and `dag sessions` dispatch across all four aliases, window resolution (default 24h, `--hours`/`--days`/epoch/date forms, half-open `--until` boundary, mutual-exclusion and range validation), filter/option flag validation, artifact-path planning, key-leak and launcher-selection guards, and prompt assembly of the output-file contract, executive-summary template, and the live-verified API semantics (half-open `created_at` window, banned `time_after`/`time_before`, client-side filtering, visible-conversation-only trace depth).
+Test coverage spans key resolution, setup-extract command generation, cap math (including per-user `projected` cycle-end forecast and its "exceeds proposed cap" warning), Boost/Borrow math (including the consumed+500 headroom clamp with and without an explicit increment, donor `run_rate` projected floors, `min_donor_headroom`/`min_donor_cap_after` backstops, `require_forecast` donor exclusion, forecast-headroom funding and its non-zero-sum accounting, and projected-surplus donor ranking), zero-sum cap-seeding math (`set-limits-new` and targeted `set-limits <email>` prompt/validation, including forecast-headroom funding), CLI prompt assembly (`new-cycle` guard/ledger context and no-arg validation included), all-commands docs/playbook seeding, no-key docs/design mode, global org Local Agent limit write+verify and org-ceiling refusal, zero-sum org-gate rebalance math (`org-rebalance.jq`), doctor v3beta1 + IDP membership probes, dashboard artifact/error/read-only behavior including transient-504 retry-recovery, graceful per-user/default ACU-limit degradation, and the org-gate overcommit warning (`sum_explicit_user_caps`/`user_cap_overcommit`), `dag usage` ratio/group/user-email math + pagination + URL-encoding + read-only/key-leak guards, and `dag sessions` dispatch across all four aliases, window resolution (default 24h, `--hours`/`--days`/epoch/date forms, half-open `--until` boundary, mutual-exclusion and range validation), filter/option flag validation, artifact-path planning, key-leak and launcher-selection guards, and prompt assembly of the output-file contract, executive-summary template, and the live-verified API semantics (half-open `created_at` window, banned `time_after`/`time_before`, client-side filtering, visible-conversation-only trace depth).
 
 ## Troubleshooting
 

@@ -3,10 +3,15 @@
 # org, distributing a fixed pool proportionally to current-cycle Local Agent
 # consumption. Unlike borrow-caps.jq (zero-sum seeding of uncapped orgs), this
 # replans the whole org layer: Σ proposed caps never exceeds the pool.
+# Every org is in scope, the umbrella org (Vontier) included: consumption bills
+# to exactly one org and each gate caps only its own org's usage, so the
+# enterprise ceiling is Σ of ALL org caps. `reserved` (Σ explicit org cloud
+# caps, normally 0) is carved out first so local + cloud stays <= pool.
 #
 # Input:
 # {
-#   "pool": <number>,                 # DAG_MONTHLY_ACU_POOL — hard budget for Σ org caps
+#   "pool": <number>,                 # DAG_MONTHLY_ACU_POOL — hard ceiling for Σ org caps
+#   "reserved": <number=0>,           # Σ org cloud_agent caps; local budget = pool - reserved
 #   "min_headroom": <number=250>,     # guaranteed headroom above consumed for every org;
 #                                     # also the whole floor for idle orgs (consumed 0).
 #                                     # Hard-clamped to 500 (policy hard rule 11 analogue).
@@ -24,8 +29,9 @@
 #   proposed: [{org_id, name, consumed, run_rate, projected,
 #               cap_before, cap_after, headroom, delta}],   # sorted -consumed, name
 #   sum_before,                       # Σ existing explicit caps (nulls ignored)
-#   sum_after,                        # Σ proposed caps — always <= pool
-#   unallocated,                      # pool - sum_after (rounding slack, stays unspent)
+#   reserved, budget,                 # budget = pool - reserved (Local Agent share)
+#   sum_after,                        # Σ proposed local caps — always <= budget
+#   unallocated,                      # budget - sum_after (rounding slack, stays unspent)
 #   warnings: [ ... ]                 # e.g. proposed cap below run-rate projection
 # }  or  {error, ...} when the pool cannot cover every org's floor.
 #
@@ -37,13 +43,16 @@
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
 def r2: (. * 100 | round) / 100;
 
-(.pool // 0) as $pool
+(.pool // 0) as $ceiling
+| (.reserved // 0) as $reserved
+| ($ceiling - $reserved) as $pool
 | ([((.min_headroom // 250) | floor), 500] | min) as $mh
 | (if $mh < 0 then 0 else $mh end) as $mh
 | (.days_left // 0) as $days_left
 | (.orgs // []) as $orgs
 | if ($orgs | length) == 0 then {error: "no orgs supplied"}
-  elif $pool <= 0 then {error: "pool must be positive", pool: $pool}
+  elif $ceiling <= 0 then {error: "pool must be positive", pool: $ceiling}
+  elif $pool <= 0 then {error: "reserved cloud caps leave no Local Agent budget", pool: $ceiling, reserved: $reserved}
   else
     ($orgs | map({
         org_id,
@@ -57,7 +66,8 @@ def r2: (. * 100 | round) / 100;
     | ([$rows[].floor] | add) as $sum_floors
     | if $sum_floors > $pool
       then {error: "pool cannot cover every org's floor (consumed + min_headroom)",
-            pool: $pool, min_headroom: $mh, sum_floors: $sum_floors,
+            pool: $ceiling, reserved: $reserved, budget: $pool,
+            min_headroom: $mh, sum_floors: $sum_floors,
             shortfall: ($sum_floors - $pool)}
       else
         ($pool - $sum_floors) as $surplus
@@ -73,7 +83,9 @@ def r2: (. * 100 | round) / 100;
         | ($planned | sort_by(-.consumed, .name)) as $sorted
         | {
             mode: $mode,
-            pool: $pool,
+            pool: $ceiling,
+            reserved: $reserved,
+            budget: $pool,
             min_headroom: $mh,
             days_left: $days_left,
             proposed: ($sorted | map({org_id, name, consumed, run_rate, projected,

@@ -555,4 +555,23 @@ out=$(dag--defu status --group "Platform Eng"); rc=$?
 assert_exit "dag--defu wrapper rc" 0 $rc
 assert_eq "dag--defu wrapper forwarding" "--defu|status|--group|Platform Eng" "$out"
 
+# Org ceiling: every boost-family prompt carries the zero-sum org rebalance
+# planner + ceiling, and no playbook offers growing an org cap to Σ member caps.
+for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new" "slg"; do
+  out=$(run_dag ${=c} 2>/dev/null)
+  assert_contains "org_rebalance_jq in ${c}" "$out" "org_rebalance_jq: "
+  assert_contains "org ceiling in ${c}" "$out" "org ceiling: Σ every org's local + cloud caps <= 24000"
+  assert_contains "rule 16 ceiling in ${c}" "$out" "16. **Org ceiling + cloud default-zero.**"
+  if [[ "$out" == *"raising the org cap to \`Σ member caps\`"* || "$out" == *"reconcile the parent"* ]]; then
+    _fail "${c}: prompt still offers org growth / parent reconcile"
+  else _ok; fi
+done
+for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new"; do
+  out=$(run_dag ${=c} 2>/dev/null)
+  assert_contains "org rebalance step in ${c}" "$out" "**Org-gate zero-sum rebalance (hard rule 15).**"
+  assert_contains "same-preview org table in ${c}" "$out" "zero-sum org-move table"
+done
+out=$(run_dag slg 2>/dev/null)
+assert_contains "slg every org incl Vontier" "$out" "every org is in scope, Vontier included"
+
 report

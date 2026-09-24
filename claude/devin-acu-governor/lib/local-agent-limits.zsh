@@ -4,10 +4,12 @@
 # endpoints, quotes exact API error bodies, and verifies writes with a follow-up GET.
 # Gate selector: `local` (default) writes local_agent.cycle_acu_limit,
 # `cloud` writes cloud_agent.cycle_acu_limit.
-# Parent-org rule: the org named/id'd by DAG_PARENT_ORG (default "Vontier") is
-# the umbrella billing org — its gate must equal Σ of every other org's cap for
-# that gate, or the parent gate blocks members of child orgs. All-org writes
-# therefore target the non-parent orgs and reconcile the parent to the sum.
+# Org ceiling rule: consumption bills to exactly one org and each org gate caps
+# only that org's usage, so the enterprise-wide org ceiling is Σ of EVERY org's
+# explicit local + cloud caps (umbrella org included — there is no hierarchy).
+# A write is refused before any PATCH when it would leave that Σ above
+# DAG_MONTHLY_ACU_POOL and higher than it was; writes that shrink an
+# already-over layer are allowed (they move it toward the ceiling).
 # Requires: lib/key-resolve.zsh sourced by bin/dag.
 
 _dag_limits_request() {  # $1=method $2=url $3=key $4=json-body-or-empty -> globals _dag_limits_code/body
@@ -59,12 +61,6 @@ _dag_limits_select_orgs() {  # $1=orgs-json $2=selector-or-empty -> compact org 
   jq -c --arg s "$selector" '[.items[]? | select(.org_id == $s or ((.name // "") | ascii_downcase) == ($s | ascii_downcase))][0]' <<<"$orgs"
 }
 
-_dag_limits_parent_row() {  # $1=orgs-json -> compact parent org row or nothing
-  local orgs=$1 parent="${DAG_PARENT_ORG:-Vontier}"
-  jq -c --arg p "$parent" \
-    '[.items[]? | select(.org_id == $p or ((.name // "") | ascii_downcase) == ($p | ascii_downcase))][0] // empty' <<<"$orgs"
-}
-
 _dag_limits_apply_org_limit() {  # $1=key $2=base $3=gate $4=amount $5=org-json-row
   local key=$1 base=$2 gate=$3 amount=$4 row=$5 body url patch_body verify_body actual org_id org_name
   org_id=$(jq -r '.org_id' <<<"$row")
@@ -98,48 +94,51 @@ _dag_limits_apply_org_limit() {  # $1=key $2=base $3=gate $4=amount $5=org-json-
   print -r -- "confirmed ${gate}_agent.cycle_acu_limit=${amount} for ${org_id} (${org_name})"
 }
 
-_dag_limits_child_cap_sum() {  # $1=key $2=base $3=gate $4=orgs-json $5=parent-org-id
-  # Prints Σ of every non-parent org's explicit gate cap. Returns 1 (and lists
-  # the uncapped orgs on stderr) when any non-parent org has no explicit cap —
-  # the parent sum is undefined in that case.
-  local key=$1 base=$2 gate=$3 orgs=$4 parent_id=$5 row org_id org_name cap sum=0
-  local -a uncapped
+_dag_limits_layer_state() {  # $1=key $2=base $3=orgs-json -> [{org_id,name,local,cloud}] JSON on stdout
+  # Live GET of every org's gates; null = no explicit cap (unlimited).
+  local key=$1 base=$2 orgs=$3 row org_id org_name
+  local -a rows
   while IFS= read -r row; do
     [[ -z "$row" ]] && continue
     org_id=$(jq -r '.org_id' <<<"$row")
-    [[ "$org_id" == "$parent_id" ]] && continue
     org_name=$(jq -r '.name // "<unnamed>"' <<<"$row")
     _dag_limits_request GET "${base}/v3beta1/enterprise/organizations/${org_id}/consumption/acu-limits" "$key" ""
     if [[ "$_dag_limits_code" != 200 ]]; then
       print -ru2 -- "dag set limit global: GET org limits for ${org_id} (${org_name}) failed [${_dag_limits_code}]: ${_dag_limits_body}"
       return 1
     fi
-    cap=$(jq -r --arg g "${gate}_agent" '.[$g].cycle_acu_limit // empty' <<<"$_dag_limits_body" 2>/dev/null)
-    if [[ -z "$cap" ]]; then
-      uncapped+=("${org_id} (${org_name})")
-    else
-      (( sum += cap ))
-    fi
+    rows+=("$(jq -c --arg id "$org_id" --arg n "$org_name" \
+      '{org_id: $id, name: $n, local: (.local_agent.cycle_acu_limit // null), cloud: (.cloud_agent.cycle_acu_limit // null)}' \
+      <<<"$_dag_limits_body")")
   done < <(jq -c '.items[]?' <<<"$orgs")
-  if (( ${#uncapped[@]} > 0 )); then
-    print -ru2 -- "dag set limit global: cannot reconcile parent ${gate} gate — non-parent org(s) without an explicit ${gate}_agent cap:"
-    print -ru2 -l -- "  ${(@)uncapped}"
-    return 1
-  fi
-  print -r -- "$sum"
+  (( ${#rows} )) && print -rl -- "${rows[@]}" | jq -sc '.' || print -r -- '[]'
 }
 
-_dag_limits_reconcile_parent() {  # $1=key $2=base $3=gate $4=orgs-json $5=parent-row
-  # Parent-org rule: parent gate cap = Σ non-parent org caps for the gate.
-  local key=$1 base=$2 gate=$3 orgs=$4 parent_row=$5 parent_id parent_name sum
-  parent_id=$(jq -r '.org_id' <<<"$parent_row")
-  parent_name=$(jq -r '.name // "<unnamed>"' <<<"$parent_row")
-  if ! sum=$(_dag_limits_child_cap_sum "$key" "$base" "$gate" "$orgs" "$parent_id"); then
-    print -ru2 -- "dag set limit global: parent org ${parent_id} (${parent_name}) left unreconciled."
-    return 1
+_dag_limits_ceiling_check() {  # $1=layer-json $2=gate $3=amount $4=selected-rows -> 0 ok, 3 refused
+  local layer=$1 gate=$2 amount=$3 selected=$4 ceiling="${DAG_MONTHLY_ACU_POOL:-24000}" verdict
+  verdict=$(jq -c --arg g "$gate" --argjson n "$amount" --argjson c "$ceiling" \
+    --argjson ids "$(jq -sc '[.[].org_id]' <<<"$selected")" '
+      def total: [.[] | (.local // 0) + (.cloud // 0)] | add // 0;
+      (total) as $before
+      | (map(if (.org_id as $id | $ids | index($id)) then .[$g] = $n else . end)) as $after_rows
+      | ($after_rows | total) as $after
+      | {before: $before, after: $after, ceiling: $c,
+         uncapped: [$after_rows[] | select(.local == null) | .name],
+         refused: ($after > $c and $after > $before)}' <<<"$layer")
+  local before after uncapped
+  before=$(jq -r '.before' <<<"$verdict")
+  after=$(jq -r '.after' <<<"$verdict")
+  print -r -- "Org ceiling: Σ org caps (local + cloud, every org) ${before} → ${after} ACUs; ceiling ${ceiling} (DAG_MONTHLY_ACU_POOL)."
+  uncapped=$(jq -r '.uncapped | join(", ")' <<<"$verdict")
+  [[ -n "$uncapped" ]] && print -r -- "Warning: org(s) with no explicit local_agent cap are unlimited, so the ceiling is unenforceable until capped: ${uncapped}"
+  if [[ "$(jq -r '.refused' <<<"$verdict")" == true ]]; then
+    print -ru2 -- "dag set limit global: refused — Σ org caps would rise to ${after} ACUs, above the ${ceiling} ACU ceiling. Org caps are zero-sum under the ceiling: lower another org first, or run dag slg to replan every org."
+    return 3
   fi
-  print -r -- "Parent-org rule: reconciling ${parent_name} ${gate}_agent cap to Σ non-parent caps = ${sum}."
-  _dag_limits_apply_org_limit "$key" "$base" "$gate" "$sum" "$parent_row"
+  if (( before > ceiling && after <= before )); then
+    print -r -- "Note: org layer is over the ceiling by $(( after > ceiling ? after - ceiling : 0 )) ACUs after this write — allowed because it does not grow the layer."
+  fi
+  return 0
 }
 
 dag_set_limit_global() {  # [local|cloud] <acus> [org_id-or-name]
@@ -170,40 +169,22 @@ dag_set_limit_global() {  # [local|cloud] <acus> [org_id-or-name]
 
   local base="${DAG_API_BASE_V3:-https://api.devin.ai}"
   local orgs selected selected_count row failures=0 applied=0
-  local parent_row parent_id="" target_is_parent=0
   _dag_limits_request GET "${base}/v3/enterprise/organizations" "$key" ""
   orgs="$_dag_limits_body"
   if [[ "$_dag_limits_code" != 200 ]]; then
     print -ru2 -- "dag set limit global: GET ${base}/v3/enterprise/organizations failed [${_dag_limits_code}]: ${orgs}"
     return 1
   fi
-  parent_row=$(_dag_limits_parent_row "$orgs")
-  [[ -n "$parent_row" ]] && parent_id=$(jq -r '.org_id' <<<"$parent_row")
 
   selected=$(_dag_limits_select_orgs "$orgs" "$selector") || return $?
-
-  if [[ -z "$selector" && -n "$parent_id" ]]; then
-    # All-org mode with a known parent: the amount targets the non-parent orgs;
-    # the parent is reconciled to the sum afterwards, never written the raw amount.
-    selected=$(jq -c --arg p "$parent_id" 'select(.org_id != $p)' <<<"$selected")
-    if [[ -z "${selected//$'\n'/}" ]]; then
-      # Roster contains only the parent org — nothing to sum; write it directly.
-      selected=$(jq -c '.items[]?' <<<"$orgs")
-      parent_id=""
-    fi
-  fi
-  if [[ -n "$selector" && -n "$parent_id" ]]; then
-    [[ "$(jq -r '.org_id' <<<"$selected")" == "$parent_id" ]] && target_is_parent=1
-  fi
-
   selected_count=$(sed '/^$/d' <<<"$selected" | wc -l | tr -d ' ')
 
+  local layer
+  layer=$(_dag_limits_layer_state "$key" "$base" "$orgs") || return 1
+  _dag_limits_ceiling_check "$layer" "$gate" "$amount" "$selected" || return $?
+
   if [[ -z "$selector" ]]; then
-    if [[ -n "$parent_id" ]]; then
-      print -r -- "No org selector passed; applying to all ${selected_count} non-parent organizations (gate: ${gate}). Parent $(jq -r '.name // .org_id' <<<"$parent_row") is reconciled to the sum afterwards."
-    else
-      print -r -- "No org selector passed; applying to all ${selected_count} organizations."
-    fi
+    print -r -- "No org selector passed; applying to all ${selected_count} organizations."
   fi
 
   while IFS= read -r row; do
@@ -216,16 +197,6 @@ dag_set_limit_global() {  # [local|cloud] <acus> [org_id-or-name]
   done <<<"$selected"
 
   print -r -- "dag set limit global summary: ${applied}/${selected_count} organization(s) verified at ${amount} ACUs (${gate}_agent)."
-
-  if [[ -n "$parent_id" && $target_is_parent == 0 ]]; then
-    if (( failures == 0 )); then
-      _dag_limits_reconcile_parent "$key" "$base" "$gate" "$orgs" "$parent_row" || (( failures++ )) || true
-    else
-      print -ru2 -- "dag set limit global: skipping parent reconciliation — ${failures} org write(s) failed above."
-    fi
-  elif (( target_is_parent )); then
-    print -r -- "Explicit parent-org write: parent-org rule not applied (amount written as given). Parent cap should equal Σ non-parent org caps for the ${gate} gate."
-  fi
 
   _dag_limits_print_ui_hint
   (( failures == 0 ))

@@ -166,34 +166,61 @@ out=$(FAKE_VERIFY_BODY='{}' run_global set limit global 0 2>&1); rc=$?
 assert_exit "zero mismatch rc" 1 $rc
 assert_contains "zero allowed attempted" "$out" "verification failed"
 
-# --- parent-org rule: all-mode writes children, reconciles parent to sum ---
-parent_orgs='{"items":[{"org_id":"org-vnt","name":"Vontier"},{"org_id":"org-a","name":"A"},{"org_id":"org-b","name":"B"}]}'
-: > "${tmpdir}/curl.log"
-out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global 100); rc=$?
-assert_exit "parent all-mode rc" 0 $rc
-assert_contains "parent all-mode targets children" "$out" "applying to all 2 non-parent organizations"
-assert_contains "parent all-mode child a" "$out" "confirmed local_agent.cycle_acu_limit=100 for org-a"
-assert_contains "parent all-mode child b" "$out" "confirmed local_agent.cycle_acu_limit=100 for org-b"
-assert_contains "parent all-mode reconcile msg" "$out" "reconciling Vontier local_agent cap to Σ non-parent caps = 200"
-assert_contains "parent all-mode parent sum" "$out" "confirmed local_agent.cycle_acu_limit=200 for org-vnt"
-log=$(cat "${tmpdir}/curl.log")
-assert_contains "parent patched to sum" "$log" '{"local_agent":{"cycle_acu_limit":200}}'
+# --- org ceiling: Σ org caps (local + cloud, every org incl. the umbrella org) ---
+three_orgs='{"items":[{"org_id":"org-vnt","name":"Vontier"},{"org_id":"org-a","name":"A"},{"org_id":"org-b","name":"B"}]}'
 
-# --- parent-org rule: child write reconciles; uncapped sibling blocks reconcile ---
+# Umbrella org is an ordinary org: all-mode writes every org the same amount,
+# no parent reconciliation write.
 : > "${tmpdir}/curl.log"
-out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global cloud 0 org-a 2>&1); rc=$?
-assert_exit "parent uncapped sibling rc" 1 $rc
-assert_contains "child cloud write ok" "$out" "confirmed cloud_agent.cycle_acu_limit=0 for org-a"
-assert_contains "uncapped sibling blocks" "$out" "cannot reconcile parent cloud gate"
-assert_contains "uncapped sibling named" "$out" "org-b (B)"
-
-# --- parent-org rule: explicit parent target skips reconciliation ---
-: > "${tmpdir}/curl.log"
-out=$(FAKE_ORGS_BODY="$parent_orgs" run_global set limit global 500 Vontier); rc=$?
-assert_exit "explicit parent rc" 0 $rc
-assert_contains "explicit parent confirmed" "$out" "confirmed local_agent.cycle_acu_limit=500 for org-vnt"
-assert_contains "explicit parent note" "$out" "Explicit parent-org write"
+out=$(FAKE_ORGS_BODY="$three_orgs" FAKE_VERIFY_BODY='{"local_agent":{"cycle_acu_limit":100}}' run_global set limit global 100); rc=$?
+assert_exit "umbrella all-mode rc" 0 $rc
+assert_contains "umbrella all-mode all three" "$out" "applying to all 3 organizations"
+assert_contains "umbrella all-mode vontier" "$out" "confirmed local_agent.cycle_acu_limit=100 for org-vnt"
+assert_contains "ceiling line" "$out" "Σ org caps (local + cloud, every org) 300 → 300 ACUs; ceiling 24000"
+if [[ "$out" == *"non-parent"* || "$out" == *"reconcil"* ]]; then _fail "parent rule still active"; else _ok; fi
 log=$(cat "${tmpdir}/curl.log")
-if [[ "$log" == *"org-a"* || "$log" == *"org-b"* ]]; then _fail "explicit parent touched children"; else _ok; fi
+assert_eq "three PATCHes only" 3 "$(grep -c '^method=PATCH' <<<"$log")"
+
+# Growth past the ceiling is refused before any PATCH (3 × 9000 = 27000 > 24000).
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$three_orgs" FAKE_VERIFY_BODY='{"local_agent":{"cycle_acu_limit":100}}' run_global set limit global 9000 2>&1); rc=$?
+assert_exit "ceiling refuse rc" 3 $rc
+assert_contains "ceiling refuse msg" "$out" "refused — Σ org caps would rise to 27000 ACUs, above the 24000 ACU ceiling"
+if grep -q '^method=PATCH' "${tmpdir}/curl.log"; then _fail "refused run still PATCHed"; else _ok; fi
+
+# Single-org raise that tips Σ over the ceiling is refused; cloud caps count.
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$three_orgs" FAKE_VERIFY_BODY='{"local_agent":{"cycle_acu_limit":8000},"cloud_agent":{"cycle_acu_limit":100}}' run_global set limit global 8200 org-a 2>&1); rc=$?
+assert_exit "single raise refuse rc" 3 $rc
+assert_contains "single raise sums" "$out" "24300 → 24500"
+if grep -q '^method=PATCH' "${tmpdir}/curl.log"; then _fail "single refused run PATCHed"; else _ok; fi
+
+# Custom pool is the ceiling.
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$three_orgs" FAKE_VERIFY_BODY='{"local_agent":{"cycle_acu_limit":100}}' DAG_MONTHLY_ACU_POOL=250 run_global set limit global 150 org-a 2>&1); rc=$?
+assert_exit "custom pool refuse rc" 3 $rc
+assert_contains "custom pool ceiling" "$out" "ceiling 250"
+
+# Already-over layer (default fake caps 3 × 2400 = 7200 > pool 5000): shrinking writes are allowed.
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$three_orgs" DAG_MONTHLY_ACU_POOL=5000 run_global set limit global 1000 Vontier 2>&1); rc=$?
+assert_exit "shrink over layer rc" 0 $rc
+assert_contains "shrink over layer sums" "$out" "7200 → 5800"
+assert_contains "shrink over layer note" "$out" "over the ceiling by 800 ACUs after this write — allowed because it does not grow the layer"
+log=$(cat "${tmpdir}/curl.log")
+assert_eq "shrink wrote only vontier" 1 "$(grep -c '^method=PATCH' <<<"$log")"
+
+# Uncapped org: warned as unenforceable; cloud-zeroing still allowed.
+: > "${tmpdir}/curl.log"
+out=$(FAKE_ORGS_BODY="$three_orgs" FAKE_VERIFY_BODY='{"cloud_agent":{"cycle_acu_limit":0}}' run_global set limit global cloud 0 2>&1); rc=$?
+assert_exit "uncapped cloud zero rc" 0 $rc
+assert_contains "uncapped warning" "$out" "ceiling is unenforceable until capped: Vontier, A, B"
+
+# Layer GET failure aborts before any PATCH.
+: > "${tmpdir}/curl.log"
+out=$(FAKE_VERIFY_CODE=500 FAKE_VERIFY_BODY='{"detail":"limits read exploded"}' run_global set limit global 100 2>&1); rc=$?
+assert_exit "layer read fail rc" 1 $rc
+assert_contains "layer read fail quoted" "$out" 'limits read exploded'
+if grep -q '^method=PATCH' "${tmpdir}/curl.log"; then _fail "layer read fail PATCHed"; else _ok; fi
 
 report

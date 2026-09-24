@@ -517,7 +517,6 @@ _dag_dashboard_write_data() {
       --argjson after "$after" --argjson before "$before" \
       --arg generated_at "$generated_at" \
       --arg refresh_minutes "$refresh_minutes" \
-      --arg parent_org "${DAG_PARENT_ORG:-Vontier}" \
       --slurpfile ent "${work}/enterprise-daily.json" \
       --slurpfile orgs "${work}/organizations.json" \
       --slurpfile orgd "${work}/org-dailies.json" \

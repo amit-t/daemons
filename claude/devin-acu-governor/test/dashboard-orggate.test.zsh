@@ -28,7 +28,6 @@ print -r -- '{"available":false,"rows":[]}' > $tmp/modela.json
 out=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --argjson after 1755302400 --argjson before 1757894400 \
   --arg generated_at test --arg refresh_minutes "" \
-  --arg parent_org Vontier \
   --slurpfile ent $tmp/ent.json --slurpfile orgs $tmp/orgs.json \
   --slurpfile orgd $tmp/orgd.json --slurpfile orgl $tmp/orgl.json \
   --slurpfile users $tmp/users.json --slurpfile userd $tmp/userd.json \
@@ -37,20 +36,9 @@ out=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile modela $tmp/modela.json -f $lib/dashboard.jq)
 
 assert_contains "org sum caps" "$out" '"sum_explicit_user_caps":140'
-assert_contains "parent org unmatched is null" "$out" '"parent_org_id":null'
-
-# Parent-org resolution: exact case-insensitive name match emits the org_id.
-out2=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
-  --argjson after 1755302400 --argjson before 1757894400 \
-  --arg generated_at test --arg refresh_minutes "" \
-  --arg parent_org "org one" \
-  --slurpfile ent $tmp/ent.json --slurpfile orgs $tmp/orgs.json \
-  --slurpfile orgd $tmp/orgd.json --slurpfile orgl $tmp/orgl.json \
-  --slurpfile users $tmp/users.json --slurpfile userd $tmp/userd.json \
-  --slurpfile userl $tmp/userl.json --slurpfile defaultl $tmp/defaultl.json \
-  --slurpfile donorrec $tmp/donorrec.json --slurpfile sessions $tmp/sessions.json \
-  --slurpfile modela $tmp/modela.json -f $lib/dashboard.jq)
-assert_contains "parent org matched by name" "$out2" '"parent_org_id":"org-1"'
+# Org hierarchy retired: no parent org id in the snapshot (every org counts
+# toward the Σ org caps ceiling).
+if [[ "$out" == *parent_org_id* ]]; then _fail "parent_org_id still emitted"; else _ok; fi
 
 # Cloud gate deliberately zeroed (policy default): idle zero gate reads
 # cloud_off and never drives the row badge; zero gate WITH burn stays over.
@@ -71,7 +59,6 @@ print -r -- '{"available":false,"rows":[]}' > $tmp2/modela.json
 out3=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --argjson after 1755302400 --argjson before 1757894400 \
   --arg generated_at test --arg refresh_minutes "" \
-  --arg parent_org Vontier \
   --slurpfile ent $tmp2/ent.json --slurpfile orgs $tmp2/orgs.json \
   --slurpfile orgd $tmp2/orgd.json --slurpfile orgl $tmp2/orgl.json \
   --slurpfile users $tmp2/users.json --slurpfile userd $tmp2/userd.json \

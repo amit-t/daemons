@@ -55,10 +55,7 @@ export default function App() {
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
-  const orgCaps = orgCapTotals(data.orgs, data.parent_org_id)
-  const parentOrgName = data.parent_org_id
-    ? (data.orgs.find((o) => o.org_id === data.parent_org_id)?.name ?? data.parent_org_id)
-    : null
+  const orgCaps = orgCapTotals(data.orgs, data.pool)
 
   return (
     <>
@@ -132,13 +129,17 @@ export default function App() {
                 {capTotals.uncapped_users > 0 ? ` · ${capTotals.uncapped_users} uncapped` : ''}
               </div>
             </div>
-            <div className="card accent">
+            <div className={`card ${orgCaps.over_ceiling || orgCaps.uncapped_orgs > 0 ? 'bad' : 'accent'}`}>
               <div className="card-label">Capped org total</div>
               <div className="card-value">{fmt(orgCaps.limit_total)}</div>
               <div className="card-sub">
-                local + cloud gates · {orgCaps.capped_orgs} capped org{orgCaps.capped_orgs === 1 ? '' : 's'}
-                {orgCaps.uncapped_orgs > 0 ? ` · ${orgCaps.uncapped_orgs} uncapped` : ''}
-                {orgCaps.parent_excluded && parentOrgName ? ` · excl. ${parentOrgName} (parent)` : ''}
+                local + cloud gates, every org · {orgCaps.capped_orgs} capped org{orgCaps.capped_orgs === 1 ? '' : 's'}
+                {orgCaps.uncapped_orgs > 0 ? ` · ${orgCaps.uncapped_orgs} uncapped (ceiling unenforceable)` : ''}
+                {orgCaps.ceiling_headroom != null
+                  ? orgCaps.over_ceiling
+                    ? ` · over ${fmt(orgCaps.ceiling ?? 0)} ceiling by ${fmt(-orgCaps.ceiling_headroom)}`
+                    : ` · ${fmt(orgCaps.ceiling_headroom)} under ${fmt(orgCaps.ceiling ?? 0)} ceiling`
+                  : ''}
               </div>
             </div>
             <div className="card">

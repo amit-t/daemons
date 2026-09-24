@@ -65,4 +65,32 @@ assert_contains "F pool error" "$out" '"error":"pool must be positive"'
 out=$(run_jq '{"pool":100,"orgs":[]}')
 assert_contains "F empty error" "$out" '"error":"no orgs supplied"'
 
+# R. reserved cloud caps come out of the pool first: pool 1000, reserved 200 ->
+#    budget 800. Floors A 400 + B 200 = 600, surplus 200 split 150/50 -> 550/250.
+out=$(run_jq '{"pool":1000,"reserved":200,"min_headroom":100,
+  "orgs":[{"org_id":"a","name":"A","local_consumed":300},
+          {"org_id":"b","name":"B","local_consumed":100}]}')
+assert_contains "R budget" "$out" '"budget":800'
+assert_contains "R reserved" "$out" '"reserved":200'
+assert_contains "R cap a" "$out" '"cap_after":550'
+assert_contains "R sum_after" "$out" '"sum_after":800'
+out=$(run_jq '{"pool":1000,"reserved":1000,"orgs":[{"org_id":"a","local_consumed":0}]}')
+assert_contains "R no budget" "$out" '"error":"reserved cloud caps leave no Local Agent budget"'
+
+# S. umbrella org is an ordinary org: live-shaped 2026-09 cycle, ten orgs incl.
+#    Vontier, pool 24000 -> Σ local caps <= 24000 (parent no longer doubles it).
+out=$(run_jq '{"pool":24000,"reserved":0,"min_headroom":250,"days_left":22,
+  "orgs":[{"org_id":"v","name":"Vontier","local_consumed":1700.8,"run_rate":212},
+          {"org_id":"i","name":"ICS","local_consumed":2696.7,"run_rate":337},
+          {"org_id":"p","name":"Passport","local_consumed":976.4,"run_rate":122},
+          {"org_id":"x","name":"i360","local_consumed":235.1},
+          {"org_id":"o","name":"Orpak","local_consumed":108.4},
+          {"org_id":"n","name":"iNFX","local_consumed":106.9},
+          {"org_id":"h","name":"Hub Core","local_consumed":18.1},
+          {"org_id":"vo","name":"Vontier Org","local_consumed":0},
+          {"org_id":"pr","name":"Product","local_consumed":0},
+          {"org_id":"ps","name":"Payment Security","local_consumed":0}]}')
+if (( $(print -r -- "$out" | jq '.sum_after') <= 24000 )); then _ok; else _fail "S sum_after <= 24000"; fi
+assert_eq "S all ten orgs" 10 "$(print -r -- "$out" | jq '.proposed | length')"
+
 report
