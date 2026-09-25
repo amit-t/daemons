@@ -22,7 +22,8 @@ _dag_http() {
   curl "${args[@]}" "$url" 2>/dev/null || print -rn -- "000"
 }
 
-# _dag_classify <code> <present-code>... -> ok | missing | ratelimited | unreachable | unexpected:<code>
+# _dag_classify <code> <present-code>... -> ok | rejected | missing | ratelimited | unreachable | unexpected:<code>
+# 401 = the key itself is not accepted (invalid/revoked); 403 = key accepted but lacks the permission.
 _dag_classify() {
   local code=$1; shift
   local p
@@ -30,11 +31,18 @@ _dag_classify() {
     [[ "$code" == "$p" ]] && { print -r -- ok; return 0 }
   done
   case "$code" in
-    401|403) print -r -- missing ;;
+    401)     print -r -- rejected ;;
+    403)     print -r -- missing ;;
     429)     print -r -- ratelimited ;;
     000|"")  print -r -- unreachable ;;
     *)       print -r -- "unexpected:${code}" ;;
   esac
+}
+
+# _dag_v3_line <label> <code> <verdict> -> _dag_line, counting 401 rejections in caller's $rejects
+_dag_v3_line() {
+  [[ "$3" == rejected ]] && (( rejects++ ))
+  _dag_line "$@"
 }
 
 # _dag_line <label> <code> <verdict> -> prints a report line; returns 0 only when ok
@@ -42,6 +50,7 @@ _dag_line() {
   local label=$1 code=$2 verdict=$3 sym
   case "$verdict" in
     ok)          sym="✅ present" ;;
+    rejected)    sym="❌ rejected (401 — key invalid or revoked)" ;;
     missing)     sym="❌ missing (key lacks this permission)" ;;
     ratelimited) sym="⚠️  rate-limited (429) — inconclusive, retry later" ;;
     unreachable) sym="⚠️  unreachable — network or endpoint error" ;;
@@ -55,7 +64,7 @@ dag_doctor() {
   local v3base="${DAG_API_BASE_V3:-https://api.devin.ai}"
   local wsbase="${DAG_API_BASE:-https://server.codeium.com}"
   local cog_key windsurf_key today code verdict
-  integer fails=0 warns=0
+  integer fails=0 warns=0 rejects=0
 
   if ! cog_key=$(dag_resolve_cog_key); then
     print -ru2 -- "dag doctor: no Devin API v3 service-user key (cog_...) found (see 'dag help' for setup)."
@@ -73,43 +82,43 @@ dag_doctor() {
   # ManageBilling — consumption cycles.
   code=$(_dag_http GET "${v3base}/v3/enterprise/consumption/cycles" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "Consumption Read " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "Consumption Read " "$code" "$verdict" || (( fails++ ))
 
   # Org read — organizations list (caps visible per org).
   code=$(_dag_http GET "${v3base}/v3/enterprise/organizations" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "Org Read         " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "Org Read         " "$code" "$verdict" || (( fails++ ))
 
   # ACU-limit read — default user limit is a cheap read and proves ViewAccountConsumption.
   code=$(_dag_http GET "${v3base}/v3beta1/enterprise/users/consumption/acu-limits" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "ACU Limit Read   " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "ACU Limit Read   " "$code" "$verdict" || (( fails++ ))
 
   # ACU-limit write — PATCH a nonexistent org ACU-limit resource: 404/422 = authz passed.
-  # 403 is inconclusive (API may mask unknown orgs), so it warns, not fails.
+  # 403 is inconclusive (API may mask unknown orgs), so it warns, not fails; 401 is a rejected key.
   code=$(_dag_http PATCH "${v3base}/v3beta1/enterprise/organizations/org-dag-doctor-probe/consumption/acu-limits" '{"local_agent":{"cycle_acu_limit":1}}' "$cog_auth")
   verdict=$(_dag_classify "$code" 404 422)
   if [[ "$verdict" == missing ]]; then
     print -r -- "  ACU Limit Write    [${code}]  ⚠️  inconclusive — API may mask unknown orgs as 403; verified only at write time"
     (( warns++ ))
   else
-    _dag_line "ACU Limit Write  " "$code" "$verdict" || (( fails++ ))
+    _dag_v3_line "ACU Limit Write  " "$code" "$verdict" || (( fails++ ))
   fi
 
   # Roster — enterprise members.
   code=$(_dag_http GET "${v3base}/v3/enterprise/members/users?limit=1" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "Roster Read      " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "Roster Read      " "$code" "$verdict" || (( fails++ ))
 
   # IDP group roster — needed by usage/status --group.
   code=$(_dag_http GET "${v3base}/v3/enterprise/members/idp-users?first=1" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "IDP Group Read   " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "IDP Group Read   " "$code" "$verdict" || (( fails++ ))
 
   # ViewAccountMetrics — usage metrics.
   code=$(_dag_http GET "${v3base}/v3/enterprise/metrics/usage" "" "$cog_auth")
   verdict=$(_dag_classify "$code" 200)
-  _dag_line "Metrics Read     " "$code" "$verdict" || (( fails++ ))
+  _dag_v3_line "Metrics Read     " "$code" "$verdict" || (( fails++ ))
 
   print -r -- ""
   print -r -- "Windsurf analytics (server.codeium.com, service key) — optional:"
@@ -151,6 +160,12 @@ dag_doctor() {
     return 0
   fi
   print -r -- "❌ ${fails} required capability(ies) missing or uncertain."
+  if (( rejects > 0 )); then
+    print -r -- "   ${rejects} probe(s) returned 401: the stored cog_ key is invalid or revoked, not short of permissions."
+    print -r -- "   Store a valid key: security add-generic-password -U -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_…'"
+    print -r -- "   (on another Mac: dag setup-extract prints the commands)."
+    (( rejects == fails )) && return 3
+  fi
   print -r -- "   Recreate the cog_ key at app.devin.ai > Settings > Service users (enterprise-scoped)"
   print -r -- "   with permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics, ViewAccountMembership."
   return 3

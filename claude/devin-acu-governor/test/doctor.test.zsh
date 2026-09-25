@@ -105,4 +105,24 @@ else
   _ok
 fi
 
+# 11. Every v3 probe 401 -> key rejected (invalid/revoked), not a permission gap; exit 3.
+out=$(FAKE_CYCLES=401 FAKE_ORGS=401 FAKE_LIMIT_READ=401 FAKE_LIMIT_WRITE=401 FAKE_ROSTER=401 \
+  FAKE_IDP_ROSTER=401 FAKE_METRICS=401 run_doctor); rc=$?
+assert_exit "401 rc" 3 $rc
+assert_contains "401 rejected word" "$out" "rejected (401"
+assert_contains "401 invalid hint" "$out" "invalid or revoked"
+assert_contains "401 store hint" "$out" "security add-generic-password -U -s devin-cog-key"
+if [[ "$out" == *"key lacks this permission"* ]]; then _fail "401 reported as permission gap"; else _ok; fi
+if [[ "$out" == *"inconclusive"* ]]; then _fail "401 write probe reported inconclusive"; else _ok; fi
+
+# 12. 403 keeps the permission diagnosis and no rejected-key hint.
+out=$(FAKE_CYCLES=403 run_doctor); rc=$?
+assert_contains "403 permission word" "$out" "key lacks this permission"
+if [[ "$out" == *"invalid or revoked"* ]]; then _fail "403 got rejected-key hint"; else _ok; fi
+
+# 13. Windsurf 401 -> rejected, optional (exit 0).
+out=$(FAKE_TEAMS=401 run_doctor); rc=$?
+assert_exit "ws 401 rc" 0 $rc
+assert_contains "ws 401 word" "$out" "rejected (401"
+
 report
