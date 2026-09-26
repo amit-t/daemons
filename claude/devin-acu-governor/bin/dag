@@ -29,7 +29,7 @@ dag_usage() {
 dag — Devin Enterprise ACU governor
 
 Usage:
-  dag [--agent claude|codex|devin] [--co|--cf|--deo|--def|--des|--del|--det|--dey|--defu] <command ...>
+  dag [--agent claude|codex|devin] [--co|--cf|--deo|--def|--des|--del|--det|--dey|--defu|--cx*] <command ...>
                               Pick the parent agent or model-pinned launcher profile
                               that runs the playbook session. Agent shorthands:
                               --claude/--codex/--devin. Profile flags:
@@ -37,6 +37,10 @@ Usage:
                               Opus/Fable), --des/--del/--det (Devin GPT-5.6
                               Sol/Luna/Terra), --dey (Devin default model),
                               --defu (cheapest enabled Fusion pair via DEFU_YOLO=1 defu).
+                              Codex pins (Profiles SCB shortcuts): --cxl/--cxs/--cxa
+                              (Luna/Sol/Astra base) plus l/m/h/u suffix for
+                              low/medium/high/ultra reasoning, e.g. --cxsh, --cxau;
+                              --cxm opens the interactive CXM model picker first.
                               Selectors go before the command.
   dag set-limits              Prorate remaining ACUs and PATCH per-user Local Agent limits
   dag set-limits <email>      Cap only one uncapped active user, funded zero-sum by Borrowing
@@ -151,6 +155,7 @@ Examples:
   dag --det boost over
   dag --dey set-limits-new
   dag --defu status
+  dag --cxsh boost.org "Platform Eng"
   dag set-limits alice@corp.com
   dag boost all
   dag boost.org "Platform Eng"
@@ -178,6 +183,9 @@ Config (environment.env; shell env vars override):
   DAG_LAUNCHER_DET           launcher for --det (default det, GPT-5.6 Terra)
   DAG_LAUNCHER_DEY           launcher for --dey (default dey)
   DAG_LAUNCHER_DEFU          launcher for --defu (default: DEFU_YOLO=1 defu; cheapest enabled Fusion pair)
+  DAG_LAUNCHER_CX<PIN>       launcher for --cx<pin>, e.g. DAG_LAUNCHER_CXSH for --cxsh
+                             (default: the same-named Profiles function, e.g. cxsh;
+                             --cxm defaults to "CXM --")
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
@@ -352,6 +360,11 @@ dag_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command
     det)    print -r -- "${DAG_LAUNCHER_DET:-det}" ;;
     dey)    print -r -- "${DAG_LAUNCHER_DEY:-dey}" ;;
     defu)   print -r -- "${DAG_LAUNCHER_DEFU:-DEFU_YOLO=1 defu}" ;;
+    cxm)    print -r -- "${DAG_LAUNCHER_CXM:-CXM --}" ;;
+    cxl|cxll|cxlm|cxlh|cxlu|cxs|cxsl|cxsm|cxsh|cxsu|cxa|cxal|cxam|cxah|cxau)
+      # Codex pins from Profiles codex-models.zsh; override via DAG_LAUNCHER_CX<PIN>.
+      local override="DAG_LAUNCHER_${(U)1}"
+      print -r -- "${(P)override:-$1}" ;;
     "")     print -r -- "${DAG_LAUNCHER:-clscb}" ;;
     *)      return 2 ;;
   esac
@@ -363,7 +376,7 @@ dag_resolve_launcher() {  # $1 = agent/profile selector; prints launcher command
 dag_launcher_needs_dashdash() {  # $1 = selector
   case "$1" in
     devin|deo|def|des|del|det|dey|defu) return 0 ;;
-    claude|codex|co|cf) return 1 ;;
+    claude|codex|co|cf|cxl|cxll|cxlm|cxlh|cxlu|cxs|cxsl|cxsm|cxsh|cxsu|cxa|cxal|cxam|cxah|cxau|cxm) return 1 ;;
     "")
       local l="${DAG_LAUNCHER:-clscb}"
       [[ "$l" == (deo|def|des|del|det|dey|defu|devin|devinc)* || "$l" == *devin* || "$l" == *defu* ]] && return 0
@@ -399,7 +412,7 @@ main() {
         selector_source="shorthand"
         shift
         ;;
-      --co|--cf|--deo|--def|--des|--del|--det|--dey|--defu)
+      --co|--cf|--deo|--def|--des|--del|--det|--dey|--defu|--cxl|--cxll|--cxlm|--cxlh|--cxlu|--cxs|--cxsl|--cxsm|--cxsh|--cxsu|--cxa|--cxal|--cxam|--cxah|--cxau|--cxm)
         agent="${1#--}"
         selector_source="shorthand"
         shift
@@ -413,7 +426,7 @@ main() {
     print -ru2 -- "dag: --agent expects one of claude, codex, devin (got: ${agent})"
     exit 2
   fi
-  if [[ -n "$agent" && "$agent" != (claude|codex|devin|co|cf|deo|def|des|del|det|dey|defu) ]]; then
+  if [[ -n "$agent" && "$agent" != (claude|codex|devin|co|cf|deo|def|des|del|det|dey|defu|cxl|cxll|cxlm|cxlh|cxlu|cxs|cxsl|cxsm|cxsh|cxsu|cxa|cxal|cxam|cxah|cxau|cxm) ]]; then
     print -ru2 -- "dag: unknown launcher selector: ${agent}"
     exit 2
   fi

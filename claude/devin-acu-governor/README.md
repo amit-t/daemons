@@ -6,6 +6,7 @@ Runtime shape:
 - Most commands launch a Claude-agent playbook through `clscb` with deterministic jq math and explicit write gates.
 - The parent agent is selectable per run: `dag --agent claude|codex|devin <command ...>` (shorthands `--claude`, `--codex`, `--devin`, placed before the command; global wrappers `dag--claude`/`dag--codex`/`dag--devin`/`dag--defu` from `aliases.zsh`). Default stays Claude via `clscb`; `--agent codex` uses `cxscb`; `--agent devin` uses `devin --permission-mode dangerous -- <prompt>` — dag adds the `--` separator itself for devin-family launchers (`--devin`, `--deo`, `--def`, `--des`, `--del`, `--det`, `--dey`, `--defu`), since devin only accepts the prompt as a positional past `--`.
 - Model-pinned launcher profiles are also selectable before the command: `--co` launches Claude Opus through `co`, `--cf` launches Claude Fable through `cf`, `--deo` launches Devin Opus through `deo`, `--def` launches Devin Fable through `def`, `--des`/`--del`/`--det` launch Devin GPT-5.6 Sol/Luna/Terra through `des`/`del`/`det`, and `--dey` launches default-model Devin through `dey`. These are direct profile flags; canonical `--agent` values remain `claude`, `codex`, and `devin` only. `--defu` launches the cheapest enabled Devin Fusion pair through `DEFU_YOLO=1 defu`; the environment form enables dangerous mode in the standalone binary without forwarding its wrapper-only `--yolo` flag through the Profiles `defu` function, which is already dangerous. Defu owns dynamic pair selection plus its precision, boil-the-ocean, and caveman prompt, while DAG supplies the unchanged command playbook after `--`.
+- Codex pins from Profiles `zsh_functions/codex-models.zsh` are selectable the same way: `--cxl`, `--cxs`, `--cxa` launch Luna/Sol/Astra (precision + SCB) at base reasoning, and an `l`/`m`/`h`/`u` suffix selects low/medium/high/ultra reasoning (`--cxll` … `--cxau`, 15 pins). `--cxm` runs the interactive `CXM` picker (choose model + reasoning, saved as Codex defaults) and then launches the playbook. Codex takes the prompt as a bare positional, so no `--` is added. Unsupported reasoning fails without launching (for example `--cxlu`: Luna has no ultra), with no silent fallback.
 - The assembled playbook prompt is identical for every agent and launcher profile.
 - Every agent prompt also includes Amit's durable global instructions from `~/.codex/memories/global-zsh-and-dag-instructions.md` when that file exists. Missing memory is non-fatal. That file carries shell preferences only — all DAG policy lives in `playbooks/_common.md`, which is injected into every dag session for every engine.
 - `doctor`, `dashboard`, `usage`, `usage --group`, `setup-extract`, and `set limit global` run locally with zsh/curl/jq and do **not** launch an agent.
@@ -16,6 +17,7 @@ Launcher-profile examples:
 ```zsh
 dag --co status
 dag --cf status
+dag --cxsh boost.org "Platform Eng"   # Codex Sol, high reasoning
 dag --deo status
 dag --def status
 dag --des status
@@ -757,6 +759,8 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_LAUNCHER_DET` | `det` | Devin GPT-5.6 Terra profile launcher used by `--det` |
 | `DAG_LAUNCHER_DEY` | `dey` | Default-model Devin profile launcher used by `--dey` |
 | `DAG_LAUNCHER_DEFU` | `DEFU_YOLO=1 defu` | Cheapest-enabled-Fusion Devin launcher used by `--defu`; DAG appends `--` before its assembled prompt |
+| `DAG_LAUNCHER_CX<PIN>` | same-named Profiles function | Codex pin launcher for `--cx<pin>`, e.g. `DAG_LAUNCHER_CXSH` for `--cxsh` (default `cxsh`) |
+| `DAG_LAUNCHER_CXM` | `CXM --` | Interactive Codex model picker used by `--cxm`; the prompt follows its `--` |
 | `DAG_PRINT_LAUNCHER` | unset | For agent commands, print the resolved launcher and exit |
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |

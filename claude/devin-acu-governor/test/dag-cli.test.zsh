@@ -55,7 +55,7 @@ cat > "${memhome}/.codex/memories/global-zsh-and-dag-instructions.md" <<'EOF'
 - Never describe Borrow donor reductions as “negative ACUs.”
 EOF
 run_dag_with_home() { HOME="$memhome" PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
-for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--des" "--del" "--det" "--dey" "--defu"; do
+for agent_args in "" "--claude" "--codex" "--devin" "--co" "--cf" "--deo" "--def" "--des" "--del" "--det" "--dey" "--defu" "--cxl" "--cxsh" "--cxau" "--cxm"; do
   if [[ -n "$agent_args" ]]; then
     out=$(run_dag_with_home ${(z)agent_args} status); rc=$?
   else
@@ -558,6 +558,30 @@ assert_eq "devin launcher single dashdash" "devin --permission-mode dangerous --
 out=$(run_dag --defu setup-extract); rc=$?
 assert_exit "defu local setup-extract rc" 0 $rc
 assert_contains "defu local setup-extract stays local" "$out" "security add-generic-password"
+
+# 13b. Codex pin selectors (Profiles codex-models.zsh): bare prompt, no `--`.
+for pin in cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau; do
+  out=$(run_dag_launcher "--${pin}" status); rc=$?
+  assert_exit "codex pin ${pin} rc" 0 $rc
+  assert_eq "codex pin ${pin} launcher" "$pin" "$out"
+  out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" "--${pin}" boost.org "Platform Eng"); rc=$?
+  assert_exit "codex pin ${pin} prompt rc" 0 $rc
+  assert_contains "codex pin ${pin} prompt playbook" "$out" "# Playbook: boost org"
+  if [[ "$out" == *"--${pin}"* ]]; then _fail "--${pin} leaked into prompt"; else _ok; fi
+done
+out=$(run_dag_launcher --cxm status)
+assert_eq "codex picker launcher" "CXM --" "$out"
+out=$(DAG_LAUNCHER_CXSH="my-cxsh full" run_dag_launcher --cxsh status)
+assert_eq "codex pin launcher override" "my-cxsh full" "$out"
+out=$(DAG_LAUNCHER_CXM="CXM -- ultra" run_dag_launcher --cxm status)
+assert_eq "codex picker launcher override" "CXM -- ultra" "$out"
+out=$(run_dag_launcher --cxq status 2>&1); rc=$?
+assert_exit "unknown codex pin rc" 2 $rc
+out=$(run_dag_launcher --agent cxsh status 2>&1); rc=$?
+assert_exit "codex pin rejected as canonical agent rc" 2 $rc
+out=$(run_dag help)
+assert_contains "usage codex pin flags" "$out" "--cxl/--cxs/--cxa"
+assert_contains "usage codex pin launcher config" "$out" "DAG_LAUNCHER_CX<PIN>"
 
 # 14. Invalid agent -> exit 2; agent flags rejected after the command.
 out=$(run_dag_launcher --agent gemini status 2>&1); rc=$?
