@@ -78,6 +78,12 @@ Usage:
                               discovers every set live — no emails needed
   dag boost                   Alias for: dag boost all (bare boost = plan for everyone)
   dag boost-all               Alias for: dag boost all
+  dag boost.org <org_id|org_name>
+                              Boost all, scoped to one organization: recipients AND donors are
+                              only users billed to that org; donor Borrows net to zero inside
+                              the org, so the org gate moves only for forecast-funded ACUs
+  dag boost org <org>         Alias for: dag boost.org
+  dag boost-org <org>         Alias for: dag boost.org
   dag boost over              Boost every user currently over budget (consumed >= cap) in one
                               run, each funded zero-sum from the lowest consumers; discovers the
                               over set live — no emails needed
@@ -147,6 +153,7 @@ Examples:
   dag --defu status
   dag set-limits alice@corp.com
   dag boost all
+  dag boost.org "Platform Eng"
   dag boost over
   dag boost warning
   dag boost critical
@@ -263,6 +270,31 @@ dag_collect_group_name() {  # $1=label, rest=args; accepts --group[=x] or bare g
   print -r -- "$group"
 }
 
+dag_boost_org_context() {  # $1=invoked label, rest=org selector words; sets _dag_boost_org_context.
+  local label=$1
+  shift
+  typeset -ga _dag_boost_org_context=()
+  setopt local_options extended_glob
+  local selector="${(j: :)@}"
+  selector="${${selector##[[:space:]]#}%%[[:space:]]#}"
+  if [[ -z "$(print -r -- "$selector" | tr -d '[:space:]')" ]]; then
+    print -ru2 -- "${label}: requires an organization (usage: dag boost.org <org_id|org_name>)"
+    return 2
+  fi
+  if [[ "$selector" == -* || "$selector" == *@*.* ]]; then
+    print -ru2 -- "${label}: argument must be an org_id or org name (got: ${selector}); use dag boost <email> for one user"
+    return 2
+  fi
+  _dag_boost_org_context=(
+    "requested shell command: ${label} ${selector}"
+    "org selector: ${selector}"
+    "scope: boost all restricted to one organization — recipients (OVER, CRITICAL 0.95 <= consumed/cap < 1, WARNING 0.85 <= consumed/cap < 0.95) AND donors are only users billed to this org"
+    "org resolution: match org_id exactly, else org name case-insensitively and exactly via GET /v3/enterprise/organizations; no match or ambiguous name = stop and list orgs, never guess"
+    "no explicit user target — discover the org's three sets live, then run the boost + borrow flow for each recipient, most urgent first"
+    "donor-record suppression (hard rule 13): recorded current-cycle donors with consumed < 0.85 x baseline_cap are DONOR, never recipients — list them separately"
+  )
+}
+
 dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   local cmd="$1"; shift
   cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${cmd}.md"
@@ -271,7 +303,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new set-limits-global slg new-cycle boost boost-all over warning critical user status sessions models; do
+    for playbook in set-limits set-limits-new set-limits-global slg new-cycle boost boost-all boost-org over warning critical user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -682,6 +714,11 @@ main() {
           "scope: only users currently in the red zone (dashboard state CRITICAL: 0.95 <= consumed / effective Local Agent cap < 1)"
           "no explicit target — discover the critical set live, then run the boost + borrow flow for each critical-band user"
         )
+      elif [[ "${1:-}" == "org" ]]; then
+        shift
+        cmd="boost-org"
+        dag_boost_org_context "dag boost org" "$@" || exit $?
+        context_lines=("${_dag_boost_org_context[@]}")
       else
         local email="${1:-}" amount="${2:-}"
         if [[ "$email" != *@*.* ]]; then
@@ -699,6 +736,12 @@ main() {
           context_lines+=("requested increment: none — derive the recommendation from the user's run-rate projection; the result is planning input only, not write authorization")
         fi
       fi
+      ;;
+    boost.org|boost-org)
+      local boost_org_invoked="dag ${cmd}"
+      cmd="boost-org"
+      dag_boost_org_context "$boost_org_invoked" "$@" || exit $?
+      context_lines=("${_dag_boost_org_context[@]}")
       ;;
     boost-all)
       if (( $# > 0 )); then

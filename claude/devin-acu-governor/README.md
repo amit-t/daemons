@@ -62,6 +62,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
 | `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag boost all` / `dag boost` / `dag boost-all` | ✅ user limits + ledger + donor record | One combined batch for **every** user needing attention — OVER + CRITICAL + WARNING — most urgent first, one shared donor pool, one preview, one `CONFIRM DAG WRITE`; DONOR-suppressed users (cap reduced by DAG, low real usage) are excluded and listed separately |
+| `dag boost.org <org_id\|org_name>` / `dag boost org <org>` / `dag boost-org <org>` | ✅ user limits + ledger + donor record | `boost all` scoped to one organization: recipients **and** donors are only users billed to that org; donor Borrows net to zero inside the org, so the org gate moves only for forecast-funded ACUs |
 | `dag boost over` / `dag over` | ✅ user limits + ledger + donor record | Boost every user currently over budget in one batch, each funded zero-sum from low consumers; discovers the over set live |
 | `dag boost warning` / `dag warning` | ✅ user limits + ledger + donor record | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
 | `dag boost critical` / `dag critical` | ✅ user limits + ledger + donor record | Boost only users in the red zone (dashboard CRITICAL: 95–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the critical set live |
@@ -362,12 +363,33 @@ dag boost-all        # alias
 Argument rules:
 - Takes no positional arguments — `dag boost all alice@corp.com` exits 2. Use `dag boost <email>` for one target.
 
+## `dag boost.org <org_id|org_name>` — Boost all, inside one organization
+
+Goal: the `dag boost all` flow limited to one org. Recipients (`OVER`, `CRITICAL`, `WARNING`) and donors are both drawn only from users billed to that org, so no other org's users are read as candidates or PATCHed.
+
+Flow (playbook `playbooks/boost-org.md`):
+1. Resolve the selector via `GET /v3/enterprise/organizations`: exact `org_id` first, else exact case-insensitive `name`. No match or an ambiguous name stops the run and lists every org — never a substring guess.
+2. Membership = the user's `billing_org_id` from `GET /v3beta1/enterprise/users/{user_id}/consumption/acu-limits`, else the user's first accessible org (the same attribution the org-gate rebalance uses).
+3. Everything else is `boost all`: DONOR suppression (hard rule 13), bands, most-urgent-first ordering, `lib/boost-plan.jq` per recipient with the org-only donor pool, one batch preview, one `CONFIRM DAG WRITE`, PATCH + GET-verify, ledger + donor record.
+4. Org gate: donor-funded Boosts net to zero inside the org, so `org_rebalance_jq` needs a move only for the batch's `forecast_funded` ACUs; otherwise the preview states `writes` is empty.
+
+```zsh
+dag boost.org "Platform Eng"   # org name (quoted or bare words)
+dag boost.org org_abc123       # exact org_id
+dag boost org Platform Eng     # alias
+dag boost-org "Platform Eng"   # alias
+```
+
+Argument rules:
+- The org is required — bare `dag boost.org` exits 2. An email or a `--flag` in place of the org exits 2.
+- `CHANGE DONORS` on a shortfall stays inside the org; to borrow across orgs, run `dag boost all`.
+
 ## Donor record — cycle-scoped Borrow memory + DONOR state
 
 Every Borrow lowers somebody's cap. Without memory, a consistent donor (cap reduced far below what they started with, real usage tiny) eventually trips the dashboard's `warning`/`critical`/`over` labels and gets pointlessly re-boosted every cycle review. The donor record fixes that.
 
 - **File:** `$DAG_STATE_DIR/donors.json` (`donor_record` in every playbook's Run context). JSON, no database.
-- **Written by:** every flow that reduces a user cap — `boost`, `boost all`, `boost over/warning/critical`, targeted `set-limits <email>`, `set-limits-new` — right after the confirmed PATCHes and ledger update. Each entry keeps a **sticky `baseline_cap`** (the cap before the first reduction this cycle), latest `cap_after`, `given_total`, and per-reduction history.
+- **Written by:** every flow that reduces a user cap — `boost`, `boost all`, `boost.org`, `boost over/warning/critical`, targeted `set-limits <email>`, `set-limits-new` — right after the confirmed PATCHes and ledger update. Each entry keeps a **sticky `baseline_cap`** (the cap before the first reduction this cycle), latest `cap_after`, `given_total`, and per-reduction history.
 - **DONOR state:** a recorded donor whose raw state is `warning`/`critical`/`over` but whose `consumed < 0.85 × baseline_cap` is labeled `donor` (dashboard) / `DONOR` (`dag usage`) instead — the pressure badge is an artifact of the DAG reduction, not real usage. They drop out of the dashboard's warning/critical/over chips and warnings, and out of every `boost over/warning/critical/all` recipient discovery. They remain first-class Borrow donor candidates. Once real usage reaches 85% of the baseline, suppression ends and normal states apply.
 - **Billing-cycle wipe:** the record is valid only while its `cycle_start` matches the live cycle's start epoch (cycles run mid-month to mid-month, e.g. the 16th through the 15th). A stale record is ignored everywhere and overwritten on the next donor write; `dag new-cycle` rewrites it empty. No cron needed — the wipe is the cycle comparison.
 - A recipient whose boost restores their cap to `baseline_cap` or above gets their donor entry removed — they are made whole.
@@ -817,7 +839,7 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,new-cycle,boost,boost-all,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,new-cycle,boost,boost-all,boost-org,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes

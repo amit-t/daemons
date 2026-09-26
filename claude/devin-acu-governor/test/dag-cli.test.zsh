@@ -304,6 +304,48 @@ assert_contains "usage lists boost all" "$out" "dag boost all"
 out=$(run_dag all-commands)
 assert_contains "all-commands boost-all available" "$out" "# Playbook: boost all"
 
+# 6a1. boost.org: boost all scoped to one organization (recipients + donors).
+out=$(run_dag boost.org "Platform Eng"); rc=$?
+assert_exit "boost.org rc" 0 $rc
+assert_contains "boost.org playbook" "$out" "# Playbook: boost org"
+assert_contains "boost.org command" "$out" "command: boost-org"
+assert_contains "boost.org requested" "$out" "requested shell command: dag boost.org Platform Eng"
+assert_contains "boost.org selector" "$out" "org selector: Platform Eng"
+assert_contains "boost.org scope" "$out" "AND donors are only users billed to this org"
+assert_contains "boost.org resolution" "$out" "no match or ambiguous name = stop and list orgs, never guess"
+assert_contains "boost.org membership rule" "$out" "billing_org_id"
+assert_contains "boost.org no cross-org donors" "$out" "Never add a donor from another org"
+assert_contains "boost.org donor suppression" "$out" "donor-record suppression (hard rule 13)"
+assert_contains "boost.org plan jq" "$out" "boost-plan.jq"
+assert_contains "boost.org headroom default" "$out" '"max_headroom": 250'
+assert_contains "boost.org write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "boost.org org rebalance" "$out" "org_rebalance_jq"
+# Multi-word names without quotes join; org_id works too.
+out=$(run_dag boost.org Platform Eng)
+assert_contains "boost.org unquoted words" "$out" "org selector: Platform Eng"
+out=$(run_dag boost.org org_abc123)
+assert_contains "boost.org org_id" "$out" "org selector: org_abc123"
+# Aliases: dag boost org <org>, dag boost-org <org>.
+out=$(run_dag boost org "Platform Eng"); rc=$?
+assert_exit "boost org alias rc" 0 $rc
+assert_contains "boost org alias playbook" "$out" "# Playbook: boost org"
+assert_contains "boost org alias requested" "$out" "requested shell command: dag boost org Platform Eng"
+out=$(run_dag boost-org "Platform Eng"); rc=$?
+assert_exit "boost-org alias rc" 0 $rc
+assert_contains "boost-org alias requested" "$out" "requested shell command: dag boost-org Platform Eng"
+# Org is required; email or flag is rejected.
+out=$(run_dag boost.org 2>&1); rc=$?; assert_exit "boost.org missing org" 2 $rc
+assert_contains "boost.org missing org msg" "$out" "requires an organization"
+out=$(run_dag boost.org "   " 2>&1); rc=$?; assert_exit "boost.org blank org" 2 $rc
+out=$(run_dag boost org 2>&1); rc=$?; assert_exit "boost org missing org" 2 $rc
+out=$(run_dag boost.org alice@corp.com 2>&1); rc=$?; assert_exit "boost.org email rejected" 2 $rc
+out=$(run_dag boost.org --json 2>&1); rc=$?; assert_exit "boost.org flag rejected" 2 $rc
+# usage + all-commands surface it.
+out=$(run_dag 2>&1)
+assert_contains "usage lists boost.org" "$out" "dag boost.org <org_id|org_name>"
+out=$(run_dag all-commands)
+assert_contains "all-commands boost-org available" "$out" "# Playbook: boost org"
+
 # 6a. boost over: no email required, discovers the over set at run time.
 out=$(run_dag boost over); rc=$?
 assert_exit "boost over rc" 0 $rc
