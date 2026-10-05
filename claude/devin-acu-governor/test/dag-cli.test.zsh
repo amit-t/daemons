@@ -667,6 +667,12 @@ dag() { print -r -- "${(j:|:)@}" }
 out=$(dag--defu status --group "Platform Eng"); rc=$?
 assert_exit "dag--defu wrapper rc" 0 $rc
 assert_eq "dag--defu wrapper forwarding" "--defu|status|--group|Platform Eng" "$out"
+out=$(dag.align alice@corp.com); rc=$?
+assert_exit "dag.align wrapper rc" 0 $rc
+assert_eq "dag.align wrapper forwarding" "align|alice@corp.com" "$out"
+out=$(dag.routing alice@corp.com); rc=$?
+assert_exit "dag.routing wrapper rc" 0 $rc
+assert_eq "dag.routing wrapper forwarding" "routing|alice@corp.com" "$out"
 
 # Org ceiling: every boost-family prompt carries the zero-sum org rebalance
 # planner + ceiling, and no playbook offers growing an org cap to Σ member caps.

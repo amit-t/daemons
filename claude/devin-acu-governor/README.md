@@ -429,6 +429,8 @@ A missing/unreadable deck is non-fatal: the prompt flags `routing deck: ABSENT` 
 ```zsh
 dag align alice@corp.com
 dag routing alice@corp.com
+dag.align alice@corp.com     # dotted global wrapper (aliases.zsh)
+dag.routing alice@corp.com
 ```
 
 ## `dag usage`

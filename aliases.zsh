@@ -68,6 +68,10 @@ dag--claude()  { dag --agent claude "$@" }
 dag--codex()   { dag --agent codex "$@" }
 dag--devin()   { dag --agent devin "$@" }
 dag--defu()   { dag --defu "$@" }
+
+# Dotted dag command shorthands: dag.<command> = dag <command>.
+dag.align()   { dag align "$@" }
+dag.routing() { dag routing "$@" }
 dhm--claude()  { dhm --agent claude "$@" }
 dhm--cf()      { dhm --agent cf "$@" }
 dhm--codex()   { dhm --agent codex "$@" }
