@@ -103,6 +103,11 @@ Usage:
                               set live — no emails needed
   dag critical                Alias for: dag boost critical
   dag user <email>            Deep-dive one user's consumption and model usage (read-only)
+  dag align <email>           Audit one user's model usage against the ACU routing deck
+                              (DAG_ROUTING_DECK): model + effort + Fusion fit. Aligned =
+                              "No routing alignment needed."; misrouted = usage detail plus
+                              a 10-20 line director-style email draft for Outlook (read-only)
+  dag routing <email>         Alias for: dag align
   dag usage [--json] [--top <n>]
                               List every user's consumed ACUs, effective Local Agent cap,
                               and consumed/cap ratio (read-only, local, no agent)
@@ -143,6 +148,8 @@ Usage:
 Examples:
   dag usage --user-email alice@corp.com
   dag usage --user-email alice@corp.com --json
+  dag align alice@corp.com
+  dag routing alice@corp.com
   dag usage --group "Platform Eng" --top 5
   dag --agent codex status
   dag --devin boost alice@corp.com
@@ -189,6 +196,8 @@ Config (environment.env; shell env vars override):
   DAG_COG_KEYCHAIN_SERVICE   keychain item, Devin v3 cog_ key (default devin-cog-key)
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
+  DAG_ROUTING_DECK           routing policy file inlined into dag align prompts
+                             (default: Invenco DEVIN-ROUTING.md under ~/Projects)
   DAG_SESSIONS_NOW           pin `dag sessions` "now" epoch (deterministic tests/replays)
 
 Keys, one-time setup:
@@ -232,6 +241,16 @@ dag_print_global_instructions() {
   print -r -- "Source: ${instructions_file}"
   print -r -- ""
   cat "$instructions_file"
+}
+
+dag_print_routing_deck() {
+  [[ -r "${DAG_ROUTING_DECK:-}" ]] || return 0
+  print -r -- ""
+  print -r -- "## ACU routing deck"
+  print -r -- ""
+  print -r -- "Source: ${DAG_ROUTING_DECK}"
+  print -r -- ""
+  cat "${DAG_ROUTING_DECK}"
 }
 
 dag_collect_group_name() {  # $1=label, rest=args; accepts --group[=x] or bare group words.
@@ -317,6 +336,9 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
       cat "${daemon_dir}/playbooks/${playbook}.md"
     done
   fi
+  if [[ "$cmd" == "align" ]]; then
+    dag_print_routing_deck
+  fi
   dag_print_global_instructions
   print -r -- ""
   print -r -- "## Run context"
@@ -389,6 +411,7 @@ main() {
   dag_load_env
   : ${DAG_MONTHLY_ACU_POOL:=24000}
   : ${DAG_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
+  : ${DAG_ROUTING_DECK:=${HOME}/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md}
 
   local agent="" selector_source=""
   while (( $# )); do
@@ -808,6 +831,30 @@ main() {
         exit 2
       fi
       context_lines=("user: ${user_email}")
+      ;;
+    align|routing)
+      local align_invoked="dag ${cmd}"
+      local align_email="${1:-}"
+      if [[ "$align_email" != *@*.* ]]; then
+        print -ru2 -- "${align_invoked}: argument must be a user email (got: ${align_email:-<missing>})"
+        exit 2
+      fi
+      if (( $# > 1 )); then
+        print -ru2 -- "${align_invoked}: takes exactly one user email (got: $*)"
+        exit 2
+      fi
+      cmd="align"
+      context_lines=(
+        "requested shell command: ${align_invoked} ${align_email}"
+        "align target: ${align_email}"
+        "scope: read-only routing audit — classify this user's cycle model usage against the ACU routing deck, no API writes"
+        "deliverable: verdict first — aligned means the exact line 'No routing alignment needed.' and no email; misrouted means the chat report plus one 10-20 line plain-text email draft for Outlook"
+      )
+      if [[ -r "${DAG_ROUTING_DECK}" ]]; then
+        context_lines+=("routing deck: inlined below from ${DAG_ROUTING_DECK}")
+      else
+        context_lines+=("routing deck: ABSENT — ${DAG_ROUTING_DECK} is not readable; stop after the usage report and ask for a valid DAG_ROUTING_DECK path")
+      fi
       ;;
     models)
       if [[ -n "${1:-}" && -f "${1:-}" ]]; then

@@ -69,6 +69,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag boost warning` / `dag warning` | ✅ user limits + ledger + donor record | Boost every user approaching budget (dashboard WARNING/CRITICAL: 85–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the warning set live |
 | `dag boost critical` / `dag critical` | ✅ user limits + ledger + donor record | Boost only users in the red zone (dashboard CRITICAL: 95–100% of cap, not yet over) in one batch, each funded zero-sum from low consumers; discovers the critical set live |
 | `dag user <email>` | ❌ read-only | Deep-dive one user's consumption, explicit/default/effective Local Agent limit, product/model/IDE burn |
+| `dag align <email>` / `dag routing <email>` | ❌ read-only | Audit one user's cycle model usage against the ACU routing deck (`DAG_ROUTING_DECK`): model/effort/Fusion fit; aligned = `No routing alignment needed.`, misrouted = usage detail + a 10–20 line director-style email draft for Outlook |
 | `dag usage [--json] [--top <n>]` | ❌ read-only | Local table of every user's consumed ACUs, effective Local Agent cap, and consumed/cap ratio; no agent, no writes |
 | `dag usage --group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Local exact-IDP-group report; prompts when name is omitted; adds last-3-days per-user usage/product/status detail |
 | `dag usage--group [idp_group_name] [--json] [--top <n>]` | ❌ read-only | Alias for `dag usage --group` |
@@ -411,6 +412,23 @@ Read-only. Reports:
 
 ```zsh
 dag user alice@corp.com
+```
+
+## `dag align <email>` — ACU routing alignment audit
+
+Read-only. Alias: `dag routing <email>`. Classifies the user's current-cycle model usage (Windsurf per-model breakdown — the Windsurf key is required for a verdict) against the routing deck inlined into the prompt from `DAG_ROUTING_DECK` (default: `~/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md`; override in `environment.env` or the shell).
+
+Checks per the deck: model choice per tier (routine/normal/hard), effort level (Medium default; XHigh/Max on frontier Claude = misrouted), avoid-list models (Sonnet 5), legacy models, Fast variants, and whether Fusion (Fable 5.1 + SWE-2 Medium) is the right route for frontier-solo-heavy usage.
+
+Output:
+- **Aligned** (misrouted share < 10%, no avoid-list model in top 5): the exact line `No routing alignment needed.` plus a short confirmation. No email.
+- **Misrouted**: a ≤ 50-line chat report (model table with deck verdicts, cost-per-task deltas, one primary recommendation) followed by a fenced 10–20 line plain-text email draft — director register, subject `ACU routing alignment — <first name>`, concrete ACU numbers, one ask — ready to paste into Outlook.
+
+A missing/unreadable deck is non-fatal: the prompt flags `routing deck: ABSENT` and the session stops after the usage report.
+
+```zsh
+dag align alice@corp.com
+dag routing alice@corp.com
 ```
 
 ## `dag usage`
@@ -765,6 +783,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
 | `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger (`allocations.json`), donor record (`donors.json`), dashboard state directory |
+| `DAG_ROUTING_DECK` | `~/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md` | Routing policy file inlined into `dag align` prompts; missing file = non-fatal, prompt flags it ABSENT |
 | `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit; useful for verifying included playbooks, run context, and global instructions |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |

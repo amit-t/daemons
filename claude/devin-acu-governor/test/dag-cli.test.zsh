@@ -429,6 +429,53 @@ assert_exit "user rc" 0 $rc
 assert_contains "user playbook" "$out" "# Playbook: user"
 assert_contains "user email" "$out" "user: bob@corp.com"
 
+# 6c. align command: per-user routing audit against the ACU routing deck.
+deck="${tmpdir}/routing-deck.md"
+cat > "$deck" <<'EOF'
+# Routing policy for Devin Enterprise
+normal default: Claude Opus 5.5 Medium
+avoid: Claude Sonnet 5 Medium
+EOF
+run_dag_align() { PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DAG_ROUTING_DECK="$deck" DEVIN_COG_KEY=test-cog-key DEVIN_SERVICE_KEY=test-ws-key zsh "$dag" "$@" }
+out=$(run_dag_align align 2>&1); rc=$?; assert_exit "align noargs" 2 $rc
+assert_contains "align noargs msg" "$out" "dag align: argument must be a user email"
+out=$(run_dag_align align not-an-email 2>&1); rc=$?; assert_exit "align bad email" 2 $rc
+out=$(run_dag_align align alice@corp.com extra@corp.com 2>&1); rc=$?; assert_exit "align extra args" 2 $rc
+assert_contains "align extra args msg" "$out" "takes exactly one user email"
+out=$(run_dag_align align alice@corp.com); rc=$?
+assert_exit "align rc" 0 $rc
+assert_contains "align playbook" "$out" "# Playbook: align"
+assert_contains "align command" "$out" "command: align"
+assert_contains "align requested" "$out" "requested shell command: dag align alice@corp.com"
+assert_contains "align target" "$out" "align target: alice@corp.com"
+assert_contains "align read-only scope" "$out" "read-only routing audit"
+assert_contains "align verdict contract" "$out" "No routing alignment needed."
+assert_contains "align email contract" "$out" "10-20 line plain-text email draft for Outlook"
+assert_contains "align deck heading" "$out" "## ACU routing deck"
+assert_contains "align deck source" "$out" "Source: ${deck}"
+assert_contains "align deck content" "$out" "avoid: Claude Sonnet 5 Medium"
+assert_contains "align windsurf gate" "$out" "No Windsurf key: stop after step 3's product split"
+# Alias: dag routing <email>.
+out=$(run_dag_align routing alice@corp.com); rc=$?
+assert_exit "routing alias rc" 0 $rc
+assert_contains "routing alias playbook" "$out" "# Playbook: align"
+assert_contains "routing alias requested" "$out" "requested shell command: dag routing alice@corp.com"
+out=$(run_dag_align routing 2>&1); rc=$?; assert_exit "routing alias noargs" 2 $rc
+assert_contains "routing alias noargs msg" "$out" "dag routing: argument must be a user email"
+# Missing deck is non-fatal: prompt flags ABSENT and inlines nothing.
+out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DAG_ROUTING_DECK="${tmpdir}/no-such-deck.md" DEVIN_COG_KEY=k DEVIN_SERVICE_KEY=ws zsh "$dag" align alice@corp.com); rc=$?
+assert_exit "align missing deck rc" 0 $rc
+assert_contains "align missing deck note" "$out" "routing deck: ABSENT"
+if [[ "$out" == *"Source: ${tmpdir}/no-such-deck.md"* ]]; then _fail "missing deck still inlined a deck section"; else _ok; fi
+# usage help lists align + routing alias + deck config.
+out=$(run_dag 2>&1)
+assert_contains "usage lists align" "$out" "dag align <email>"
+assert_contains "usage lists routing alias" "$out" "dag routing <email>"
+assert_contains "usage lists deck config" "$out" "DAG_ROUTING_DECK"
+# Deck never leaks into other commands' prompts.
+out=$(run_dag_align status)
+if [[ "$out" == *"## ACU routing deck"* ]]; then _fail "deck leaked into status prompt"; else _ok; fi
+
 # 7. Env override: pool from environment wins over environment.env.
 out=$(PATH="${tmpdir}/bin:$PATH" DAG_PRINT_PROMPT=1 DEVIN_COG_KEY=k DAG_MONTHLY_ACU_POOL=9999 zsh "$dag" status 2>/dev/null)
 assert_contains "env override" "$out" "DAG_MONTHLY_ACU_POOL: 9999"
