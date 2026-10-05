@@ -416,7 +416,7 @@ dag user alice@corp.com
 
 ## `dag align <email>` — ACU routing alignment audit
 
-Read-only. Alias: `dag routing <email>`. Classifies the user's current-cycle model usage (Windsurf per-model breakdown — the Windsurf key is required for a verdict) against the routing deck inlined into the prompt from `DAG_ROUTING_DECK` (default: `~/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md`; override in `environment.env` or the shell).
+Read-only. Alias: `dag routing <email>`. Classifies the user's current-cycle model usage (Windsurf per-model breakdown — the Windsurf key is required for a verdict) against the routing deck inlined into the prompt from `DAG_ROUTING_DECK` (default: the daemon's own portable copy at `docs/DEVIN-ROUTING.md`; override in `environment.env` or the shell to track an external deck).
 
 Checks per the deck: model choice per tier (routine/normal/hard), effort level (Medium default; XHigh/Max on frontier Claude = misrouted), avoid-list models (Sonnet 5), legacy models, Fast variants, and whether Fusion (Fable 5.1 + SWE-2 Medium) is the right route for frontier-solo-heavy usage.
 
@@ -785,7 +785,7 @@ Keys are exported only into child commands/sessions — never printed, logged, o
 | `DAG_COG_KEYCHAIN_SERVICE` | `devin-cog-key` | Keychain item for Devin `cog_` key |
 | `DAG_KEYCHAIN_SERVICE` | `devin-service-key` | Keychain item for optional Windsurf key |
 | `DAG_STATE_DIR` | `~/.local/state/devin-acu-governor` | Ledger (`allocations.json`), donor record (`donors.json`), dashboard state directory |
-| `DAG_ROUTING_DECK` | `~/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md` | Routing policy file inlined into `dag align` prompts; missing file = non-fatal, prompt flags it ABSENT |
+| `DAG_ROUTING_DECK` | `<daemon>/docs/DEVIN-ROUTING.md` | Routing policy file inlined into `dag align` prompts (portable repo copy; sync it when the source deck in the github-productivity-experiment project changes); missing file = non-fatal, prompt flags it ABSENT |
 | `DAG_PRINT_PROMPT` | unset | For agent commands, print prompt and exit; useful for verifying included playbooks, run context, and global instructions |
 | `DAG_DOCTOR_SKIP_ANALYTICS` | unset | Skip Windsurf analytics probe |
 | `DAG_NOW_EPOCH` | unset | Pin dashboard "now" for deterministic tests |

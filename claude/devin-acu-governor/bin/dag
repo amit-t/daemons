@@ -197,7 +197,7 @@ Config (environment.env; shell env vars override):
   DAG_KEYCHAIN_SERVICE       keychain item, Windsurf service key (default devin-service-key)
   DAG_STATE_DIR              ledger directory (default ~/.local/state/devin-acu-governor)
   DAG_ROUTING_DECK           routing policy file inlined into dag align prompts
-                             (default: Invenco DEVIN-ROUTING.md under ~/Projects)
+                             (default: docs/DEVIN-ROUTING.md inside this daemon)
   DAG_SESSIONS_NOW           pin `dag sessions` "now" epoch (deterministic tests/replays)
 
 Keys, one-time setup:
@@ -411,7 +411,7 @@ main() {
   dag_load_env
   : ${DAG_MONTHLY_ACU_POOL:=24000}
   : ${DAG_STATE_DIR:=${HOME}/.local/state/devin-acu-governor}
-  : ${DAG_ROUTING_DECK:=${HOME}/Projects/Invenco/DoE/github-productivity-experiment/DEVIN-ROUTING.md}
+  : ${DAG_ROUTING_DECK:=${daemon_dir}/docs/DEVIN-ROUTING.md}
 
   local agent="" selector_source=""
   while (( $# )); do
