@@ -431,6 +431,9 @@ dag align alice@corp.com
 dag routing alice@corp.com
 dag.align alice@corp.com     # dotted global wrapper (aliases.zsh)
 dag.routing alice@corp.com
+dag.align --defu alice@corp.com    # every launcher selector works, any position:
+dag.align alice@corp.com --cxlh    # --agent x, --claude/--codex/--devin, --co/--cf,
+dag.boost --del alice@corp.com 50  # --deo/--def/--des/--del/--det/--dey, --defu, --cx* pins
 ```
 
 ## `dag usage`

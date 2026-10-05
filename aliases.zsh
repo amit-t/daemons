@@ -70,8 +70,32 @@ dag--devin()   { dag --agent devin "$@" }
 dag--defu()   { dag --defu "$@" }
 
 # Dotted dag command shorthands: dag.<command> = dag <command>.
-dag.align()   { dag align "$@" }
-dag.routing() { dag routing "$@" }
+# Launcher selectors (--agent x, --claude/--codex/--devin, --co/--cf, devin
+# profiles, --defu, --cx* pins) may appear anywhere; they are hoisted before
+# the command because bin/dag parses selectors first.
+_dag_dotted() {
+  local cmd=$1; shift
+  local -a selectors rest
+  while (( $# )); do
+    case "$1" in
+      --agent)
+        selectors+=("$1")
+        if (( $# > 1 )); then selectors+=("$2"); shift; fi
+        shift
+        ;;
+      --agent=*|--claude|--codex|--devin|--co|--cf|--deo|--def|--des|--del|--det|--dey|--defu|--cx*)
+        selectors+=("$1"); shift
+        ;;
+      *)
+        rest+=("$1"); shift
+        ;;
+    esac
+  done
+  dag "${selectors[@]}" "$cmd" "${rest[@]}"
+}
+dag.align()   { _dag_dotted align "$@" }
+dag.routing() { _dag_dotted routing "$@" }
+dag.boost()   { _dag_dotted boost "$@" }
 dhm--claude()  { dhm --agent claude "$@" }
 dhm--cf()      { dhm --agent cf "$@" }
 dhm--codex()   { dhm --agent codex "$@" }

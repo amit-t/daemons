@@ -673,6 +673,21 @@ assert_eq "dag.align wrapper forwarding" "align|alice@corp.com" "$out"
 out=$(dag.routing alice@corp.com); rc=$?
 assert_exit "dag.routing wrapper rc" 0 $rc
 assert_eq "dag.routing wrapper forwarding" "routing|alice@corp.com" "$out"
+# Dotted wrappers hoist launcher selectors before the command, any position.
+out=$(dag.align --defu alice@corp.com)
+assert_eq "dag.align defu hoist" "--defu|align|alice@corp.com" "$out"
+out=$(dag.align alice@corp.com --cxlh)
+assert_eq "dag.align trailing cxlh hoist" "--cxlh|align|alice@corp.com" "$out"
+out=$(dag.align --agent codex alice@corp.com)
+assert_eq "dag.align agent pair hoist" "--agent|codex|align|alice@corp.com" "$out"
+out=$(dag.align --agent=devin alice@corp.com)
+assert_eq "dag.align agent= hoist" "--agent=devin|align|alice@corp.com" "$out"
+out=$(dag.routing --cf alice@corp.com)
+assert_eq "dag.routing cf hoist" "--cf|routing|alice@corp.com" "$out"
+out=$(dag.boost --defu all)
+assert_eq "dag.boost defu hoist" "--defu|boost|all" "$out"
+out=$(dag.boost --del alice@corp.com 50)
+assert_eq "dag.boost del hoist" "--del|boost|alice@corp.com|50" "$out"
 
 # Org ceiling: every boost-family prompt carries the zero-sum org rebalance
 # planner + ceiling, and no playbook offers growing an org cap to Σ member caps.
