@@ -830,3 +830,135 @@ footer {
   color: var(--text-faint);
   margin: -8px 0 16px;
 }
+
+.output-analytics {
+  margin-top: 16px;
+}
+
+.output-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.output-freshness {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  margin: -8px 0 14px;
+}
+
+.output-state {
+  color: var(--orange);
+  border: 1px solid var(--orange-soft);
+  background: var(--orange-soft);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0 12px;
+}
+
+.output-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.output-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.subpanel-title {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  margin: 0 0 9px;
+  text-transform: uppercase;
+}
+
+.output-dimension-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.output-dimension-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.output-daily-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.output-daily-row {
+  display: grid;
+  grid-template-columns: 92px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.output-daily-track {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.output-daily-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--amber);
+}
+
+.output-daily-legend {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.output-attribution {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  border-top: 1px solid var(--line-soft);
+  padding: 12px 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.output-attribution strong {
+  color: var(--amber);
+  flex-basis: 100%;
+}
+
+@media (max-width: 760px) {
+  .output-cards,
+  .output-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .output-dimension-row,
+  .output-daily-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .output-dimension-row .num:nth-child(2),
+  .output-daily-track {
+    grid-column: 1 / -1;
+  }
+}

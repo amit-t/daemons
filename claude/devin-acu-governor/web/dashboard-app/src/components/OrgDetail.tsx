@@ -6,6 +6,8 @@ import type {
   ModelAnalyticsInfo,
   OrgMeter,
   OrgRow,
+  OutputAnalyticsInfo,
+  OutputDimension,
   UserRow,
 } from '../types'
 import { fmt, fmtPct, fmtStamp, stampEpoch } from '../format'
@@ -27,6 +29,7 @@ interface Props {
   cycle: CycleInfo
   cloudSessions: CloudSessionsInfo | undefined
   modelAnalytics: ModelAnalyticsInfo
+  outputAnalytics?: OutputAnalyticsInfo
   onBack: () => void
   onSelectUser: (u: UserRow) => void
 }
@@ -93,6 +96,27 @@ function BarList({
           </span>
           <span className="bar-value">{fmt(r.acus)}</span>
           <span className="bar-msgs">{fmt(r.messages, 0)} msg</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function OutputBarList({ rows, labelKey }: { rows: OutputDimension[]; labelKey: 'source' | 'model_uid' | 'ide' | 'os' }) {
+  if (rows.length === 0) return <div className="detail-empty">no output data returned</div>
+  const max = Math.max(...rows.map((row) => row.loc_inserted), 1)
+  return (
+    <div className="bar-list">
+      {rows.map((row) => (
+        <div className="bar-row" key={`${labelKey}-${row[labelKey]}`}>
+          <span className="bar-label">
+            {labelKey === 'source'
+              ? ({ CASCADE_CLIENT: 'Desktop', CHISEL: 'CLI' }[row.source ?? ''] ?? row.source ?? 'unknown')
+              : row[labelKey] ?? 'unknown'}
+          </span>
+          <span className="bar-track"><i style={{ width: `${Math.max(1, (row.loc_inserted / max) * 100)}%` }} /></span>
+          <span className="bar-value">{fmt(row.net)} net</span>
+          <span className="bar-msgs">{fmt(row.loc_inserted)} in / {fmt(row.loc_deleted)} out</span>
         </div>
       ))}
     </div>
@@ -240,7 +264,7 @@ function makeSessionColumns(byUserId: Map<string, UserRow>): Column<CloudSession
 // Full-page org drill-down: the org's enforcement gates, daily burn, product
 // split, its members' usage, and every Devin Cloud session it ran this cycle.
 // Same console UX as the per-user drawer, promoted to a page (hash-routed).
-export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, onBack, onSelectUser }: Props) {
+export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, outputAnalytics, onBack, onSelectUser }: Props) {
   const [query, setQuery] = useState('')
 
   const members = useMemo(() => users.filter((u) => u.billing_org_id === org.org_id), [users, org.org_id])
@@ -396,6 +420,39 @@ export function OrgDetail({ org, users, cycle, cloudSessions, modelAnalytics, on
           )}
         </section>
       </div>
+
+      <section className="panel detail-panel">
+        <div className="output-heading">
+          <h2 className="panel-title">Accepted agent output</h2>
+          {outputAnalytics?.stale && <span className="badge badge-warning">stale</span>}
+        </div>
+        {!outputAnalytics ? (
+          <div className="detail-empty">output analytics not in this snapshot — regenerate with <code>dag dashboard</code></div>
+        ) : !outputAnalytics.available ? (
+          <div className="detail-empty">
+            output analytics unavailable — {outputAnalytics.reason === 'old_snapshot' ? 'not in this snapshot; regenerate with dag dashboard' : outputAnalytics.reason ?? 'fetch failed'}
+          </div>
+        ) : !org.output ? (
+          <div className="detail-empty">no member-attributed output available for this organization</div>
+        ) : !org.output.has_rows ? (
+          <div className="detail-empty">no attributed output rows returned for this organization</div>
+        ) : (
+          <>
+            <div className="output-cards">
+              <div className="card accent"><div className="card-label">Member-attributed inserted</div><div className="card-value">{fmt(org.output.loc_inserted)}</div></div>
+              <div className="card"><div className="card-label">Member-attributed deleted</div><div className="card-value">{fmt(org.output.loc_deleted)}</div></div>
+              <div className="card"><div className="card-label">Member-attributed net</div><div className="card-value">{fmt(org.output.net)}</div></div>
+            </div>
+            <div className="output-grid">
+              <section><h3 className="subpanel-title">Source</h3><OutputBarList rows={org.output.source_split} labelKey="source" /></section>
+              <section><h3 className="subpanel-title">Model</h3><OutputBarList rows={org.output.model_split} labelKey="model_uid" /></section>
+              <section><h3 className="subpanel-title">IDE</h3><OutputBarList rows={org.output.ide_split} labelKey="ide" /></section>
+              <section><h3 className="subpanel-title">OS</h3><OutputBarList rows={org.output.os_split} labelKey="os" /></section>
+            </div>
+            <div className="detail-footer">Member-attributed estimate; API output is team-scoped and has no organization billing identifier.</div>
+          </>
+        )}
+      </section>
 
       <section className="panel">
         <h2 className="panel-title">Local Agent activity — per member, all models</h2>

@@ -56,6 +56,16 @@ case "$url" in
     emit "${FIXTURES}/cycles.json" "${FAKE_CYCLES_CODE:-200}" "${FAKE_CYCLES_BODY:-}" ;;
   *v3/enterprise/sessions*)
     emit "${FIXTURES}/sessions.json" "${FAKE_SESSIONS_CODE:-200}" "${FAKE_SESSIONS_BODY:-}" ;;
+  *api/v2alpha/analytics/output*)
+    if [[ "$url" == *"page_cursor="* && -n "${FAKE_OUTPUT_PAGE2_BODY:-}" ]]; then
+      if [[ -n "${FAKE_OUTPUT_PAGE2_REPEAT:-}" ]]; then
+        emit "${FIXTURES}/output-page-repeat.json" "${FAKE_OUTPUT_PAGE2_CODE:-${FAKE_OUTPUT_CODE:-200}}" ""
+      else
+        emit "${FIXTURES}/output-page-2.json" "${FAKE_OUTPUT_PAGE2_CODE:-${FAKE_OUTPUT_CODE:-200}}" ""
+      fi
+    else
+      emit "${FIXTURES}/output.json" "${FAKE_OUTPUT_CODE:-200}" "${FAKE_OUTPUT_BODY:-}"
+    fi ;;
   *api/v2alpha/analytics/consumption*)
     emit "${FIXTURES}/windsurf-consumption.json" "${FAKE_WINDSURF_CODE:-200}" "${FAKE_WINDSURF_BODY:-}" ;;
   *enterprise/members/users*)
@@ -162,7 +172,7 @@ run_dash() {
   PATH="${tmpdir}/bin:$PATH" FIXTURES="$fixdir" OPEN_LOG="${tmpdir}/open.log" \
   WRITE_LOG="${tmpdir}/write.log" CURL_URL_LOG="${tmpdir}/curl-urls.log" \
   SERVE_LOG="${SERVE_LOG:-${tmpdir}/serve.log}" NPM_LOG="${NPM_LOG:-${tmpdir}/npm.log}" \
-  DEVIN_COG_KEY=test-cog-key-SECRET DAG_NOW_EPOCH=$now_epoch \
+  DEVIN_COG_KEY="${TEST_COG_KEY-test-cog-key-SECRET}" DAG_NOW_EPOCH="${TEST_NOW_EPOCH-$now_epoch}" \
   DEVIN_SERVICE_KEY="${TEST_WINDSURF_KEY-test-windsurf-key-SECRET}" \
   DAG_MODEL_ANALYTICS_TTL_MINUTES="${DAG_MODEL_ANALYTICS_TTL_MINUTES:-}" \
   DAG_STATE_DIR="${tmpdir}/state" \
@@ -185,6 +195,10 @@ run_dash() {
   FAKE_USER_LIMIT_CODE="${FAKE_USER_LIMIT_CODE:-200}" FAKE_USER_LIMIT_BODY="${FAKE_USER_LIMIT_BODY:-}" \
   FAKE_SESSIONS_CODE="${FAKE_SESSIONS_CODE:-200}" FAKE_SESSIONS_BODY="${FAKE_SESSIONS_BODY:-}" \
   FAKE_WINDSURF_CODE="${FAKE_WINDSURF_CODE:-200}" FAKE_WINDSURF_BODY="${FAKE_WINDSURF_BODY:-}" \
+  FAKE_OUTPUT_CODE="${FAKE_OUTPUT_CODE:-200}" FAKE_OUTPUT_BODY="${FAKE_OUTPUT_BODY:-}" \
+  FAKE_OUTPUT_PAGE2_BODY="${FAKE_OUTPUT_PAGE2_BODY:-}" \
+  FAKE_OUTPUT_PAGE2_CODE="${FAKE_OUTPUT_PAGE2_CODE:-200}" \
+  FAKE_OUTPUT_PAGE2_REPEAT="${FAKE_OUTPUT_PAGE2_REPEAT:-}" \
   FAKE_TRANSIENT_URL="${FAKE_TRANSIENT_URL:-}" FAKE_TRANSIENT_TIMES="${FAKE_TRANSIENT_TIMES:-0}" \
   FAKE_TRANSIENT_CODE="${FAKE_TRANSIENT_CODE:-504}" TRANSIENT_COUNTER="${TRANSIENT_COUNTER:-${tmpdir}/transient.cnt}" \
   DAG_FETCH_RETRIES="${DAG_FETCH_RETRIES:-3}" DAG_FETCH_RETRY_SLEEP="${DAG_FETCH_RETRY_SLEEP:-0}" \
@@ -751,6 +765,114 @@ if grep -F "api/v2alpha/analytics/consumption" "${tmpdir}/curl-urls.log" >/dev/n
 else
   _ok
 fi
+
+sim_dir="${tmpdir}/dash-simultaneous"
+: > "${tmpdir}/curl-urls.log"
+out=$(run_dash --json-only --out "$sim_dir" 2>&1); rc=$?
+assert_exit "simultaneous analytics rc" 0 $rc
+assert_eq "output additive available" "true" "$(jq -r '.output_analytics.available' "${sim_dir}/data.json")"
+assert_eq "original billed model ACUs retained" "40" "$(jq -r '.users[] | select(.email=="alice@example.com") | .models[0].acus' "${sim_dir}/data.json")"
+assert_eq "original model messages retained" "153" "$(jq -r '.users[] | select(.email=="alice@example.com") | .models[0].messages' "${sim_dir}/data.json")"
+assert_eq "accepted inserted differs from billed ACUs" "191" "$(jq -r '.users[] | select(.email=="alice@example.com") | .output.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "output user id priority" "user_id" "$(jq -r '.output_analytics.rows[] | select(.user_id=="email|alice" and .match_method=="user_id") | .match_method' "${sim_dir}/data.json" | head -1)"
+assert_eq "output normalized email fallback" "email" "$(jq -r '.output_analytics.rows[] | select(.match_method=="email") | .match_method' "${sim_dir}/data.json")"
+assert_eq "output unmatched row" "null" "$(jq -r '.output_analytics.rows[] | select(.user_id=="unknown-user") | .matched_user_id' "${sim_dir}/data.json")"
+assert_eq "output member sum" "191" "$(jq -r '.output_analytics.members[] | select(.email=="alice@example.com") | .output.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "output org sum" "191" "$(jq -r '.orgs[] | select(.org_id=="platform") | .output.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "output unmatched total" "53" "$(jq -r '.output_analytics.attribution.unassigned.loc_inserted' "${sim_dir}/data.json")"
+if grep -F "api/v2alpha/analytics/consumption" "${tmpdir}/curl-urls.log" >/dev/null && grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then
+  _ok
+else
+  _fail "both original model and output analytics requests were not made"
+fi
+
+page1_body=$(<"${fixdir}/output-page-1.json")
+pagination_dir="${tmpdir}/dash-output-pages"
+out=$(FAKE_OUTPUT_BODY="$page1_body" FAKE_OUTPUT_PAGE2_BODY=1 run_dash --json-only --out "$pagination_dir" 2>&1); rc=$?
+assert_exit "output pagination rc" 0 $rc
+assert_eq "output pagination rows" "2" "$(jq '.output_analytics.rows | length' "${pagination_dir}/data.json")"
+assert_eq "output pagination inserted" "30" "$(jq '.output_analytics.totals.loc_inserted' "${pagination_dir}/data.json")"
+if grep -F "page_cursor=cursor%20with%20spaces%2F%2B" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output cursor was not URL-encoded"; fi
+repeat_dir="${tmpdir}/dash-output-repeat"
+out=$(FAKE_OUTPUT_BODY="$page1_body" FAKE_OUTPUT_PAGE2_BODY=1 FAKE_OUTPUT_PAGE2_REPEAT=1 \
+  run_dash --json-only --out "$repeat_dir" 2>&1); rc=$?
+assert_exit "output repeated cursor rc" 0 $rc
+assert_eq "output repeated cursor unavailable" "false" "$(jq '.output_analytics.available' "${repeat_dir}/data.json")"
+
+auth_dir="${tmpdir}/dash-output-auth"
+out=$(FAKE_OUTPUT_CODE=401 run_dash --json-only --out "$auth_dir" 2>&1); rc=$?
+assert_exit "output auth failure rc" 0 $rc
+assert_eq "output auth failure state" "auth_failed" "$(jq -r '.output_analytics.reason' "${auth_dir}/data.json")"
+
+stale_dir="${tmpdir}/dash-output-stale"
+out=$(run_dash --json-only --out "$stale_dir" 2>&1); rc=$?
+assert_exit "output stale seed rc" 0 $rc
+out=$(FAKE_OUTPUT_CODE=429 DAG_OUTPUT_ANALYTICS_TTL_MINUTES=0 \
+  run_dash --json-only --out "$stale_dir" 2>&1); rc=$?
+assert_exit "output stale refresh rc" 0 $rc
+assert_eq "output stale state" "true" "$(jq '.output_analytics.stale' "${stale_dir}/data.json")"
+assert_eq "output stale retained total" "1167" "$(jq '.output_analytics.totals.loc_inserted' "${stale_dir}/data.json")"
+
+ttl_dir="${tmpdir}/dash-output-ttl"
+out=$(run_dash --json-only --out "$ttl_dir" 2>&1); rc=$?
+assert_exit "output ttl seed rc" 0 $rc
+: > "${tmpdir}/curl-urls.log"
+out=$(FAKE_OUTPUT_CODE=500 run_dash --json-only --out "$ttl_dir" 2>&1); rc=$?
+assert_exit "output ttl reuse rc" 0 $rc
+if grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then _fail "output API requested inside TTL"; else _ok; fi
+
+switch_dir="${tmpdir}/dash-output-key-switch"
+out=$(run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
+assert_exit "output key switch seed rc" 0 $rc
+: > "${tmpdir}/curl-urls.log"
+out=$(TEST_WINDSURF_KEY="" FAKE_OUTPUT_CODE=401 run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
+assert_exit "output key switch rc" 0 $rc
+assert_eq "output key switch source" "auth_failed" "$(jq -r '.output_analytics.reason' "${switch_dir}/data.json")"
+if grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output API not refetched after key-source switch"; fi
+
+no_key_out="${tmpdir}/dash-output-no-key"
+mkdir -p "${no_key_out}/work"
+out=$(env -u DEVIN_SERVICE_KEY -u DEVIN_COG_KEY PATH="${tmpdir}/bin:$PATH" \
+  zsh -c 'daemon_dir="$1"; source "$daemon_dir/lib/key-resolve.zsh"; source "$daemon_dir/lib/dashboard.zsh"; _dag_dash_fetch_output_analytics "$2" "$2/work" 1781510400 1778918400 1781596800 ""' \
+  zsh "${script_dir}/.." "$no_key_out" 2>&1); rc=$?
+assert_exit "output no-key rc" 0 $rc
+assert_eq "output no-key reason" "no_output_key" "$(jq -r '.reason' "${no_key_out}/work/output-analytics.json")"
+
+fallback_dir="${tmpdir}/dash-output-cog-fallback"
+out=$(TEST_WINDSURF_KEY="" run_dash --json-only --out "$fallback_dir" 2>&1); rc=$?
+assert_exit "output cog fallback rc" 0 $rc
+assert_eq "output cog fallback source" "cog" "$(jq -r '.output_analytics.key_source' "${fallback_dir}/data.json")"
+
+partial_dir="${tmpdir}/dash-output-partial"
+out=$(FAKE_OUTPUT_BODY="$page1_body" FAKE_OUTPUT_PAGE2_BODY=1 FAKE_OUTPUT_PAGE2_CODE=500 \
+  run_dash --json-only --out "$partial_dir" 2>&1); rc=$?
+assert_exit "output partial pagination rc" 0 $rc
+assert_eq "output partial pagination unavailable" "false" "$(jq '.output_analytics.available' "${partial_dir}/data.json")"
+assert_eq "output partial pagination rows discarded" "0" "$(jq '.output_analytics.rows | length' "${partial_dir}/data.json")"
+
+empty_dir="${tmpdir}/dash-output-empty"
+out=$(FAKE_OUTPUT_BODY='{"data":[],"pagination":{"next_page_cursor":null},"metadata":{"data_freshness":"2026-06-16T03:00:00Z","team_id":"team_fixture"}}' \
+  run_dash --json-only --out "$empty_dir" 2>&1); rc=$?
+assert_exit "output empty rc" 0 $rc
+assert_eq "output empty state" "no_data" "$(jq -r '.output_analytics.state' "${empty_dir}/data.json")"
+
+rollover_dir="${tmpdir}/dash-output-rollover"
+out=$(run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
+assert_exit "output rollover seed rc" 0 $rc
+: > "${tmpdir}/curl-urls.log"
+out=$(TEST_NOW_EPOCH=1781596800 run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
+assert_exit "output rollover rc" 0 $rc
+assert_eq "output rollover start" "2026-06-16" "$(jq -r '.output_analytics.start_date' "${rollover_dir}/data.json")"
+if grep -F "api/v2alpha/analytics/output?metric=" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output analytics reused previous cycle inside TTL"; fi
+
+long_dir="${tmpdir}/dash-output-long-range"
+long_cycles='{"items":[{"after":0,"before":8640000}]}'
+: > "${tmpdir}/curl-urls.log"
+out=$(FAKE_CYCLES_BODY="$long_cycles" TEST_NOW_EPOCH=8553600 \
+  run_dash --json-only --out "$long_dir" 2>&1); rc=$?
+assert_exit "output long-range rc" 0 $rc
+assert_eq "output long-range clamped" "true" "$(jq -r '.output_analytics.range_clamped' "${long_dir}/data.json")"
+if grep -F "start_date=1970-01-11&end_date=1970-04-10" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output range did not clamp to 90 days"; fi
 
 # 9. dag help lists the dashboard command and its flags.
 out=$(PATH="${tmpdir}/bin:$PATH" DEVIN_COG_KEY=k zsh "$dag" help 2>&1); rc=$?

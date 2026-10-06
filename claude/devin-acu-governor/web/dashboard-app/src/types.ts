@@ -76,6 +76,101 @@ export interface OrgProducts {
   review: number
 }
 
+export interface OutputTotals {
+  loc_inserted: number
+  loc_deleted: number
+  net: number
+}
+
+export interface OutputDaily {
+  date: string
+  loc_inserted: number
+  loc_deleted: number
+  net: number
+}
+
+export interface OutputDimension extends OutputTotals {
+  source?: string
+  model_uid?: string
+  ide?: string
+  os?: string
+}
+
+export interface UserOutput extends OutputTotals {
+  has_rows: boolean
+  daily: OutputDaily[]
+  source_split: OutputDimension[]
+  model_split: OutputDimension[]
+  ide_split: OutputDimension[]
+  os_split: OutputDimension[]
+}
+
+export interface OutputMember {
+  user_id: string
+  email: string
+  name: string
+  billing_org_id: string | null
+  output?: UserOutput | null
+}
+
+export interface OutputContributor {
+  user_id: string | null
+  user_email?: string
+  email: string
+  name: string
+  billing_org_id: string | null
+  output: UserOutput
+}
+
+export interface OutputAttribution {
+  matched: OutputTotals
+  unassigned: OutputTotals
+  matched_contributors: number
+  unmatched_contributors: number
+}
+
+export interface OutputAnalyticsInfo {
+  available: boolean
+  stale: boolean
+  state: 'fresh' | 'no_data' | 'stale' | 'unavailable'
+  reason: string | null
+  fetched_at: string | null
+  fetched_at_epoch: number | null
+  data_freshness: string | null
+  data_freshness_epoch: number | null
+  start_date: string | null
+  requested_start_date?: string | null
+  end_date: string | null
+  range_clamped?: boolean
+  team_id: string | null
+  group_id: string | null
+  key_source: string | null
+  rows: Array<{
+    timestamp: string | null
+    user_id: string | null
+    user_email: string
+    source: string
+    model_uid: string
+    ide: string
+    os: string
+    ide_version: string | null
+    loc_inserted: number
+    loc_deleted: number
+    matched_user_id: string | null
+    matched_org_id: string | null
+    match_method: 'user_id' | 'email' | null
+  }>
+  totals: OutputTotals | null
+  daily: OutputDaily[]
+  source_split: OutputDimension[]
+  model_split: OutputDimension[]
+  ide_split: OutputDimension[]
+  os_split: OutputDimension[]
+  members: OutputMember[]
+  contributors: Array<OutputMember | OutputContributor>
+  attribution: OutputAttribution | null
+}
+
 export interface OrgRow {
   org_id: string
   name: string
@@ -87,6 +182,7 @@ export interface OrgRow {
   local: OrgMeter
   cloud: OrgMeter
   status: OrgStatus
+  output?: UserOutput | null
   // Optional: absent in data.json snapshots generated before the org detail
   // page existed — the page degrades to a "regenerate" hint.
   daily?: DailyPoint[]
@@ -160,6 +256,7 @@ export interface UserRow {
   sessions: UserSessions | null
   models: ModelUsage[]
   ides: IdeUsage[]
+  output?: UserOutput | null
 }
 
 export interface SessionsInfo {
@@ -242,6 +339,7 @@ export interface DashboardData {
   // Optional: absent in snapshots generated before the org detail page.
   cloud_sessions?: CloudSessionsInfo
   model_analytics: ModelAnalyticsInfo
+  output_analytics?: OutputAnalyticsInfo
   orgs: OrgRow[]
   attribution: AttributionInfo
   users: UserRow[]

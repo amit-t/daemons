@@ -8,7 +8,35 @@ import { OrgDetail } from './components/OrgDetail'
 import { UserTable } from './components/UserTable'
 import { UserDetail } from './components/UserDetail'
 import { RefreshControls } from './components/RefreshControls'
+import { OutputAnalytics } from './components/OutputAnalytics'
 import { orgCapTotals } from './orgCapTotals'
+import type { OutputAnalyticsInfo } from './types'
+
+const LEGACY_OUTPUT_ANALYTICS: OutputAnalyticsInfo = {
+  available: false,
+  stale: false,
+  state: 'unavailable',
+  reason: 'old_snapshot',
+  fetched_at: null,
+  fetched_at_epoch: null,
+  data_freshness: null,
+  data_freshness_epoch: null,
+  start_date: null,
+  end_date: null,
+  team_id: null,
+  group_id: null,
+  key_source: null,
+  rows: [],
+  totals: null,
+  daily: [],
+  source_split: [],
+  model_split: [],
+  ide_split: [],
+  os_split: [],
+  members: [],
+  contributors: [],
+  attribution: null,
+}
 
 // "#/org/<org_id>" routes to the per-org page; anything else is the console.
 // Hash-based so the static snapshot stays servable from a plain file server
@@ -52,6 +80,7 @@ export default function App() {
     ? (data.users.find((u) => u.user_id === selectedUserId) ?? null)
     : null
   const selectedOrg = orgRouteId ? (data.orgs.find((o) => o.org_id === orgRouteId) ?? null) : null
+  const outputAnalytics = data.output_analytics ?? LEGACY_OUTPUT_ANALYTICS
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
@@ -92,6 +121,7 @@ export default function App() {
             cycle={cycle}
             cloudSessions={data.cloud_sessions}
             modelAnalytics={data.model_analytics}
+            outputAnalytics={outputAnalytics}
             onBack={() => {
               window.location.hash = ''
             }}
@@ -191,6 +221,7 @@ export default function App() {
             </div>
           )}
           <UserTable users={data.users} orgs={data.orgs} onSelect={(u) => setSelectedUserId(u.user_id)} />
+          <OutputAnalytics analytics={outputAnalytics} users={data.users} />
         </>
       )}
 
@@ -199,6 +230,7 @@ export default function App() {
           user={selectedUser}
           cycle={cycle}
           modelAnalytics={data.model_analytics}
+          outputAnalytics={outputAnalytics}
           orgs={data.orgs}
           onClose={() => setSelectedUserId(null)}
         />

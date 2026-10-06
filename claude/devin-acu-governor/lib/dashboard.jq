@@ -21,6 +21,40 @@
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
 def r2: (. * 100 | round) / 100;
 def r3: (. * 1000 | round) / 1000;
+def output_num:
+  if . == null then 0
+  elif (type == "number") then .
+  elif (type == "string") then (tonumber? // 0)
+  else 0
+  end;
+def output_totals($rows):
+  ([ $rows[]?.loc_inserted | output_num ] | add // 0) as $inserted
+  | ([ $rows[]?.loc_deleted | output_num ] | add // 0) as $deleted
+  | {
+      loc_inserted: $inserted,
+      loc_deleted: $deleted,
+      net: ($inserted - $deleted)
+    };
+def output_groups($rows; $field):
+  ($rows | group_by(.[$field] // "unknown")
+   | map((.[0][$field] // "unknown") as $value
+         | {($field): $value} + output_totals(.)));
+def output_daily($rows):
+  ($rows | group_by(.timestamp // "unknown")
+   | map((.[0].timestamp // "unknown") as $date
+         | {date: $date} + output_totals(.))
+   | sort_by(.date));
+def output_info($rows):
+  output_totals($rows) + {
+    daily: output_daily($rows),
+    source_split: output_groups($rows; "source"),
+    model_split: output_groups($rows; "model_uid"),
+    ide_split: output_groups($rows; "ide"),
+    os_split: output_groups($rows; "os"),
+    has_rows: (($rows | length) > 0)
+  };
+def normalized_email:
+  if type == "string" then (gsub("^\\s+|\\s+$"; "") | ascii_downcase) else "" end;
 
 # The live API serves consumption_by_date[].date as a Unix epoch (PST midnight);
 # accept a "YYYY-MM-DD" string too and emit both forms.
@@ -199,6 +233,50 @@ def donor_suppressed($raw; $consumed; $drec):
    | map({key: .[0].user_id, value: .}) | from_entries) as $ma_by_user
 | (($ma.rows // []) | map(select(.user_email != "")) | group_by(.user_email)
    | map({key: .[0].user_email, value: .}) | from_entries) as $ma_by_email
+| ($outputa[0] // {available: false, stale: false, state: "unavailable", reason: "missing", rows: []}) as $oa
+| ($oa.rows // []) as $output_rows
+| ($userlist | map({
+    user_id: .user_id,
+    email: (.email // "" | normalized_email),
+    billing_org_id: (
+      (($user_limits[.user_id] // {}).local_agent.billing_org_id)
+      // (($user_limits[.user_id] // {}).billing_org_id)
+      // ([(.role_assignments[]?.org_id // empty)] | first)
+      // null
+    )
+  })) as $member_keys
+| ($member_keys | map(select(.user_id != "")) | group_by(.user_id)
+   | map(select(length == 1) | {key: .[0].user_id, value: .[0]}) | from_entries) as $unique_member_ids
+| ($member_keys | map(select(.email != "")) | group_by(.email)
+   | map(select(length == 1) | {key: .[0].email, value: .[0]}) | from_entries) as $unique_member_emails
+| ($output_rows | map(
+    . as $row
+    | ($unique_member_ids[($row.user_id // "")] // null) as $id_match
+    | ($unique_member_emails[($row.user_email // "" | normalized_email)] // null) as $email_match
+    | if $id_match != null
+      then $row + {
+        matched_user_id: $id_match.user_id,
+        matched_org_id: $id_match.billing_org_id,
+        match_method: "user_id"
+      }
+      elif ($row.user_id // "") == "" and $email_match != null
+      then $row + {
+        matched_user_id: $email_match.user_id,
+        matched_org_id: $email_match.billing_org_id,
+        match_method: "email"
+      }
+      else $row + {
+        matched_user_id: null,
+        matched_org_id: null,
+        match_method: null
+      }
+      end
+  )) as $output_assigned
+| ($output_assigned | map(select(.matched_user_id != null)) | group_by(.matched_user_id)
+   | map({key: .[0].matched_user_id, value: .}) | from_entries) as $output_by_user
+| ($output_assigned | map(select(.matched_org_id != null)) | group_by(.matched_org_id)
+   | map({key: .[0].matched_org_id, value: .}) | from_entries)
+  as $output_by_org
 # Aggregate one user's Windsurf rows along a dimension ("model" or "ide").
 | def dim_split($rows; $key):
     ($rows | group_by(.[$key])
@@ -213,6 +291,7 @@ def donor_suppressed($raw; $consumed; $drec):
     | ($lim.local_agent.cycle_acu_limit // null) as $explicit_limit
     | (if $explicit_limit == null then $default_user_limit else $explicit_limit end) as $effective_limit
     | (($user_daily[$u.user_id] // []) | day_points) as $udaily
+    | (if $oa.available then ($output_by_user[$u.user_id] // []) else [] end) as $output_rows_for_user
     | ($ma_by_user[$u.user_id] // $ma_by_email[$u.email] // []) as $ma_rows
     | ($donor_map[$u.email // ""] // null) as $drec
     | ($uc / $elapsed_days * $cycle_days) as $uproj
@@ -262,10 +341,35 @@ def donor_suppressed($raw; $consumed; $drec):
         sessions: (if $sess.available
                    then ($user_sessions[$u.user_id] // {count: 0, acus: 0})
                    else null end),
+        output: (if $oa.available and $oa.state != "no_data" then output_info($output_rows_for_user) else null end),
         models: dim_split($ma_rows; "model"),
         ides: dim_split($ma_rows; "ide")
       }
   ) | sort_by(-.consumed, .email)) as $user_rows
+| ($user_rows | map({
+    user_id: .user_id,
+    email: .email,
+    name: .name,
+    billing_org_id: .billing_org_id,
+    output: .output
+  })) as $output_members
+| ($output_assigned
+   | map(select(.matched_user_id == null))
+     | group_by([.user_id // "", (.user_email // "" | normalized_email)])
+   | map({
+       user_id: (.[0].user_id // null),
+       name: (.[0].user_email // .[0].user_id // "unknown"),
+       email: (.[0].user_email // ""),
+       user_email: (.[0].user_email // ""),
+       billing_org_id: null,
+       output: output_info(.)
+     })) as $unassigned_contributors
+| ($output_assigned
+   | map(select(.matched_user_id != null))
+   | output_totals(.)) as $matched_output
+| ($output_assigned
+   | map(select(.matched_user_id == null))
+   | output_totals(.)) as $unassigned_output
 # Org-gate overcommit: sum explicit user caps attributed to each org and
 # compare against that org's Local Agent cap. Even though each user's own
 # cap has headroom, the org-level Local Agent cap can still block them if
@@ -281,7 +385,8 @@ def donor_suppressed($raw; $consumed; $drec):
 | ($org_rows | map(. + {
     sum_explicit_user_caps: ($org_explicit_caps[.org_id] // 0),
     user_cap_overcommit: (if .local.limit == null then null
-      else (($org_explicit_caps[.org_id] // 0) - .local.limit) end)
+      else (($org_explicit_caps[.org_id] // 0) - .local.limit) end),
+    output: (if $oa.available and $oa.state != "no_data" then output_info($output_by_org[.org_id] // []) else null end)
   })) as $org_rows
 | {
     generated_at: $generated_at,
@@ -371,6 +476,38 @@ def donor_suppressed($raw; $consumed; $drec):
       # rows kept verbatim so the next refresh can reuse this section (TTL /
       # rate-limit carry-forward) without refetching the Windsurf API.
       rows: ($ma.rows // [])
+    },
+    output_analytics: {
+      available: ($oa.available // false),
+      stale: ($oa.stale // false),
+      state: ($oa.state // (if $oa.available then "fresh" else "unavailable" end)),
+      reason: ($oa.reason // null),
+      fetched_at: ($oa.fetched_at // null),
+      fetched_at_epoch: ($oa.fetched_at_epoch // null),
+      data_freshness: ($oa.data_freshness // null),
+      data_freshness_epoch: (try ($oa.data_freshness | fromdateiso8601) catch null),
+      start_date: ($oa.start_date // null),
+      requested_start_date: ($oa.requested_start_date // null),
+      end_date: ($oa.end_date // null),
+      range_clamped: ($oa.range_clamped // false),
+      team_id: ($oa.team_id // null),
+      group_id: ($oa.group_id // null),
+      key_source: ($oa.key_source // null),
+      rows: $output_assigned,
+      totals: (if $oa.available then output_totals($output_assigned) else null end),
+      daily: (if $oa.available then output_daily($output_assigned) else [] end),
+      source_split: (if $oa.available then output_groups($output_assigned; "source") else [] end),
+      model_split: (if $oa.available then output_groups($output_assigned; "model_uid") else [] end),
+      ide_split: (if $oa.available then output_groups($output_assigned; "ide") else [] end),
+      os_split: (if $oa.available then output_groups($output_assigned; "os") else [] end),
+      members: (if $oa.available then $output_members else [] end),
+      contributors: (if $oa.available then ($output_members + $unassigned_contributors) else [] end),
+      attribution: (if $oa.available then {
+        matched: $matched_output,
+        unassigned: $unassigned_output,
+        matched_contributors: ([$output_assigned[] | select(.matched_user_id != null) | .matched_user_id] | unique | length),
+        unmatched_contributors: ($unassigned_contributors | length)
+      } else null end)
     },
     orgs: $org_rows,
     attribution: {

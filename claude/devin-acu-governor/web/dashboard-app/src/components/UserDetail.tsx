@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { CycleInfo, ModelAnalyticsInfo, OrgRow, UserRow } from '../types'
+import type { CycleInfo, ModelAnalyticsInfo, OrgRow, OutputAnalyticsInfo, OutputDimension, UserRow } from '../types'
 import { fmt, fmtPct, shortDay } from '../format'
 import { ForecastBadge, StatusBadge } from './StatusBadge'
 import { CopyEmail } from './CopyEmail'
@@ -34,6 +34,7 @@ interface Props {
   user: UserRow
   cycle: CycleInfo
   modelAnalytics: ModelAnalyticsInfo
+  outputAnalytics?: OutputAnalyticsInfo
   orgs: OrgRow[]
   onClose: () => void
 }
@@ -98,10 +99,33 @@ function BarList({
   )
 }
 
+function OutputBarList({ rows, labelKey }: { rows: OutputDimension[]; labelKey: 'source' | 'model_uid' | 'ide' | 'os' }) {
+  if (rows.length === 0) return <div className="detail-empty">no output data returned</div>
+  const max = Math.max(...rows.map((row) => row.loc_inserted), 1)
+  return (
+    <div className="bar-list">
+      {rows.map((row) => (
+        <div className="bar-row" key={`${labelKey}-${row[labelKey]}`}>
+          <span className="bar-label">
+            {labelKey === 'source'
+              ? ({ CASCADE_CLIENT: 'Desktop', CHISEL: 'CLI' }[row.source ?? ''] ?? row.source ?? 'unknown')
+              : row[labelKey] ?? 'unknown'}
+          </span>
+          <span className="bar-track">
+            <i style={{ width: `${Math.max(1, (row.loc_inserted / max) * 100)}%` }} />
+          </span>
+          <span className="bar-value">{fmt(row.net)} net</span>
+          <span className="bar-msgs">{fmt(row.loc_inserted)} in / {fmt(row.loc_deleted)} out</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // Per-user drill-down drawer: daily ACU line over the cycle, Devin Cloud
 // session stats, and (when the Windsurf analytics key is configured) the
 // model and IDE split for Devin Desktop / Local usage.
-export function UserDetail({ user, cycle, modelAnalytics, orgs, onClose }: Props) {
+export function UserDetail({ user, cycle, modelAnalytics, outputAnalytics, orgs, onClose }: Props) {
   const orgName = user.billing_org_id ? (orgs.find((o) => o.org_id === user.billing_org_id)?.name ?? null) : null
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -270,6 +294,41 @@ export function UserDetail({ user, cycle, modelAnalytics, orgs, onClose }: Props
             </ComposedChart>
           </ResponsiveContainer>
         </section>
+
+        {outputAnalytics ? (
+          <section className="panel detail-panel user-output-panel">
+            <div className="output-heading">
+              <h2 className="panel-title">Accepted agent output</h2>
+              {outputAnalytics.stale && <span className="badge badge-warning">stale</span>}
+            </div>
+            {!outputAnalytics.available ? (
+              <div className="detail-empty">
+                output analytics unavailable — {outputAnalytics.reason === 'old_snapshot' ? 'regenerate with dag dashboard' : outputAnalytics.reason ?? 'fetch failed'}
+              </div>
+            ) : !user.output ? (
+              <div className="detail-empty">no output attribution available for this member</div>
+            ) : !user.output.has_rows ? (
+              <div className="detail-empty">no attributed output rows returned for this member</div>
+            ) : (
+              <>
+                <div className="output-cards">
+                  <div className="card accent"><div className="card-label">Accepted inserted</div><div className="card-value">{fmt(user.output.loc_inserted)}</div></div>
+                  <div className="card"><div className="card-label">Accepted deleted</div><div className="card-value">{fmt(user.output.loc_deleted)}</div></div>
+                  <div className="card"><div className="card-label">Accepted net</div><div className="card-value">{fmt(user.output.net)}</div></div>
+                </div>
+                <div className="output-grid">
+                  <section><h3 className="subpanel-title">Source</h3><OutputBarList rows={user.output.source_split} labelKey="source" /></section>
+                  <section><h3 className="subpanel-title">Model</h3><OutputBarList rows={user.output.model_split} labelKey="model_uid" /></section>
+                  <section><h3 className="subpanel-title">IDE</h3><OutputBarList rows={user.output.ide_split} labelKey="ide" /></section>
+                  <section><h3 className="subpanel-title">OS</h3><OutputBarList rows={user.output.os_split} labelKey="os" /></section>
+                </div>
+              </>
+            )}
+            <div className="detail-footer">
+              <span>source data through {outputAnalytics.data_freshness ?? 'unknown'} · snapshot fetched {outputAnalytics.fetched_at ?? 'unknown'}</span>
+            </div>
+          </section>
+        ) : null}
 
         <div className="detail-grid">
           <section className="panel detail-panel">

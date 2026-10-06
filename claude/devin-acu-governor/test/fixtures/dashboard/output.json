@@ -1,0 +1,67 @@
+{
+  "data": [
+    {
+      "timestamp": "2026-06-15",
+      "user_id": "email|alice",
+      "user_email": "alice@example.com",
+      "source": "CASCADE_CLIENT",
+      "model_uid": "claude-sonnet-4-6",
+      "ide": "windsurf",
+      "os": "darwin",
+      "loc_inserted": 184,
+      "loc_deleted": 31
+    },
+    {
+      "timestamp": "2026-06-15",
+      "user_id": "email|bob",
+      "user_email": "bob@example.com",
+      "source": "CHISEL",
+      "model_uid": "gpt-4.1",
+      "ide": "devin-cli",
+      "os": "linux",
+      "loc_inserted": 923,
+      "loc_deleted": 118
+    },
+    {
+      "timestamp": "2026-06-15",
+      "user_id": "output-only",
+      "user_email": "outsider@example.com",
+      "source": "CASCADE_CLIENT",
+      "model_uid": "unknown-model",
+      "ide": "unknown",
+      "os": "windows",
+      "loc_inserted": 50,
+      "loc_deleted": 5
+    },
+    {
+      "timestamp": "2026-06-15",
+      "user_id": null,
+      "user_email": " ALICE@EXAMPLE.COM ",
+      "source": "CHISEL",
+      "model_uid": "claude-sonnet-4-6",
+      "ide": "devin-cli",
+      "os": "darwin",
+      "loc_inserted": 7,
+      "loc_deleted": 1
+    },
+    {
+      "timestamp": "2026-06-15",
+      "user_id": "unknown-user",
+      "user_email": "alice@example.com",
+      "source": "CASCADE_CLIENT",
+      "model_uid": "unknown-model",
+      "ide": "unknown",
+      "os": "windows",
+      "loc_inserted": 3,
+      "loc_deleted": 1
+    }
+  ],
+  "pagination": {
+    "next_page_cursor": null
+  },
+  "metadata": {
+    "data_freshness": "2026-06-16T03:00:00Z",
+    "query_time_ms": 1311,
+    "team_id": "team_fixture"
+  }
+}

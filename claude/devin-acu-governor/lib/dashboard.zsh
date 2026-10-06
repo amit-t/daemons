@@ -196,11 +196,13 @@ _dag_dash_fetch() {
   local url=$1 hdr=$2 response code body crc
   local retries=${DAG_FETCH_RETRIES:-3} sleep_base=${DAG_FETCH_RETRY_SLEEP:-2} attempt=0 wait
   _dag_dash_mark_transient 0
+  [[ -n "${DAG_FETCH_CODE_FILE:-}" ]] && : > "${DAG_FETCH_CODE_FILE}"
   while true; do
     response=$(curl -q -sS -w $'\n%{http_code}' -H "@${hdr}" "$url" 2>"${hdr:h}/curl-err")
     crc=$?
     code=${response##*$'\n'}
     body=${response%$'\n'*}
+    [[ -n "${DAG_FETCH_CODE_FILE:-}" ]] && print -r -- "$code" > "${DAG_FETCH_CODE_FILE}"
     if (( crc != 0 )); then
       # Transport-level failure (timeout, partial body, reset) — always transient.
       _dag_dash_mark_transient 1
@@ -366,6 +368,139 @@ _dag_dash_fetch_model_analytics() {
     }' "$pages" > "$out"
 }
 
+_dag_dash_output_failure() {
+  local out=$1 prev_sect=$2 start_date=$3 end_date=$4 reason=$5
+  if [[ -n "$prev_sect" ]]; then
+    jq -c --arg reason "$reason" '. + {stale: true, state: "stale", reason: $reason}' <<<"$prev_sect" > "$out"
+    print -ru2 -- "dag dashboard: output analytics unavailable (${reason}); carrying previous snapshot forward (stale)"
+  else
+    jq -n --arg reason "$reason" --arg start "$start_date" --arg end "$end_date" '{
+      available: false, stale: false, state: "unavailable", reason: $reason,
+      fetched_at: null, fetched_at_epoch: null, data_freshness: null,
+      data_freshness_epoch: null, start_date: $start, end_date: $end,
+      team_id: null, group_id: null, key_source: null, rows: []
+    }' > "$out"
+    print -ru2 -- "dag dashboard: output analytics unavailable; output detail views will show the unavailable state"
+  fi
+}
+
+_dag_dash_fetch_output_analytics() {
+  local out_dir=$1 work=$2 now=$3 after=$4 before=$5 cog_key=${6:-}
+  local out="${work}/output-analytics.json" prev="${out_dir}/data.json"
+  local ttl_min="${DAG_OUTPUT_ANALYTICS_TTL_MINUTES:-60}"
+  local api_key="" key_source="" start_date end_date requested_start_date eff_end=$(( now < before ? now : before ))
+
+  if api_key=$(dag_resolve_service_key); then
+    key_source="windsurf"
+  elif [[ -n "$cog_key" ]]; then
+    api_key="$cog_key"
+    key_source="cog"
+  elif api_key=$(dag_resolve_cog_key); then
+    key_source="cog"
+  else
+    jq -n '{
+      available: false, stale: false, state: "unavailable", reason: "no_output_key",
+      fetched_at: null, fetched_at_epoch: null, data_freshness: null,
+      data_freshness_epoch: null, start_date: null, end_date: null,
+      team_id: null, group_id: null, key_source: null, rows: []
+    }' > "$out"
+    return 0
+  fi
+
+  requested_start_date=$(date -u -r "$after" +%Y-%m-%d)
+  end_date=$(date -u -r "$eff_end" +%Y-%m-%d)
+  local range_start_epoch=$after range_clamped=false
+  if (( eff_end - range_start_epoch > 89 * 86400 )); then
+    range_start_epoch=$(( eff_end - 89 * 86400 ))
+    range_clamped=true
+  fi
+  start_date=$(date -u -r "$range_start_epoch" +%Y-%m-%d)
+
+  local prev_sect=""
+  if [[ -f "$prev" ]]; then
+    prev_sect=$(jq -c --arg start "$start_date" --arg end "$end_date" --arg key_source "$key_source" '
+      if (.output_analytics.available // false) == true
+         and .output_analytics.start_date == $start
+         and .output_analytics.end_date == $end
+         and .output_analytics.key_source == $key_source
+         and (.output_analytics.rows | type) == "array"
+      then .output_analytics
+      else empty
+      end
+    ' "$prev" 2>/dev/null)
+  fi
+  if [[ -n "$prev_sect" ]]; then
+    local prev_epoch
+    prev_epoch=$(jq -r '.fetched_at_epoch // 0' <<<"$prev_sect")
+    if (( prev_epoch > 0 && now - prev_epoch < ttl_min * 60 )); then
+      print -r -- "$prev_sect" > "$out"
+      return 0
+    fi
+  fi
+
+  local ahdr="${work}/output-auth-header"
+  print -r -- "Authorization: Bearer ${api_key}" > "$ahdr" || return 1
+  chmod 600 "$ahdr"
+
+  local pages="${out}.pages" cursor="" cursor_q="" url page
+  typeset -A seen_cursors=()
+  : > "$pages" || return 1
+  while true; do
+    url="${DAG_WINDSURF_API_BASE:-https://server.codeium.com}/api/v2alpha/analytics/output?metric=loc_inserted,loc_deleted&start_date=${start_date}&end_date=${end_date}&product=agent&granularity=daily&group_by=user,source,model_uid,ide,os&page_size=10000"
+    if [[ -n "$cursor" ]]; then
+      cursor_q=$(_dag_dash_urlencode "$cursor") || return 1
+      url="${url}&page_cursor=${cursor_q}"
+    fi
+    if ! page=$(_dag_dash_fetch "$url" "$ahdr") \
+      || ! jq -e '(.data | type == "array") and (.pagination | type == "object") and (.metadata | type == "object")' <<<"$page" >/dev/null 2>&1; then
+      local reason="fetch_failed" code_file="${DAG_FETCH_CODE_FILE:-}"
+      local code=""
+      [[ -n "$code_file" ]] && code=$(<"$code_file" 2>/dev/null)
+      [[ "$code" == 401 || "$code" == 403 ]] && reason="auth_failed"
+      _dag_dash_output_failure "$out" "$prev_sect" "$start_date" "$end_date" "$reason"
+      return 0
+    fi
+    print -r -- "$page" >> "$pages" || return 1
+    cursor=$(jq -r '.pagination.next_page_cursor // empty' <<<"$page") || return 1
+    if [[ -n "$cursor" && -n "${seen_cursors[$cursor]:-}" ]]; then
+      _dag_dash_output_failure "$out" "$prev_sect" "$start_date" "$end_date" "repeated_cursor"
+      return 0
+    fi
+    [[ -n "$cursor" ]] && seen_cursors[$cursor]=1
+    [[ -n "$cursor" ]] || break
+  done
+
+  local fetched_at
+  fetched_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
+  jq -s --arg fetched_at "$fetched_at" --argjson now "$now" \
+    --arg start_date "$start_date" --arg requested_start_date "$requested_start_date" \
+    --arg end_date "$end_date" --argjson range_clamped "$range_clamped" --arg key_source "$key_source" '{
+      available: true, stale: false,
+      state: (if ([.[].data[]?] | length) == 0 then "no_data" else "fresh" end),
+      reason: (if ([.[].data[]?] | length) == 0 then "no_data" else null end),
+      fetched_at: $fetched_at, fetched_at_epoch: $now,
+      data_freshness: ([.[].metadata.data_freshness? | select(type == "string")] | max // null),
+      data_freshness_epoch: null,
+      start_date: $start_date, requested_start_date: $requested_start_date,
+      end_date: $end_date, range_clamped: $range_clamped,
+      team_id: ([.[].metadata.team_id? | select(type == "string")] | first // null),
+      group_id: ([.[].metadata.group_id? | select(type == "string")] | first // null),
+      key_source: $key_source,
+      rows: [.[].data[]? | {
+        timestamp: (.timestamp // null),
+        user_id: (.user_id // null),
+        user_email: (.user_email // ""),
+        source: (.source // "unknown"),
+        model_uid: (.model_uid // "unknown"),
+        ide: (.ide // "unknown"),
+        os: (.os // "unknown"),
+        ide_version: (.ide_version // null),
+        loc_inserted: (.loc_inserted // 0),
+        loc_deleted: (.loc_deleted // 0)
+      }]
+    }' "$pages" > "$out"
+}
+
 # Fetch everything and write ${out_dir}/data.json atomically.
 # $1=out_dir $2=refresh_minutes-or-empty (recorded as metadata for the UI).
 _dag_dashboard_write_data() {
@@ -389,13 +524,14 @@ _dag_dashboard_write_data() {
   prev_gen=$(jq -r '.generated_at // empty' "${out_dir}/data.json" 2>/dev/null)
   mkdir -p "$out_dir" || return 1
 
-  local work hdr DAG_FETCH_FLAG_FILE
+  local work hdr DAG_FETCH_FLAG_FILE DAG_FETCH_CODE_FILE
   work=$(mktemp -d) || return 1
   {
     # mktemp dir is 0700; the header file keeps the key out of curl's argv.
     hdr="${work}/auth-header"
     # Subshell-surviving channel for the fetch transient flag (see _dag_dash_fetch).
     DAG_FETCH_FLAG_FILE="${work}/fetch-transient"
+    DAG_FETCH_CODE_FILE="${work}/fetch-code"
     print -r -- "Authorization: Bearer ${key}" > "$hdr" || return 1
     chmod 600 "$hdr"
 
@@ -457,6 +593,8 @@ _dag_dashboard_write_data() {
     # Windsurf model/IDE analytics: optional second key; degrades internally.
     _dag_dash_fetch_model_analytics "$out_dir" "$work" "$now" "$after" "$before" || return 1
     _dag_dash_emit "$out_dir" 30 "model analytics" "" "$prev_gen"
+    _dag_dash_fetch_output_analytics "$out_dir" "$work" "$now" "$after" "$before" "$key" || return 1
+    _dag_dash_emit "$out_dir" 33 "output analytics" "" "$prev_gen"
 
     : > "${work}/org-dailies.json"
     : > "${work}/org-limits.json"
@@ -528,6 +666,7 @@ _dag_dashboard_write_data() {
       --slurpfile donorrec "${work}/donor-record.json" \
       --slurpfile sessions "${work}/sessions.json" \
       --slurpfile modela "${work}/model-analytics.json" \
+      --slurpfile outputa "${work}/output-analytics.json" \
       -f "${daemon_dir}/lib/dashboard.jq" > "${out_dir}/data.json.tmp"; then
       rm -f "${out_dir}/data.json.tmp"
       print -ru2 -- "dag dashboard: failed to compute dashboard data (lib/dashboard.jq)"

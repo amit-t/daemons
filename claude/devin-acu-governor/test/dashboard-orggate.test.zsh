@@ -33,7 +33,7 @@ out=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile users $tmp/users.json --slurpfile userd $tmp/userd.json \
   --slurpfile userl $tmp/userl.json --slurpfile defaultl $tmp/defaultl.json \
   --slurpfile donorrec $tmp/donorrec.json --slurpfile sessions $tmp/sessions.json \
-  --slurpfile modela $tmp/modela.json -f $lib/dashboard.jq)
+  --slurpfile modela $tmp/modela.json --slurpfile outputa $tmp/modela.json -f $lib/dashboard.jq)
 
 assert_contains "org sum caps" "$out" '"sum_explicit_user_caps":140'
 # Org hierarchy retired: no parent org id in the snapshot (every org counts
@@ -64,7 +64,7 @@ out3=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile users $tmp2/users.json --slurpfile userd $tmp2/userd.json \
   --slurpfile userl $tmp2/userl.json --slurpfile defaultl $tmp2/defaultl.json \
   --slurpfile donorrec $tmp2/donorrec.json --slurpfile sessions $tmp2/sessions.json \
-  --slurpfile modela $tmp2/modela.json -f $lib/dashboard.jq)
+  --slurpfile modela $tmp2/modela.json --slurpfile outputa $tmp2/modela.json -f $lib/dashboard.jq)
 
 zrow=$(jq -c '.orgs[] | select(.org_id=="org-z")' <<<"$out3")
 brow=$(jq -c '.orgs[] | select(.org_id=="org-b")' <<<"$out3")
