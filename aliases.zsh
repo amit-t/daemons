@@ -93,6 +93,9 @@ _dag_dotted() {
   done
   dag "${selectors[@]}" "$cmd" "${rest[@]}"
 }
+# Profiles .bash_aliases may predefine these as plain aliases; drop them so
+# the `name() {` form parses and the hoisting functions take precedence.
+unalias dag.align dag.routing dag.boost 2>/dev/null
 dag.align()   { _dag_dotted align "$@" }
 dag.routing() { _dag_dotted routing "$@" }
 dag.boost()   { _dag_dotted boost "$@" }
