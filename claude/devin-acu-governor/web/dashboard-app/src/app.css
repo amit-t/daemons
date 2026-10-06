@@ -835,6 +835,19 @@ footer {
   margin-top: 16px;
 }
 
+.output-jump {
+  display: inline-block;
+  margin: 0 0 14px;
+  color: var(--amber);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.output-jump:hover,
+.output-jump:focus-visible {
+  text-decoration: underline;
+}
+
 .output-heading {
   display: flex;
   align-items: center;

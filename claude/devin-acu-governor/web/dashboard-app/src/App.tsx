@@ -136,6 +136,9 @@ export default function App() {
         )
       ) : (
         <>
+          <a className="output-jump" href="#agent-output">
+            ↓ Agent output
+          </a>
           <div className="cards">
             <div className="card accent">
               <div className="card-label">Consumed ACUs</div>

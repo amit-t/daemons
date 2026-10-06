@@ -109,7 +109,7 @@ export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyti
   const status = statusText(analytics)
 
   return (
-    <section className="panel output-analytics" aria-label="Agent output analytics">
+    <section id="agent-output" className="panel output-analytics" aria-label="Agent output analytics">
       <div className="output-heading">
         <h2 className="panel-title">Agent output</h2>
         {analytics.stale && <span className="badge badge-warning">stale</span>}
