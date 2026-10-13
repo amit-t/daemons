@@ -99,6 +99,23 @@ unalias dag.align dag.routing dag.boost 2>/dev/null
 dag.align()   { _dag_dotted align "$@" }
 dag.routing() { _dag_dotted routing "$@" }
 dag.boost()   { _dag_dotted boost "$@" }
+# Pinned dotted variants: dag.align.<v> / dag.routing.<v> = dag --<v> align|routing.
+# cx = --codex; every other variant is its own selector flag. Remaining args
+# still go through _dag_dotted, so extra selectors keep hoisting.
+typeset -gA _dag_dotted_variants=(
+  claude --claude codex --codex devin --devin cx --codex
+  co --co cf --cf deo --deo def --def des --des del --del det --det dey --dey defu --defu
+)
+for _dag_pin in cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau cxm; do
+  _dag_dotted_variants[$_dag_pin]=--$_dag_pin
+done
+for _dag_cmd in align routing; do
+  for _dag_pin in ${(k)_dag_dotted_variants}; do
+    unalias "dag.${_dag_cmd}.${_dag_pin}" 2>/dev/null
+    functions[dag.${_dag_cmd}.${_dag_pin}]="_dag_dotted ${_dag_cmd} ${_dag_dotted_variants[$_dag_pin]} \"\$@\""
+  done
+done
+unset _dag_cmd _dag_pin
 dhm--claude()  { dhm --agent claude "$@" }
 dhm--cf()      { dhm --agent cf "$@" }
 dhm--codex()   { dhm --agent codex "$@" }

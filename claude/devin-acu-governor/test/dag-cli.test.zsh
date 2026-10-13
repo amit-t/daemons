@@ -688,6 +688,27 @@ out=$(dag.boost --defu all)
 assert_eq "dag.boost defu hoist" "--defu|boost|all" "$out"
 out=$(dag.boost --del alice@corp.com 50)
 assert_eq "dag.boost del hoist" "--del|boost|alice@corp.com|50" "$out"
+# Pinned variants: dag.align.<v> / dag.routing.<v> for every launcher selector.
+for v in claude codex devin co cf deo def des del det dey defu \
+         cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau cxm; do
+  for c in align routing; do
+    out=$(dag.${c}.${v} alice@corp.com); rc=$?
+    assert_exit "dag.${c}.${v} rc" 0 $rc
+    assert_eq "dag.${c}.${v} forwarding" "--${v}|${c}|alice@corp.com" "$out"
+  done
+done
+out=$(dag.align.cx alice@corp.com)
+assert_eq "dag.align.cx = --codex" "--codex|align|alice@corp.com" "$out"
+out=$(dag.routing.cx alice@corp.com)
+assert_eq "dag.routing.cx = --codex" "--codex|routing|alice@corp.com" "$out"
+out=$(dag.align.defu alice@corp.com --agent codex)
+assert_eq "dag.align.defu still hoists extra selectors" "--defu|--agent|codex|align|alice@corp.com" "$out"
+# Pre-existing plain aliases must not shadow the pinned functions on re-source.
+alias dag.align.co='dag co-shadow'
+source "${script_dir}/../../../aliases.zsh"
+dag() { print -r -- "${(j:|:)@}" }
+out=$(dag.align.co alice@corp.com)
+assert_eq "dag.align.co beats stale alias" "--co|align|alice@corp.com" "$out"
 
 # Org ceiling: every boost-family prompt carries the zero-sum org rebalance
 # planner + ceiling, and no playbook offers growing an org cap to Σ member caps.

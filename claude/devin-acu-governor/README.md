@@ -434,6 +434,9 @@ dag.routing alice@corp.com
 dag.align --defu alice@corp.com    # every launcher selector works, any position:
 dag.align alice@corp.com --cxlh    # --agent x, --claude/--codex/--devin, --co/--cf,
 dag.boost --del alice@corp.com 50  # --deo/--def/--des/--del/--det/--dey, --defu, --cx* pins
+dag.align.defu alice@corp.com      # pinned variants: dag.align.<v> / dag.routing.<v>
+dag.routing.cxsh alice@corp.com    # <v> = claude codex devin cx(=--codex) co cf deo def des
+                                   #       del det dey defu cxl* cxs* cxa* (l/m/h/u) cxm
 ```
 
 ## `dag usage`
