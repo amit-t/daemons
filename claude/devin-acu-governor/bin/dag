@@ -384,7 +384,7 @@ dag_org_cap_context() {  # $1=invoked label, rest=org words [+/-amount]; sets _d
     "requested shell command: ${label} ${selector}${amount_word:+ ${amount_word}}"
     "org selector: ${selector}"
     "${amount_line}"
-    "funding modes: always ask the user to choose ZERO-SUM, POOL HEADROOM, or MIXED before any preview; the choice is planning input only, never write authorization"
+    "funding modes: before any raise preview ask the user to choose ZERO-SUM, POOL HEADROOM, or MIXED; shrinks need no funding choice; the choice is planning input only, never write authorization"
     "amount is planning input only; every write still requires CONFIRM DAG WRITE"
   )
 }
