@@ -74,6 +74,11 @@ Usage:
                               Σ caps <= DAG_MONTHLY_ACU_POOL), preview, then write all after
                               CONFIRM DAG WRITE with live-GET verification
   dag set-limit-global-plan   Alias for: dag slg
+  dag org-cap <org_id|org_name> [+acus|acus]
+                              Change one org's Local Agent cap; always asks the funding mode
+                              ZERO-SUM / POOL HEADROOM / MIXED before any preview; +N raises
+                              by N, bare N sets absolute, omitted recommends via auto-need
+  dag org cap <org> [amount]  Alias for: dag org-cap
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
   dag boost all               Boost every user needing attention (dashboard OVER + CRITICAL +
@@ -169,6 +174,7 @@ Examples:
   dag boost over
   dag boost warning
   dag boost critical
+  dag org-cap "Platform Eng" +300
   dag sessions
   dag sessions --hours 72 --insights
   dag session logs --days 7 --org "Platform Eng"
@@ -322,6 +328,55 @@ dag_boost_org_context() {  # $1=invoked label, rest=org selector words; sets _da
   )
 }
 
+dag_org_cap_context() {  # $1=invoked label, rest=org words [+/-amount]; sets _dag_org_cap_context.
+  local label=$1
+  shift
+  typeset -ga _dag_org_cap_context=()
+  setopt local_options extended_glob
+  local -a words=("$@")
+  local amount_word=""
+  if (( ${#words} > 0 )) && [[ "${words[-1]}" == (+|)<0-> ]]; then
+    amount_word="${words[-1]}"
+    words=("${(@)words[1,-2]}")
+  fi
+  if [[ -z "$amount_word" ]] && (( ${#words} > 1 )); then
+    print -ru2 -- "${label}: amount must be +acus or acus (got: ${words[-1]}); quote multi-word org names"
+    return 2
+  fi
+  local selector="${(j: :)words}"
+  selector="${${selector##[[:space:]]#}%%[[:space:]]#}"
+  if [[ -z "$(print -r -- "$selector" | tr -d '[:space:]')" ]]; then
+    print -ru2 -- "${label}: requires an organization (usage: dag org-cap <org_id|org_name> [+acus|acus])"
+    return 2
+  fi
+  if [[ "$selector" == -* || "$selector" == *@*.* ]]; then
+    print -ru2 -- "${label}: argument must be an org_id or org name (got: ${selector}); org-cap changes one org's cap"
+    return 2
+  fi
+  local amount_line
+  if [[ -z "$amount_word" ]]; then
+    amount_line="requested amount: none — recommend via auto-need (projected + target headroom)"
+  else
+    local value=${amount_word#+}
+    if (( value == 0 )); then
+      print -ru2 -- "${label}: amount 0 is not allowed — a zero cap is a block; use dag set limit global 0 <org> for that"
+      return 2
+    fi
+    if [[ "$amount_word" == +* ]]; then
+      amount_line="requested amount: +${value} ACUs above the current cap"
+    else
+      amount_line="requested amount: set cap to ${value} ACUs (absolute)"
+    fi
+  fi
+  _dag_org_cap_context=(
+    "requested shell command: ${label} ${selector}${amount_word:+ ${amount_word}}"
+    "org selector: ${selector}"
+    "${amount_line}"
+    "funding modes: always ask the user to choose ZERO-SUM, POOL HEADROOM, or MIXED before any preview; the choice is planning input only, never write authorization"
+    "amount is planning input only; every write still requires CONFIRM DAG WRITE"
+  )
+}
+
 dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   local cmd="$1"; shift
   cat "${daemon_dir}/playbooks/_common.md" "${daemon_dir}/playbooks/${cmd}.md"
@@ -330,7 +385,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new set-limits-global slg new-cycle boost boost-all boost-org over warning critical user status sessions models; do
+    for playbook in set-limits set-limits-new set-limits-global slg org-cap new-cycle boost boost-all boost-org over warning critical user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -573,6 +628,20 @@ main() {
         "cloud_agent caps are never touched — PATCH bodies carry only the local_agent key"
         "every org is in scope, Vontier included (no parent/child org hierarchy); pass reserved = Σ org cloud caps so Σ local + cloud <= DAG_MONTHLY_ACU_POOL"
       )
+      ;;
+    org-cap|org)
+      local org_cap_label="dag org-cap"
+      if [[ "$cmd" == "org" ]]; then
+        if [[ "${1:-}" != "cap" ]]; then
+          print -ru2 -- "dag: unknown org command (expected: dag org cap <org_id|org_name> [+acus|acus])"
+          exit 2
+        fi
+        shift
+        org_cap_label="dag org cap"
+      fi
+      cmd="org-cap"
+      dag_org_cap_context "$org_cap_label" "$@" || exit $?
+      context_lines=("${_dag_org_cap_context[@]}")
       ;;
     set-limits)
       if [[ "${1:-}" == "global" ]]; then

@@ -729,4 +729,27 @@ done
 out=$(run_dag slg 2>/dev/null)
 assert_contains "slg every org incl Vontier" "$out" "every org is in scope, Vontier included"
 
+# org-cap: new org-gate change mode with funding choice.
+out=$(run_dag org-cap "Platform Eng"); rc=$?
+assert_exit "org-cap rc" 0 $rc
+assert_contains "org-cap playbook" "$out" "# Playbook: org-cap"
+assert_contains "org-cap selector" "$out" "org selector: Platform Eng"
+assert_contains "org-cap recommend" "$out" "recommend via auto-need"
+assert_contains "org-cap funding modes" "$out" "ZERO-SUM, POOL HEADROOM, or MIXED"
+out=$(run_dag org cap "Platform Eng" +300); rc=$?
+assert_exit "org cap two-word rc" 0 $rc
+assert_contains "org cap delta" "$out" "+300 ACUs above the current cap"
+out=$(run_dag org-cap "Platform Eng" 1200); rc=$?
+assert_exit "org-cap absolute rc" 0 $rc
+assert_contains "org-cap absolute" "$out" "set cap to 1200 ACUs (absolute)"
+out=$(run_dag org-cap 2>&1); rc=$?; assert_exit "org-cap no org" 2 $rc
+out=$(run_dag org-cap a@b.co 2>&1); rc=$?; assert_exit "org-cap email rejected" 2 $rc
+out=$(run_dag org-cap "Platform Eng" xx 2>&1); rc=$?; assert_exit "org-cap bad amount" 2 $rc
+out=$(run_dag org-cap "Platform Eng" +0 2>&1); rc=$?; assert_exit "org-cap zero delta" 2 $rc
+out=$(run_dag org frobnicate 2>&1); rc=$?; assert_exit "org unknown subword" 2 $rc
+out=$(run_dag 2>&1)
+assert_contains "usage org-cap" "$out" "dag org-cap <org_id|org_name> [+acus|acus]"
+out=$(run_dag all commands 2>&1)
+assert_contains "all-commands includes org-cap" "$out" "# Playbook: org-cap"
+
 report
