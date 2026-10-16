@@ -418,7 +418,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- borrow_caps_jq: ${daemon_dir}/lib/borrow-caps.jq"
   print -r -- "- org_caps_jq: ${daemon_dir}/lib/org-caps.jq"
   print -r -- "- org_rebalance_jq: ${daemon_dir}/lib/org-rebalance.jq"
-  print -r -- "- org ceiling: Σ every org's local + cloud caps <= ${DAG_MONTHLY_ACU_POOL} (DAG_MONTHLY_ACU_POOL); org-gate moves are zero-sum"
+  print -r -- "- org ceiling: Σ every org's local + cloud caps <= ${DAG_MONTHLY_ACU_POOL} (DAG_MONTHLY_ACU_POOL); org-gate moves are zero-sum (except dag org-cap's explicit POOL HEADROOM/MIXED choice, ceiling-clamped)"
   print -r -- "- ledger: ${DAG_STATE_DIR}/allocations.json"
   print -r -- "- donor_record: ${DAG_STATE_DIR}/donors.json"
   if [[ -n "${_dag_have_cog_key:-}" ]]; then
