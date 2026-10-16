@@ -75,8 +75,9 @@ Usage:
                               CONFIRM DAG WRITE with live-GET verification
   dag set-limit-global-plan   Alias for: dag slg
   dag org-cap <org_id|org_name> [+acus|acus]
-                              Change one org's Local Agent cap; always asks the funding mode
-                              ZERO-SUM / POOL HEADROOM / MIXED before any preview; +N raises
+                              Change one org's Local Agent cap; asks the funding mode
+                              ZERO-SUM / POOL HEADROOM / MIXED before any raise preview;
+                              shrinks need no funding choice; +N raises
                               by N, bare N sets absolute, omitted recommends via auto-need;
                               quote multi-word org names
   dag org cap <org> [amount]  Alias for: dag org-cap

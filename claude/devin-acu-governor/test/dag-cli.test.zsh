@@ -771,6 +771,7 @@ assert_contains "org-cap absolute normalized" "$out" "set cap to 500 ACUs (absol
 out=$(run_dag org-cap "Platform Eng" 12345678901234567890 2>&1); rc=$?; assert_exit "org-cap 20-digit amount" 2 $rc
 assert_contains "org-cap 20-digit msg" "$out" "at most 9 digits"
 out=$(run_dag org-cap "Platform Eng" 999999999); rc=$?; assert_exit "org-cap 9-digit amount ok" 0 $rc
+assert_contains "org-cap 9-digit context" "$out" "set cap to 999999999 ACUs (absolute)"
 out=$(run_dag org-cap "Platform Eng" +300); rc=$?
 assert_contains "org-cap command label" "$out" "requested shell command: dag org-cap Platform Eng +300"
 assert_contains "org-cap planning-only line" "$out" "amount is planning input only"

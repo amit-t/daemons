@@ -62,7 +62,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag slgc <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global cloud` |
 | `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
-| `dag org-cap <org_id\|org_name> [+acus\|acus]` (also `dag org cap <org> [amount]`) | ✅ org limit + ledger | Change one org's Local Agent cap via `lib/org-rebalance.jq`. Always asks the funding mode before any preview: `ZERO-SUM` (donor orgs fund it, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows ≤ `DAG_MONTHLY_ACU_POOL`), or `MIXED` (donors first, then slack). `+N` = delta, bare `N` = absolute, omitted = projected + 250 recommendation. Raises are refused while the layer is over the ceiling; shrinks are always allowed. Quote multi-word org names. `CONFIRM DAG WRITE` + live-GET verify |
+| `dag org-cap <org_id\|org_name> [+acus\|acus]` (also `dag org cap <org> [amount]`) | ✅ org limit + ledger | Change one org's Local Agent cap via `lib/org-rebalance.jq`. Asks the funding mode before any raise preview (shrinks need no funding choice): `ZERO-SUM` (donor orgs fund it, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows ≤ `DAG_MONTHLY_ACU_POOL`), or `MIXED` (donors first, then slack). `+N` = delta, bare `N` = absolute, omitted = projected + 250 recommendation. Raises are refused while the layer is over the ceiling; shrinks are always allowed. Quote multi-word org names (a trailing number is read as the amount). `CONFIRM DAG WRITE` + live-GET verify |
 | `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag boost all` / `dag boost` / `dag boost-all` | ✅ user limits + ledger + donor record | One combined batch for **every** user needing attention — OVER + CRITICAL + WARNING — most urgent first, one shared donor pool, one preview, one `CONFIRM DAG WRITE`; DONOR-suppressed users (cap reduced by DAG, low real usage) are excluded and listed separately |
 | `dag boost.org <org_id\|org_name>` / `dag boost org <org>` / `dag boost-org <org>` | ✅ user limits + ledger + donor record | `boost all` scoped to one organization: recipients **and** donors are only users billed to that org; donor Borrows net to zero inside the org, so the org gate moves only for forecast-funded ACUs |
@@ -250,10 +250,14 @@ dag slgc 0                                 # shorthand: set limit global cloud
 
 ## `dag org-cap <org_id|org_name> [+acus|acus]` — Change one org's cap
 
-Explicit single-org counterpart of `dag slg`. `dag org cap <org> [amount]` is an alias. Quote multi-word org names (`dag org-cap "Platform Eng" +300`).
+Explicit single-org counterpart of `dag slg`. `dag org cap <org> [amount]` is an alias. Quote multi-word org names: a trailing number is read as the amount, so an unquoted name ending in a number would be misread (`dag org-cap "Platform Eng" +300`).
 
 - **Amount:** `+N` raises the cap by N, bare `N` sets it absolute, omitted lets `lib/org-rebalance.jq` recommend `projected + 250`. The amount is planning input only. `0` is rejected (a zero cap is a block; use `dag set limit global 0 <org>`).
-- **Funding choice, always asked:** `ZERO-SUM` (donor orgs fund the raise, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows by the slack used, never past `DAG_MONTHLY_ACU_POOL`), `MIXED` (donors first, then slack), or `CANCEL`. The choice is not write authorization.
+- **Funding choice, asked before any raise preview (shrinks need no funding choice):** `ZERO-SUM` (donor orgs fund the raise, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows by the slack used, never past `DAG_MONTHLY_ACU_POOL`), `MIXED` (donors first, then slack), or `CANCEL`. The choice is not write authorization.
+- **Shrink / no-op:** an absolute `N` below the current cap is a shrink (no funding choice); equal to the current cap is a no-op and stops.
+- **Uncapped target:** `+N` is invalid (no cap to be above); give an absolute amount. The first explicit cap counts as Σ growth that must be funded.
+- **Full shortfall:** the requested cap is never silently absorbed; any `unfunded` remainder stays blocked at the org gate.
+- **Target headroom:** with the amount omitted, the 250 default may be raised to 500 only on your explicit request; above 500 is never allowed.
 - **Guards:** raises are refused while Σ org caps is over the ceiling (repair with `dag slg`); shrinks are always allowed; cloud gates are never touched.
 - **Write:** preview, then `CONFIRM DAG WRITE`; donor cuts PATCH before the raise, each org is live-GET verified, and org ledger entries are refreshed.
 
