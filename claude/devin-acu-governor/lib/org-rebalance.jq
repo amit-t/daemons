@@ -25,13 +25,15 @@
 #   "target_headroom": <n=250>,       # used only by need:"auto"; clamped to [0, 500]
 #   "orgs": [{"org_id","name","local_cap","cloud_cap"?,"local_consumed","run_rate"?}],
 #                                     # local_cap/cloud_cap: explicit cap or null (unset = unlimited)
-#   "needs": [{"org_id","need"}]      # net member-cap growth this run, per billing org
-#                                     # need may be "auto": resolved per org as
+#   "needs": [{"org_id","need"}]      # net member-cap growth this run, per billing org.
+#                                     # Numeric entries aggregate per org; non-numeric,
+#                                     # non-"auto" values are ignored. need may be "auto":
+#                                     # resolved per org as
 #                                     #   max(0, ceil(projected) + target_headroom - cap_before)
 #                                     # (projected = consumed + run_rate * days_left). A resolved
 #                                     # need of 0 yields no recipient row. An auto entry for an
 #                                     # org_id not in `orgs`, or for an uncapped org (local_cap
-#                                     # null), is dropped. Numeric needs are unchanged.
+#                                     # null), is dropped.
 # }
 #
 # Output:
@@ -45,8 +47,10 @@
 #   warnings: [...] }
 #
 # Σ org caps = Σ explicit local_cap + Σ explicit cloud_cap over all orgs.
-# Recipient shortfall = min(need, max(0, ceil(projected + need - local_cap))):
+# Recipient shortfall, numeric portion = min(num, max(0, ceil(projected + num - local_cap))):
 # only the part of the new member room the org gate cannot already absorb.
+# An auto-resolved need is already the gap to the target cap, so its shortfall
+# portion equals the need itself. An org with both kinds adds the two portions.
 
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
 def r2: (. * 100 | round) / 100;
@@ -75,17 +79,23 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
       | .projected = ((.consumed + .run_rate * $days_left) | r2))) as $orgs
     | (reduce ($orgs[] | select(.org_id as $id | $auto_ids | index($id))
                        | select(.cap_before != null)) as $o
-         ($needs_num;
+         ({};
           ([ceil_($o.projected) + $th - $o.cap_before, 0] | max) as $auto
-          | if $auto > 0 then .[$o.org_id] = ((.[$o.org_id] // 0) + $auto) else . end)) as $needs
+          | if $auto > 0 then .[$o.org_id] = $auto else . end)) as $needs_auto
+    | (reduce (($needs_num | to_entries) + ($needs_auto | to_entries))[] as $e
+         ({}; .[$e.key] = ((.[$e.key] // 0) + $e.value))) as $needs
     | ([$orgs[] | (.cap_before // 0) + (.cloud_cap // 0)] | add // 0) as $sum_before
     | ([$orgs[] | select(.cap_before == null) | .name]) as $uncapped
     | (if ($uncapped | length) > 0 then 0
        else ([($ceiling - $sum_before), 0] | max) end) as $slack
     | ($orgs
        | map(select($needs[.org_id] != null and .cap_before != null)
-             | .need = $needs[.org_id]
-             | .shortfall = ([.need, ([ceil_(.projected + .need - .cap_before), 0] | max)] | min))
+             | ($needs_num[.org_id] // 0) as $num
+             | ($needs_auto[.org_id] // 0) as $auto
+             | .need = ($num + $auto)
+             # Numeric growth only needs what the gate cannot absorb; an auto
+             # need is already the gap to the target cap, so it funds in full.
+             | .shortfall = (([$num, ([ceil_(.projected + $num - .cap_before), 0] | max)] | min) + $auto))
        | sort_by(-.shortfall, .name)) as $recips
     | ([$recips[].org_id]) as $recip_ids
     | (if $slack_only then [] else $orgs end
