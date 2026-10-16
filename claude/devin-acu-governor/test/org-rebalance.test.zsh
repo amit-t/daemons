@@ -236,4 +236,27 @@ assert_eq "Z from_slack" 0 "$(field "$out" '.recipients[0].from_slack')"
 assert_eq "Z unfunded" 500 "$(field "$out" '.recipients[0].unfunded')"
 assert_eq "Z no writes" '[]' "$(field "$out" '.writes')"
 
+# AA. full_shortfall: numeric need funds in full even when the gate could
+#     absorb it. Cap 1000, consumed 300, need 200 -> shortfall 200 (absorb
+#     formula would give 0), donor-funded, cap_after 1200, one donor write.
+out=$(run_jq '{"ceiling":24000,"full_shortfall":true,"min_donor_headroom":250,
+  "orgs":[{"org_id":"r","name":"R","local_cap":1000,"local_consumed":300},
+          {"org_id":"d","name":"D","local_cap":2000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":200}]}')
+assert_eq "AA shortfall" 200 "$(field "$out" '.recipients[0].shortfall')"
+assert_eq "AA from_donors" 200 "$(field "$out" '.recipients[0].from_donors')"
+assert_eq "AA cap_after" 1200 "$(field "$out" '.recipients[0].cap_after')"
+assert_eq "AA donor cap_after" 1800 "$(field "$out" '.donors[0].cap_after')"
+assert_eq "AA writes" 2 "$(field "$out" '.writes | length')"
+assert_eq "AA zero_sum" true "$(field "$out" '.zero_sum')"
+
+# AB. same input without full_shortfall: absorb formula regression pin.
+#     ceil(300 + 200 - 1000) < 0 -> shortfall 0, no writes.
+out=$(run_jq '{"ceiling":24000,"min_donor_headroom":250,
+  "orgs":[{"org_id":"r","name":"R","local_cap":1000,"local_consumed":300},
+          {"org_id":"d","name":"D","local_cap":2000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":200}]}')
+assert_eq "AB shortfall 0" 0 "$(field "$out" '.recipients[0].shortfall')"
+assert_eq "AB no writes" '[]' "$(field "$out" '.writes')"
+
 report

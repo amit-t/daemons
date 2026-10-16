@@ -23,6 +23,11 @@
 #                                     # funding comes only from ceiling slack. Implies slack use
 #                                     # regardless of use_slack. Echoed in output as `slack_only`.
 #   "target_headroom": <n=250>,       # used only by need:"auto"; clamped to [0, 500]
+#   "full_shortfall": <bool=false>,   # numeric needs fund in full: the shortfall portion
+#                                     # equals the need itself (like auto needs), skipping
+#                                     # the absorb formula. For explicit operator requests
+#                                     # (dag org-cap) where the asked-for cap must be
+#                                     # reached or the gap reported.
 #   "orgs": [{"org_id","name","local_cap","cloud_cap"?,"local_consumed","run_rate"?}],
 #                                     # local_cap/cloud_cap: explicit cap or null (unset = unlimited)
 #   "needs": [{"org_id","need"}]      # net member-cap growth this run, per billing org.
@@ -49,6 +54,7 @@
 # Σ org caps = Σ explicit local_cap + Σ explicit cloud_cap over all orgs.
 # Recipient shortfall, numeric portion = min(num, max(0, ceil(projected + num - local_cap))):
 # only the part of the new member room the org gate cannot already absorb.
+# With full_shortfall:true the numeric portion is the need itself instead.
 # An auto-resolved need is already the gap to the target cap, so its shortfall
 # portion equals the need itself. An org with both kinds adds the two portions.
 
@@ -62,6 +68,7 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
 | (.slack_only // false) as $slack_only
 | ((.use_slack // false) or $slack_only) as $use_slack
 | ((.target_headroom // 250) | floor | clamp(0; 500)) as $th
+| (.full_shortfall // false) as $full
 | (.orgs // []) as $orgs_in
 | (reduce ((.needs // [])[] | select((.need | type) == "number" and .need > 0)) as $n
     ({}; .[$n.org_id] = ((.[$n.org_id] // 0) + ($n.need | ceil_(.))))) as $needs_num
@@ -95,7 +102,9 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
              | .need = ($num + $auto)
              # Numeric growth only needs what the gate cannot absorb; an auto
              # need is already the gap to the target cap, so it funds in full.
-             | .shortfall = (([$num, ([ceil_(.projected + $num - .cap_before), 0] | max)] | min) + $auto))
+             # full_shortfall makes numeric needs fund in full too.
+             | .shortfall = ((if $full then $num
+                              else ([$num, ([ceil_(.projected + $num - .cap_before), 0] | max)] | min) end) + $auto))
        | sort_by(-.shortfall, .name)) as $recips
     | ([$recips[].org_id]) as $recip_ids
     | (if $slack_only then [] else $orgs end
