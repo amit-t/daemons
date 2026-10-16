@@ -77,7 +77,8 @@ Usage:
   dag org-cap <org_id|org_name> [+acus|acus]
                               Change one org's Local Agent cap; always asks the funding mode
                               ZERO-SUM / POOL HEADROOM / MIXED before any preview; +N raises
-                              by N, bare N sets absolute, omitted recommends via auto-need
+                              by N, bare N sets absolute, omitted recommends via auto-need;
+                              quote multi-word org names
   dag org cap <org> [amount]  Alias for: dag org-cap
   dag boost <email> [acus]    Reallocate ACUs to a heavy user from the lowest consumers
                               (recommends amount + donors; omit [acus] to use the recommendation)
@@ -340,7 +341,12 @@ dag_org_cap_context() {  # $1=invoked label, rest=org words [+/-amount]; sets _d
     words=("${(@)words[1,-2]}")
   fi
   if [[ -z "$amount_word" ]] && (( ${#words} > 1 )); then
-    print -ru2 -- "${label}: amount must be +acus or acus (got: ${words[-1]}); quote multi-word org names"
+    local bad_tail="${words[-1]}"
+    if [[ "$bad_tail" == [+-]#[0-9]##(.[0-9]##|) ]]; then
+      print -ru2 -- "${label}: amount must be +<acus> or <acus> (positive integer) (got: ${bad_tail})"
+    else
+      print -ru2 -- "${label}: amount must be +acus or acus (got: ${bad_tail}); quote multi-word org names"
+    fi
     return 2
   fi
   local selector="${(j: :)words}"
@@ -357,7 +363,12 @@ dag_org_cap_context() {  # $1=invoked label, rest=org words [+/-amount]; sets _d
   if [[ -z "$amount_word" ]]; then
     amount_line="requested amount: none — recommend via auto-need (projected + target headroom)"
   else
-    local value=${amount_word#+}
+    local digits=${amount_word#+}
+    if (( ${#digits} > 9 )); then
+      print -ru2 -- "${label}: amount too large (got: ${amount_word}); use at most 9 digits"
+      return 2
+    fi
+    local value=$(( 10#$digits ))
     if (( value == 0 )); then
       print -ru2 -- "${label}: amount 0 is not allowed — a zero cap is a block; use dag set limit global 0 <org> for that"
       return 2

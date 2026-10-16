@@ -746,7 +746,38 @@ out=$(run_dag org-cap 2>&1); rc=$?; assert_exit "org-cap no org" 2 $rc
 out=$(run_dag org-cap a@b.co 2>&1); rc=$?; assert_exit "org-cap email rejected" 2 $rc
 out=$(run_dag org-cap "Platform Eng" xx 2>&1); rc=$?; assert_exit "org-cap bad amount" 2 $rc
 out=$(run_dag org-cap "Platform Eng" +0 2>&1); rc=$?; assert_exit "org-cap zero delta" 2 $rc
+assert_contains "org-cap zero pointer" "$out" "dag set limit global 0"
+out=$(run_dag org-cap "Platform Eng" 0 2>&1); rc=$?; assert_exit "org-cap bare zero" 2 $rc
+assert_contains "org-cap bare zero pointer" "$out" "dag set limit global 0"
+out=$(run_dag org-cap "Platform Eng" 000 2>&1); rc=$?; assert_exit "org-cap zero-padded zero" 2 $rc
+out=$(run_dag org-cap "Platform Eng" -5 2>&1); rc=$?; assert_exit "org-cap negative amount" 2 $rc
+assert_contains "org-cap negative plain msg" "$out" "positive integer"
+if [[ "$out" == *"quote multi-word"* ]]; then _fail "org-cap numeric bad amount has no quoting hint"; else _ok; fi
+out=$(run_dag org-cap "Platform Eng" 1.5 2>&1); rc=$?; assert_exit "org-cap decimal amount" 2 $rc
+assert_contains "org-cap decimal plain msg" "$out" "positive integer"
+out=$(run_dag org-cap -Platform 2>&1); rc=$?; assert_exit "org-cap leading-dash selector" 2 $rc
+assert_contains "org-cap leading-dash msg" "$out" "must be an org_id or org name"
+out=$(run_dag org-cap Platform Eng 300); rc=$?
+assert_exit "org-cap unquoted multi-word with amount" 0 $rc
+assert_contains "org-cap unquoted selector" "$out" "org selector: Platform Eng"
+assert_contains "org-cap unquoted amount" "$out" "set cap to 300 ACUs (absolute)"
+out=$(run_dag org-cap Platform Eng 2>&1); rc=$?; assert_exit "org-cap unquoted multi-word no amount" 2 $rc
+assert_contains "org-cap quoting hint" "$out" "quote multi-word org names"
+out=$(run_dag org-cap "Platform Eng" +007); rc=$?
+assert_exit "org-cap +007 rc" 0 $rc
+assert_contains "org-cap +007 normalized" "$out" "requested amount: +7 ACUs above the current cap"
+out=$(run_dag org-cap "Platform Eng" 00500); rc=$?
+assert_contains "org-cap absolute normalized" "$out" "set cap to 500 ACUs (absolute)"
+out=$(run_dag org-cap "Platform Eng" 12345678901234567890 2>&1); rc=$?; assert_exit "org-cap 20-digit amount" 2 $rc
+assert_contains "org-cap 20-digit msg" "$out" "at most 9 digits"
+out=$(run_dag org-cap "Platform Eng" 999999999); rc=$?; assert_exit "org-cap 9-digit amount ok" 0 $rc
+out=$(run_dag org-cap "Platform Eng" +300); rc=$?
+assert_contains "org-cap command label" "$out" "requested shell command: dag org-cap Platform Eng +300"
+assert_contains "org-cap planning-only line" "$out" "amount is planning input only"
+out=$(run_dag org cap "Platform Eng" +300); rc=$?
+assert_contains "org cap command label" "$out" "requested shell command: dag org cap Platform Eng +300"
 out=$(run_dag org frobnicate 2>&1); rc=$?; assert_exit "org unknown subword" 2 $rc
+assert_contains "org unknown subword msg" "$out" "unknown org command"
 out=$(run_dag 2>&1)
 assert_contains "usage org-cap" "$out" "dag org-cap <org_id|org_name> [+acus|acus]"
 out=$(run_dag all commands 2>&1)
