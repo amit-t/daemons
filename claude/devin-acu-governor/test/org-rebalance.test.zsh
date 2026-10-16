@@ -112,4 +112,59 @@ assert_eq "I empty writes" '[]' "$(field "$out" '.writes')"
 out=$(run_jq '{"ceiling":0,"orgs":[],"needs":[]}')
 assert_contains "I error" "$out" '"error":"ceiling must be positive"'
 
+# H. slack_only: donors untouched, funding purely from ceiling slack.
+#    Σ before 1450, ceiling 2000 -> slack 550; need 500 fully slack-funded.
+out=$(run_jq '{"ceiling":2000,"slack_only":true,"min_donor_headroom":250,
+  "orgs":[{"org_id":"r","name":"R","local_cap":1000,"local_consumed":1000},
+          {"org_id":"d","name":"D","local_cap":450,"local_consumed":100}],
+  "needs":[{"org_id":"r","need":500}]}')
+assert_eq "H slack_only echoed" true "$(field "$out" '.slack_only')"
+assert_eq "H no donors" '[]' "$(field "$out" '.donors')"
+assert_eq "H from_slack" 500 "$(field "$out" '.recipients[0].from_slack')"
+assert_eq "H from_donors" 0 "$(field "$out" '.recipients[0].from_donors')"
+assert_eq "H cap_after" 1500 "$(field "$out" '.recipients[0].cap_after')"
+assert_eq "H sum_after" 1950 "$(field "$out" '.sum_after')"
+assert_eq "H zero_sum" false "$(field "$out" '.zero_sum')"
+assert_eq "H one write" 1 "$(field "$out" '.writes | length')"
+
+# I. slack_only never passes the ceiling: slack 50 < need 500 -> 450 unfunded.
+out=$(run_jq '{"ceiling":1500,"slack_only":true,
+  "orgs":[{"org_id":"r","name":"R","local_cap":1000,"local_consumed":1000},
+          {"org_id":"d","name":"D","local_cap":450,"local_consumed":100}],
+  "needs":[{"org_id":"r","need":500}]}')
+assert_eq "I from_slack" 50 "$(field "$out" '.recipients[0].from_slack')"
+assert_eq "I unfunded" 450 "$(field "$out" '.recipients[0].unfunded')"
+assert_eq "I sum_after = ceiling" 1500 "$(field "$out" '.sum_after')"
+
+# J. auto-need: projected 1000 (consumed 1000, no run_rate), cap 900,
+#    target_headroom default 250 -> need = 1000 + 250 - 900 = 350.
+out=$(run_jq '{"ceiling":24000,"min_donor_headroom":250,
+  "orgs":[{"org_id":"r","name":"R","local_cap":900,"local_consumed":1000},
+          {"org_id":"d","name":"D","local_cap":5000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":"auto"}]}')
+assert_eq "J auto need" 350 "$(field "$out" '.recipients[0].need')"
+assert_eq "J cap_after" 1250 "$(field "$out" '.recipients[0].cap_after')"
+
+# K. auto-need already satisfied: cap 2000 >= projected 1000 + 250 -> need 0, no recipient row, no writes.
+out=$(run_jq '{"ceiling":24000,
+  "orgs":[{"org_id":"r","name":"R","local_cap":2000,"local_consumed":1000},
+          {"org_id":"d","name":"D","local_cap":5000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":"auto"}]}')
+assert_eq "K no recipients" '[]' "$(field "$out" '.recipients')"
+assert_eq "K no writes" '[]' "$(field "$out" '.writes')"
+
+# L. target_headroom clamps at 500 (hard rule 11): 900 -> 500; need = 1000+500-900 = 600.
+out=$(run_jq '{"ceiling":24000,"target_headroom":900,
+  "orgs":[{"org_id":"r","name":"R","local_cap":900,"local_consumed":1000},
+          {"org_id":"d","name":"D","local_cap":5000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":"auto"}]}')
+assert_eq "L clamped need" 600 "$(field "$out" '.recipients[0].need')"
+
+# M. auto-need with run_rate: projected = 100 + 10*5 = 150, cap 100 -> need 150+250-100 = 300.
+out=$(run_jq '{"ceiling":24000,"days_left":5,
+  "orgs":[{"org_id":"r","name":"R","local_cap":100,"local_consumed":100,"run_rate":10},
+          {"org_id":"d","name":"D","local_cap":5000,"local_consumed":500}],
+  "needs":[{"org_id":"r","need":"auto"}]}')
+assert_eq "M forecast need" 300 "$(field "$out" '.recipients[0].need')"
+
 report

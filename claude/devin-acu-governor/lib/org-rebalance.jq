@@ -19,13 +19,23 @@
 #   "days_left": <number=0>,
 #   "use_slack": <bool=false>,        # fund the remainder from (ceiling - sum_before)
 #                                     # only on explicit in-session request (not zero-sum)
+#   "slack_only": <bool=false>,       # donors give nothing (every donor surplus treated as 0);
+#                                     # funding comes only from ceiling slack. Implies slack use
+#                                     # regardless of use_slack. Echoed in output as `slack_only`.
+#   "target_headroom": <n=250>,       # used only by need:"auto"; clamped to [0, 500]
 #   "orgs": [{"org_id","name","local_cap","cloud_cap"?,"local_consumed","run_rate"?}],
 #                                     # local_cap/cloud_cap: explicit cap or null (unset = unlimited)
 #   "needs": [{"org_id","need"}]      # net member-cap growth this run, per billing org
+#                                     # need may be "auto": resolved per org as
+#                                     #   max(0, ceil(projected) + target_headroom - cap_before)
+#                                     # (projected = consumed + run_rate * days_left). A resolved
+#                                     # need of 0 yields no recipient row. An auto entry for an
+#                                     # org_id not in `orgs`, or for an uncapped org (local_cap
+#                                     # null), is dropped. Numeric needs are unchanged.
 # }
 #
 # Output:
-# { ceiling, sum_before, sum_after, zero_sum, over_ceiling, overage,
+# { ceiling, slack_only, sum_before, sum_after, zero_sum, over_ceiling, overage,
 #   uncapped_orgs, ceiling_slack, slack_used,
 #   recipients: [{org_id, name, cap_before, consumed, projected, need,
 #                 shortfall, from_donors, from_slack, unfunded, cap_after}],
@@ -45,10 +55,13 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
 (.ceiling // 0) as $ceiling
 | ((.min_donor_headroom // 250) | floor | clamp(0; 500)) as $mdh
 | (.days_left // 0) as $days_left
-| (.use_slack // false) as $use_slack
+| (.slack_only // false) as $slack_only
+| ((.use_slack // false) or $slack_only) as $use_slack
+| ((.target_headroom // 250) | floor | clamp(0; 500)) as $th
 | (.orgs // []) as $orgs_in
-| (reduce ((.needs // [])[] | select((.need // 0) > 0)) as $n
-    ({}; .[$n.org_id] = ((.[$n.org_id] // 0) + ($n.need | ceil_(.))))) as $needs
+| (reduce ((.needs // [])[] | select((.need | type) == "number" and .need > 0)) as $n
+    ({}; .[$n.org_id] = ((.[$n.org_id] // 0) + ($n.need | ceil_(.))))) as $needs_num
+| ([(.needs // [])[] | select(.need == "auto") | .org_id] | unique) as $auto_ids
 | if $ceiling <= 0 then {error: "ceiling must be positive", ceiling: $ceiling}
   else
     ($orgs_in | map({
@@ -60,6 +73,11 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
         run_rate: ((.run_rate // 0) | r2)
       }
       | .projected = ((.consumed + .run_rate * $days_left) | r2))) as $orgs
+    | (reduce ($orgs[] | select(.org_id as $id | $auto_ids | index($id))
+                       | select(.cap_before != null)) as $o
+         ($needs_num;
+          ([ceil_($o.projected) + $th - $o.cap_before, 0] | max) as $auto
+          | if $auto > 0 then .[$o.org_id] = ((.[$o.org_id] // 0) + $auto) else . end)) as $needs
     | ([$orgs[] | (.cap_before // 0) + (.cloud_cap // 0)] | add // 0) as $sum_before
     | ([$orgs[] | select(.cap_before == null) | .name]) as $uncapped
     | (if ($uncapped | length) > 0 then 0
@@ -70,7 +88,7 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
              | .shortfall = ([.need, ([ceil_(.projected + .need - .cap_before), 0] | max)] | min))
        | sort_by(-.shortfall, .name)) as $recips
     | ([$recips[].org_id]) as $recip_ids
-    | ($orgs
+    | (if $slack_only then [] else $orgs end
        | map(select(.cap_before != null and (.org_id as $id | $recip_ids | index($id) | not))
              | .floor = (ceil_([.consumed, .projected] | max) + $mdh)
              | .surplus = ([.cap_before - .floor, 0] | max))
@@ -100,6 +118,7 @@ def clamp(lo; hi): if . < lo then lo elif . > hi then hi else . end;
     | ($sum_before + ([$recipients[].from_slack] | add // 0)) as $sum_after
     | {
         ceiling: $ceiling,
+        slack_only: $slack_only,
         sum_before: $sum_before,
         sum_after: $sum_after,
         zero_sum: ($sum_after == $sum_before),
