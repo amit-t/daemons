@@ -265,6 +265,10 @@ Explicit single-org counterpart of `dag slg`. `dag org cap <org> [amount]` is an
 dag org-cap "Platform Eng"        # recommend an amount, then ask the funding mode
 dag org-cap "Platform Eng" +300   # raise by 300
 dag org-cap "Platform Eng" 1200   # set absolute 1200
+dag.org-cap "Platform Eng" +300   # dotted global wrapper (aliases.zsh); selectors hoist
+dag.org-cap.codex Acme 1200       # pinned engine variants: dag.org-cap.<v>, same <v> set
+                                  # as dag.align.<v> (claude codex devin cx co cf deo def
+                                  # des del det dey defu, all cx* pins)
 ```
 
 ## `dag slg` — Plan and set org caps for every org
@@ -455,8 +459,9 @@ dag.routing alice@corp.com
 dag.align --defu alice@corp.com    # every launcher selector works, any position:
 dag.align alice@corp.com --cxlh    # --agent x, --claude/--codex/--devin, --co/--cf,
 dag.boost --del alice@corp.com 50  # --deo/--def/--des/--del/--det/--dey, --defu, --cx* pins
-dag.align.defu alice@corp.com      # pinned variants: dag.align.<v> / dag.routing.<v>
-dag.routing.cxsh alice@corp.com    # <v> = claude codex devin cx(=--codex) co cf deo def des
+dag.align.defu alice@corp.com      # pinned variants: dag.align.<v> / dag.routing.<v> /
+dag.routing.cxsh alice@corp.com    # dag.org-cap.<v>
+dag.org-cap.cx "Platform Eng" +300 # <v> = claude codex devin cx(=--codex) co cf deo def des
                                    #       del det dey defu cxl* cxs* cxa* (l/m/h/u) cxm
 ```
 
