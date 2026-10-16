@@ -62,6 +62,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag slgc <acus> [org_id\|org_name]` | ✅ org limit | Shorthand for `dag set limit global cloud` |
 | `dag slg` | ✅ org limits + ledger | Playbook twin of `dag set limit global`: recommend an org-level Local Agent cap for **every** org (prorated to live Local Agent consumption via `lib/org-caps.jq`, Σ caps ≤ `DAG_MONTHLY_ACU_POOL`, ≥ consumed + 250 floor each), preview, write all after `CONFIRM DAG WRITE`, live-GET verify each |
 | `dag set-limit-global-plan` | ✅ org limits + ledger | Alias for `dag slg` |
+| `dag org-cap <org_id\|org_name> [+acus\|acus]` (also `dag org cap <org> [amount]`) | ✅ org limit + ledger | Change one org's Local Agent cap via `lib/org-rebalance.jq`. Always asks the funding mode before any preview: `ZERO-SUM` (donor orgs fund it, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows ≤ `DAG_MONTHLY_ACU_POOL`), or `MIXED` (donors first, then slack). `+N` = delta, bare `N` = absolute, omitted = projected + 250 recommendation. Raises are refused while the layer is over the ceiling; shrinks are always allowed. Quote multi-word org names. `CONFIRM DAG WRITE` + live-GET verify |
 | `dag boost <email> [acus]` | ✅ user limits + ledger + donor record | Boost one engineer by Borrowing from low consumers; PATCH recipient + donors; live-GET verify every changed user |
 | `dag boost all` / `dag boost` / `dag boost-all` | ✅ user limits + ledger + donor record | One combined batch for **every** user needing attention — OVER + CRITICAL + WARNING — most urgent first, one shared donor pool, one preview, one `CONFIRM DAG WRITE`; DONOR-suppressed users (cap reduced by DAG, low real usage) are excluded and listed separately |
 | `dag boost.org <org_id\|org_name>` / `dag boost org <org>` / `dag boost-org <org>` | ✅ user limits + ledger + donor record | `boost all` scoped to one organization: recipients **and** donors are only users billed to that org; donor Borrows net to zero inside the org, so the org gate moves only for forecast-funded ACUs |
@@ -184,6 +185,7 @@ Policy (hard rules 15–16 in `playbooks/_common.md`):
 | Boost family | `lib/org-rebalance.jq` moves org cap from donor orgs with projected-safe surplus. Donors keep `ceil(max(consumed, projected)) + 250`. The move is in the same preview and uses the same `CONFIRM DAG WRITE`. There is no follow-up "raise the org" proposal. |
 | Unfunded room | Stays blocked at the org gate. That is the brake. |
 | `dag set limit global` | Refuses growth past the ceiling (exit 3). Shrinking writes are always allowed. |
+| Explicit single-org change | `dag org-cap` — zero-sum by default; pool-headroom growth only via its explicit keyword choice, ceiling-clamped. |
 | Repair | `dag slg` replans every org (Vontier included) so Σ fits under the pool. |
 
 ## `dag set-limits-global` — Seed org-level caps for uncapped orgs, by Borrowing
@@ -245,6 +247,21 @@ dag slgc 0                                 # shorthand: set limit global cloud
 ```
 
 `0` is allowed and blocks that gate's usage for the org until increased or cleared. Policy default: org cloud gates stay at `0` (see `playbooks/_common.md`, hard rule 16); this command's `cloud` form is the only deliberate raiser.
+
+## `dag org-cap <org_id|org_name> [+acus|acus]` — Change one org's cap
+
+Explicit single-org counterpart of `dag slg`. `dag org cap <org> [amount]` is an alias. Quote multi-word org names (`dag org-cap "Platform Eng" +300`).
+
+- **Amount:** `+N` raises the cap by N, bare `N` sets it absolute, omitted lets `lib/org-rebalance.jq` recommend `projected + 250`. The amount is planning input only. `0` is rejected (a zero cap is a block; use `dag set limit global 0 <org>`).
+- **Funding choice, always asked:** `ZERO-SUM` (donor orgs fund the raise, Σ org caps unchanged), `POOL HEADROOM` (ceiling slack only, Σ grows by the slack used, never past `DAG_MONTHLY_ACU_POOL`), `MIXED` (donors first, then slack), or `CANCEL`. The choice is not write authorization.
+- **Guards:** raises are refused while Σ org caps is over the ceiling (repair with `dag slg`); shrinks are always allowed; cloud gates are never touched.
+- **Write:** preview, then `CONFIRM DAG WRITE`; donor cuts PATCH before the raise, each org is live-GET verified, and org ledger entries are refreshed.
+
+```
+dag org-cap "Platform Eng"        # recommend an amount, then ask the funding mode
+dag org-cap "Platform Eng" +300   # raise by 300
+dag org-cap "Platform Eng" 1200   # set absolute 1200
+```
 
 ## `dag slg` — Plan and set org caps for every org
 
@@ -878,7 +895,7 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,new-cycle,boost,boost-all,boost-org,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,org-cap,new-cycle,boost,boost-all,boost-org,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes
