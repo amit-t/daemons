@@ -1105,4 +1105,78 @@ assert_eq "fmt_dur hours" "1h 5m" "$(_dag_dash_fmt_dur 3900)"
 assert_eq "fmt_dur clamps negative" "0s" "$(_dag_dash_fmt_dur -3)"
 rm -rf "$sdir"
 
+# 21. Previous-cycle usage (Last Month page): fetched for the cycle that ended
+#     when the current one began, cached next to data.json, reused on refresh.
+pcdir="${tmpdir}/dash-prev-cycle"
+out=$(run_dash --json-only --out "$pcdir" 2>&1); rc=$?
+assert_exit "prev cycle rc" 0 $rc
+pcf() { jq -r "$1" "${pcdir}/data.json" }
+assert_eq "prev cycle available" "true" "$(pcf '.prev_cycle.available')"
+assert_eq "prev cycle after" "1776326400" "$(pcf '.prev_cycle.cycle.after')"
+assert_eq "prev cycle before" "1778918400" "$(pcf '.prev_cycle.cycle.before')"
+assert_eq "prev cycle start date" "2026-04-16" "$(pcf '.prev_cycle.cycle.start_date')"
+assert_eq "prev cycle end date" "2026-05-16" "$(pcf '.prev_cycle.cycle.end_date')"
+assert_eq "prev cycle days" "30" "$(pcf '.prev_cycle.cycle.cycle_days')"
+assert_eq "prev cycle enterprise consumed" "1500" "$(pcf '.prev_cycle.enterprise.consumed')"
+assert_eq "prev cycle user rows" "4" "$(pcf '.prev_cycle.users | length')"
+assert_eq "prev cycle alice consumed" "120.25" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .consumed')"
+assert_eq "prev cycle alice devin" "30" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .products.devin')"
+assert_eq "prev cycle alice cascade" "75.25" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .products.cascade')"
+if [[ -f "${pcdir}/prev-cycle-cache.json" ]]; then _ok; else _fail "prev-cycle cache not written"; fi
+if grep -F "time_after=1776326400&time_before=1778918400" "${tmpdir}/curl-urls.log" >/dev/null; then
+  _ok
+else
+  _fail "prev-cycle window not requested with the finished cycle's bounds"
+fi
+
+# 21a. Second run over the same out dir reuses the cache: zero new prev-window
+#      API calls (a finished cycle is immutable).
+prev_calls_before=$(grep -cF "time_after=1776326400" "${tmpdir}/curl-urls.log")
+out=$(run_dash --json-only --out "$pcdir" 2>&1); rc=$?
+assert_exit "prev cycle cached rc" 0 $rc
+prev_calls_after=$(grep -cF "time_after=1776326400" "${tmpdir}/curl-urls.log")
+assert_eq "prev cycle cache reused (no new API calls)" "$prev_calls_before" "$prev_calls_after"
+assert_eq "prev cycle cached still available" "true" "$(pcf '.prev_cycle.available')"
+
+# 21b. No previous cycle in the API response -> explicit first-cycle state, rc 0.
+out=$(FAKE_CYCLES_BODY='{"items":[{"after":1778918400,"before":1781596800}]}' \
+  run_dash --json-only --out "${tmpdir}/dash-prev-none" 2>&1); rc=$?
+assert_exit "prev none rc" 0 $rc
+assert_eq "prev none available" "false" "$(jq -r '.prev_cycle.available' "${tmpdir}/dash-prev-none/data.json")"
+assert_eq "prev none reason" "no_previous_cycle" "$(jq -r '.prev_cycle.reason' "${tmpdir}/dash-prev-none/data.json")"
+
+# 21c. Persistent failure on the prev-window fetch degrades (available:false),
+#      warns, and never nukes the dashboard.
+cnt="${tmpdir}/t-prev.cnt"; rm -f "$cnt"
+out=$(FAKE_TRANSIENT_URL="time_after=1776326400" FAKE_TRANSIENT_TIMES=-1 \
+  FAKE_TRANSIENT_CODE=504 TRANSIENT_COUNTER="$cnt" DAG_FETCH_RETRIES=1 DAG_FETCH_RETRY_SLEEP=0 \
+  run_dash --json-only --out "${tmpdir}/dash-prev-fail" 2>&1); rc=$?
+assert_exit "prev fail rc" 0 $rc
+assert_contains "prev fail warned" "$out" "Last Month view degrades"
+assert_eq "prev fail available" "false" "$(jq -r '.prev_cycle.available' "${tmpdir}/dash-prev-fail/data.json")"
+assert_eq "prev fail reason" "fetch_failed" "$(jq -r '.prev_cycle.reason' "${tmpdir}/dash-prev-fail/data.json")"
+
+# 21d. Frontend wiring: left sidebar navigation, agent output tab pages, and
+#      the Last Month comparison page.
+sidebar_src=$(<"${script_dir}/../web/dashboard-app/src/components/Sidebar.tsx")
+assert_contains "sidebar orgs link" "$sidebar_src" "#/orgs"
+assert_contains "sidebar users link" "$sidebar_src" "#/users"
+assert_contains "sidebar output link" "$sidebar_src" "#/output"
+assert_contains "sidebar last month link" "$sidebar_src" "#/last-month"
+routes_src=$(<"${script_dir}/../web/dashboard-app/src/routes.ts")
+assert_contains "routes legacy output anchor" "$routes_src" "#agent-output"
+assert_contains "routes output tabs" "$routes_src" "'overview' | 'daily' | 'splits' | 'members'"
+output_src=$(<"${script_dir}/../web/dashboard-app/src/components/OutputAnalytics.tsx")
+assert_contains "output daily tab route" "$output_src" "#/output/daily"
+assert_contains "output members tab route" "$output_src" "#/output/members"
+lastmonth_src=$(<"${script_dir}/../web/dashboard-app/src/components/LastMonth.tsx")
+assert_contains "last month reads prev cycle" "$lastmonth_src" "prev.cycle"
+assert_contains "last month search" "$lastmonth_src" "Search users"
+app_src=$(<"${script_dir}/../web/dashboard-app/src/App.tsx")
+assert_contains "app renders sidebar" "$app_src" "Sidebar"
+assert_contains "app renders last month page" "$app_src" "LastMonth"
+assert_contains "app passes prev cycle" "$app_src" "data.prev_cycle"
+types_src=$(<"${script_dir}/../web/dashboard-app/src/types.ts")
+assert_contains "types prev cycle" "$types_src" "prev_cycle?: PrevCycleInfo"
+
 report

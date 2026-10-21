@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { OutputAnalyticsInfo, OutputDimension, OutputMember, OutputTotals, UserRow } from '../types'
+import type { OutputTab } from '../routes'
 import { fmt } from '../format'
 import { SortableTable, type Column } from './SortableTable'
 
@@ -91,7 +92,17 @@ function statusText(analytics: OutputAnalyticsInfo): string {
   return ''
 }
 
-export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyticsInfo; users: UserRow[] }) {
+const OUTPUT_TABS: Array<{ tab: OutputTab; hash: string; label: string }> = [
+  { tab: 'overview', hash: '#/output', label: 'Overview' },
+  { tab: 'daily', hash: '#/output/daily', label: 'Daily' },
+  { tab: 'splits', hash: '#/output/splits', label: 'Splits' },
+  { tab: 'members', hash: '#/output/members', label: 'Members' },
+]
+
+// Agent output page (#/output/<tab>): team-scoped accepted-LoC analytics split
+// into addressable sub-tab pages — Overview (totals, source split, attribution),
+// Daily, Splits (model/IDE/OS), Members (per-member attributed estimates).
+export function OutputAnalytics({ analytics, users, tab = 'overview' }: { analytics: OutputAnalyticsInfo; users: UserRow[]; tab?: OutputTab }) {
   const members = useMemo<OutputMember[]>(
     () =>
       analytics.members.length > 0
@@ -107,6 +118,7 @@ export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyti
   )
   const columns = useMemo(() => memberColumns(), [])
   const status = statusText(analytics)
+  const hasData = analytics.available && analytics.state !== 'no_data'
 
   return (
     <section id="agent-output" className="panel output-analytics" aria-label="Agent output analytics">
@@ -114,13 +126,20 @@ export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyti
         <h2 className="panel-title">Agent output</h2>
         {analytics.stale && <span className="badge badge-warning">stale</span>}
       </div>
+      <nav className="tab-bar" aria-label="Agent output pages">
+        {OUTPUT_TABS.map((t) => (
+          <a key={t.tab} href={t.hash} className={`tab${tab === t.tab ? ' on' : ''}`} aria-current={tab === t.tab ? 'page' : undefined}>
+            {t.label}
+          </a>
+        ))}
+      </nav>
       {status ? <div className="output-state">{status}</div> : null}
       <div className="output-freshness">
         <span>source data through {analytics.data_freshness ?? 'unknown'}</span>
         <span>snapshot fetched {analytics.fetched_at ?? 'unknown'}</span>
         {analytics.range_clamped && <span>API range limited to 90 days ({analytics.start_date} → {analytics.end_date})</span>}
       </div>
-      {analytics.available && analytics.state !== 'no_data' && (
+      {hasData && tab === 'overview' && (
         <>
           <div className="output-cards">
             <div className="card accent">
@@ -136,26 +155,8 @@ export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyti
               <div className="card-value">{fmt(total(analytics.totals, 'net'))}</div>
             </div>
           </div>
-          <div className="output-grid">
-            <section>
-              <h3 className="subpanel-title">Source split</h3>
-              <DimensionList rows={analytics.source_split} labelKey="source" />
-            </section>
-            <section>
-              <h3 className="subpanel-title">Daily output</h3>
-              <DailyList rows={analytics.daily} />
-            </section>
-            <section>
-              <h3 className="subpanel-title">Model split</h3>
-              <DimensionList rows={analytics.model_split} labelKey="model_uid" />
-            </section>
-            <section>
-              <h3 className="subpanel-title">IDE split</h3>
-              <DimensionList rows={analytics.ide_split} labelKey="ide" />
-              <h3 className="subpanel-title output-subheading">OS split</h3>
-              <DimensionList rows={analytics.os_split} labelKey="os" />
-            </section>
-          </div>
+          <h3 className="subpanel-title">Source split</h3>
+          <DimensionList rows={analytics.source_split} labelKey="source" />
           <div className="output-attribution">
             <strong>Member-attributed estimates</strong>
             <span>
@@ -165,6 +166,36 @@ export function OutputAnalytics({ analytics, users }: { analytics: OutputAnalyti
               {fmt(analytics.attribution?.unassigned.loc_inserted ?? 0)} inserted / {fmt(analytics.attribution?.unassigned.loc_deleted ?? 0)} deleted from {analytics.attribution?.unmatched_contributors ?? 0} unmatched contributors; excluded from member and organization estimates.
             </span>
           </div>
+        </>
+      )}
+      {hasData && tab === 'daily' && (
+        <>
+          <h3 className="subpanel-title">Daily output</h3>
+          <DailyList rows={analytics.daily} />
+        </>
+      )}
+      {hasData && tab === 'splits' && (
+        <div className="output-grid">
+          <section>
+            <h3 className="subpanel-title">Source split</h3>
+            <DimensionList rows={analytics.source_split} labelKey="source" />
+          </section>
+          <section>
+            <h3 className="subpanel-title">Model split</h3>
+            <DimensionList rows={analytics.model_split} labelKey="model_uid" />
+          </section>
+          <section>
+            <h3 className="subpanel-title">IDE split</h3>
+            <DimensionList rows={analytics.ide_split} labelKey="ide" />
+          </section>
+          <section>
+            <h3 className="subpanel-title">OS split</h3>
+            <DimensionList rows={analytics.os_split} labelKey="os" />
+          </section>
+        </div>
+      )}
+      {hasData && tab === 'members' && (
+        <>
           <h3 className="subpanel-title">Per-member accepted output</h3>
           <SortableTable columns={columns} rows={members} rowKey={(member) => member.user_id} initialSort={{ key: 'net', dir: 'desc' }} />
         </>

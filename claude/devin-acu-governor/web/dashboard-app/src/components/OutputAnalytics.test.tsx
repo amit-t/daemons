@@ -59,7 +59,7 @@ describe('OutputAnalytics', () => {
     vi.restoreAllMocks()
   })
 
-  test('shows totals, source split, freshness, and sortable member output', () => {
+  test('overview tab shows totals, source split, freshness, and attribution', () => {
     render(<OutputAnalytics analytics={analytics} users={[user]} />)
 
     expect(screen.getByRole('heading', { name: 'Agent output' })).toBeInTheDocument()
@@ -68,6 +68,39 @@ describe('OutputAnalytics', () => {
     expect(screen.getAllByText('Desktop').length).toBeGreaterThan(0)
     expect(screen.getByText(/source data through 2026-06-16T03:00:00Z/)).toBeInTheDocument()
     expect(screen.getByText('Member-attributed estimates')).toBeInTheDocument()
+  })
+
+  test('tab bar links every sub-page to its hash route', () => {
+    render(<OutputAnalytics analytics={analytics} users={[user]} />)
+
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#/output')
+    expect(screen.getByRole('link', { name: 'Daily' })).toHaveAttribute('href', '#/output/daily')
+    expect(screen.getByRole('link', { name: 'Splits' })).toHaveAttribute('href', '#/output/splits')
+    expect(screen.getByRole('link', { name: 'Members' })).toHaveAttribute('href', '#/output/members')
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  test('daily tab renders the daily list only', () => {
+    render(<OutputAnalytics analytics={analytics} users={[user]} tab="daily" />)
+
+    expect(screen.getByText('Daily output')).toBeInTheDocument()
+    expect(screen.getByText('2026-06-15')).toBeInTheDocument()
+    expect(screen.queryByText('Accepted inserted')).not.toBeInTheDocument()
+  })
+
+  test('splits tab renders model, IDE, and OS splits', () => {
+    render(<OutputAnalytics analytics={analytics} users={[user]} tab="splits" />)
+
+    expect(screen.getByText('Model split')).toBeInTheDocument()
+    expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument()
+    expect(screen.getByText('IDE split')).toBeInTheDocument()
+    expect(screen.getByText('OS split')).toBeInTheDocument()
+  })
+
+  test('members tab renders the sortable member output table', () => {
+    render(<OutputAnalytics analytics={analytics} users={[user]} tab="members" />)
+
+    expect(screen.getByText('Per-member accepted output')).toBeInTheDocument()
     expect(screen.getByText('Alice Example')).toBeInTheDocument()
   })
 
@@ -109,24 +142,22 @@ describe('OutputAnalytics', () => {
   })
 
   test('keeps roster rows without attributed output as unknown when only unassigned data exists', () => {
-    render(
-      <OutputAnalytics
-        analytics={{
-          ...analytics,
-          members: [],
-          attribution: {
-            ...analytics.attribution!,
-            matched: { loc_inserted: 0, loc_deleted: 0, net: 0 },
-            unassigned: { loc_inserted: 10, loc_deleted: 2, net: 8 },
-            unmatched_contributors: 1,
-          },
-        }}
-        users={[{ ...user, output: null }]}
-      />,
-    )
+    const unassigned = {
+      ...analytics,
+      members: [],
+      attribution: {
+        ...analytics.attribution!,
+        matched: { loc_inserted: 0, loc_deleted: 0, net: 0 },
+        unassigned: { loc_inserted: 10, loc_deleted: 2, net: 8 },
+        unmatched_contributors: 1,
+      },
+    }
+    render(<OutputAnalytics analytics={unassigned} users={[{ ...user, output: null }]} />)
+    expect(screen.getByText(/10 inserted \/ 2 deleted/)).toBeInTheDocument()
+    cleanup()
 
+    render(<OutputAnalytics analytics={unassigned} users={[{ ...user, output: null }]} tab="members" />)
     expect(screen.getByText('Alice Example')).toBeInTheDocument()
     expect(screen.queryByText('N/A')).not.toBeInTheDocument()
-    expect(screen.getByText(/10 inserted \/ 2 deleted/)).toBeInTheDocument()
   })
 })

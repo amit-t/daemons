@@ -304,6 +304,31 @@ export interface ModelAnalyticsInfo {
   end_date: string | null
 }
 
+// Previous billing cycle ("Last Month" page). Backend fetches it once per
+// cycle roll and caches it next to data.json — a finished cycle is immutable.
+export interface PrevCycleUser {
+  user_id: string
+  consumed: number
+  products: UserProductTotals
+}
+
+export interface PrevCycleCycle {
+  after: number
+  before: number
+  start_date: string
+  end_date: string
+  cycle_days: number
+}
+
+export interface PrevCycleInfo {
+  available: boolean
+  reason: string | null
+  fetched_at?: string | null
+  cycle: PrevCycleCycle | null
+  enterprise: { consumed: number; daily: DailyPoint[] } | null
+  users: PrevCycleUser[]
+}
+
 export interface RefreshInfo {
   enabled: boolean
   interval_minutes: number | null
@@ -340,6 +365,8 @@ export interface DashboardData {
   cloud_sessions?: CloudSessionsInfo
   model_analytics: ModelAnalyticsInfo
   output_analytics?: OutputAnalyticsInfo
+  // Optional: absent in snapshots generated before the Last Month page.
+  prev_cycle?: PrevCycleInfo
   orgs: OrgRow[]
   attribution: AttributionInfo
   users: UserRow[]

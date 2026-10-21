@@ -24,6 +24,7 @@ print -r -- '{}' > $tmp/defaultl.json
 print -r -- '{"available":false,"donors":{}}' > $tmp/donorrec.json
 print -r -- '{"available":false,"items":[]}' > $tmp/sessions.json
 print -r -- '{"available":false,"rows":[]}' > $tmp/modela.json
+print -r -- '{"available":false,"reason":"no_previous_cycle","users":[]}' > $tmp/prevc.json
 
 out=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --argjson after 1755302400 --argjson before 1757894400 \
@@ -33,7 +34,8 @@ out=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile users $tmp/users.json --slurpfile userd $tmp/userd.json \
   --slurpfile userl $tmp/userl.json --slurpfile defaultl $tmp/defaultl.json \
   --slurpfile donorrec $tmp/donorrec.json --slurpfile sessions $tmp/sessions.json \
-  --slurpfile modela $tmp/modela.json --slurpfile outputa $tmp/modela.json -f $lib/dashboard.jq)
+  --slurpfile modela $tmp/modela.json --slurpfile outputa $tmp/modela.json \
+  --slurpfile prevc $tmp/prevc.json -f $lib/dashboard.jq)
 
 assert_contains "org sum caps" "$out" '"sum_explicit_user_caps":140'
 # Org hierarchy retired: no parent org id in the snapshot (every org counts
@@ -55,6 +57,7 @@ print -r -- '{}' > $tmp2/defaultl.json
 print -r -- '{"available":false,"donors":{}}' > $tmp2/donorrec.json
 print -r -- '{"available":false,"items":[]}' > $tmp2/sessions.json
 print -r -- '{"available":false,"rows":[]}' > $tmp2/modela.json
+print -r -- '{"available":false,"reason":"no_previous_cycle","users":[]}' > $tmp2/prevc.json
 
 out3=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --argjson after 1755302400 --argjson before 1757894400 \
@@ -64,7 +67,8 @@ out3=$(jq -c -n --argjson now 1756800000 --argjson pool 24000 \
   --slurpfile users $tmp2/users.json --slurpfile userd $tmp2/userd.json \
   --slurpfile userl $tmp2/userl.json --slurpfile defaultl $tmp2/defaultl.json \
   --slurpfile donorrec $tmp2/donorrec.json --slurpfile sessions $tmp2/sessions.json \
-  --slurpfile modela $tmp2/modela.json --slurpfile outputa $tmp2/modela.json -f $lib/dashboard.jq)
+  --slurpfile modela $tmp2/modela.json --slurpfile outputa $tmp2/modela.json \
+  --slurpfile prevc $tmp2/prevc.json -f $lib/dashboard.jq)
 
 zrow=$(jq -c '.orgs[] | select(.org_id=="org-z")' <<<"$out3")
 brow=$(jq -c '.orgs[] | select(.org_id=="org-b")' <<<"$out3")
@@ -74,5 +78,8 @@ assert_contains "zero cloud gate with burn stays over" "$(jq -r '.cloud.status' 
 assert_contains "over cloud gate drives row badge" "$(jq -r '.status' <<<"$brow")" "over"
 assert_contains "org overcommit" "$out" '"user_cap_overcommit":40'
 assert_contains "org gate warn" "$out" 'blocked by the org gate'
+
+# Degraded prev-cycle input surfaces as an explicit unavailable state.
+assert_contains "prev cycle unavailable surfaced" "$out" '"prev_cycle":{"available":false,"reason":"no_previous_cycle"'
 
 report

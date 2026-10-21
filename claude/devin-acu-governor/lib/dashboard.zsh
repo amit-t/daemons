@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # dag dashboard — local, read-only ACU burn-rate + forecast dashboard.
 # Fetches Devin v3 consumption (cycles, enterprise daily, orgs, per-org daily,
-# users, per-user daily, per-user Local Agent limits, Devin Cloud sessions) and
+# users, per-user daily, per-user Local Agent limits, Devin Cloud sessions,
+# cached previous-cycle usage for the Last Month page) and
 # optionally Windsurf per-user model/IDE analytics, computes burn-rate +
 # forecast via lib/dashboard.jq into data.json, then serves the React app in
 # web/dashboard-app (built once, on first run) over a localhost HTTP server.
@@ -501,6 +502,87 @@ _dag_dash_fetch_output_analytics() {
     }' "$pages" > "$out"
 }
 
+# Previous-cycle usage for the Last Month page: enterprise total + per-user
+# totals for the billing cycle that ended when the current one began. A
+# finished cycle is immutable, so the result is cached next to data.json
+# (prev-cycle-cache.json) and reused on every refresh — the n_users+1 extra
+# API calls happen once per cycle roll, or when the roster gained users the
+# cache has never seen. Optional enrichment: any failure degrades to
+# {available:false} and never nukes the dashboard.
+# $1=out_dir $2=work $3=hdr $4=base $5=cycles-response $6=current-cycle-after
+# $7=now; writes ${work}/prev-cycle.json.
+_dag_dash_fetch_prev_cycle() {
+  local out_dir=$1 work=$2 hdr=$3 base=$4 cycles=$5 after=$6 now=$7
+  local out="${work}/prev-cycle.json" cache="${out_dir}/prev-cycle-cache.json"
+  local prev_after prev_before
+  prev_after=$(jq -r --argjson a "$after" \
+    '[.items[]? | select(.before == $a)] | sort_by(.after) | last | .after // empty' <<<"$cycles")
+  prev_before=$(jq -r --argjson a "$after" \
+    '[.items[]? | select(.before == $a)] | sort_by(.after) | last | .before // empty' <<<"$cycles")
+  if [[ -z "$prev_after" || -z "$prev_before" ]]; then
+    jq -n '{available: false, reason: "no_previous_cycle", after: null, before: null, enterprise: null, users: []}' > "$out"
+    return 0
+  fi
+
+  # Cache hit: same window AND every current roster user already covered.
+  if [[ -f "$cache" ]] && jq -e --argjson pa "$prev_after" --argjson pb "$prev_before" \
+      --slurpfile m "${work}/members-users.json" '
+        .available == true and .after == $pa and .before == $pb
+        and (([$m[0].items[]?.user_id] - [.users[].user_id]) | length == 0)
+      ' "$cache" >/dev/null 2>&1; then
+    cp "$cache" "$out"
+    return 0
+  fi
+
+  local ed
+  if ! ed=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily?time_after=${prev_after}&time_before=${prev_before}" "$hdr"); then
+    print -ru2 -- "dag dashboard: previous-cycle enterprise daily unavailable; Last Month view degrades"
+    jq -n --argjson pa "$prev_after" --argjson pb "$prev_before" \
+      '{available: false, reason: "fetch_failed", after: $pa, before: $pb, enterprise: null, users: []}' > "$out"
+    return 0
+  fi
+
+  : > "${out}.users" || return 1
+  local uid uid_q ud
+  while IFS= read -r uid; do
+    [[ -z "$uid" ]] && continue
+    uid_q=$(_dag_dash_urlencode "$uid") || return 1
+    if ! ud=$(_dag_dash_fetch "${base}/v3/enterprise/consumption/daily/users/${uid_q}?time_after=${prev_after}&time_before=${prev_before}" "$hdr"); then
+      print -ru2 -- "dag dashboard: previous-cycle usage for ${uid} unavailable; Last Month view degrades"
+      jq -n --argjson pa "$prev_after" --argjson pb "$prev_before" \
+        '{available: false, reason: "fetch_failed", after: $pa, before: $pb, enterprise: null, users: []}' > "$out"
+      return 0
+    fi
+    jq -n --arg user_id "$uid" --argjson daily "$ud" \
+      '{user_id: $user_id, daily: $daily}' >> "${out}.users" || return 1
+  done < <(jq -r '.items[]?.user_id' "${work}/members-users.json")
+
+  local fetched_at
+  fetched_at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
+  jq -s --argjson pa "$prev_after" --argjson pb "$prev_before" \
+    --argjson ent "$ed" --arg fetched_at "$fetched_at" --argjson now "$now" '{
+      available: true, reason: null,
+      after: $pa, before: $pb,
+      fetched_at: $fetched_at, fetched_at_epoch: $now,
+      enterprise: {
+        total_acus: ($ent.total_acus // 0),
+        consumption_by_date: ($ent.consumption_by_date // [])
+      },
+      users: map({
+        user_id: .user_id,
+        total_acus: (.daily.total_acus // 0),
+        products: ([(.daily.consumption_by_date // [])[].acus_by_product] | {
+          devin: ([.[].devin // 0] | add // 0),
+          cascade: ([.[].cascade // 0] | add // 0),
+          terminal: ([.[].terminal // 0] | add // 0),
+          review: ([.[].review // 0] | add // 0)
+        })
+      })
+    }' "${out}.users" > "$out" || return 1
+  cp "$out" "${cache}.tmp" 2>/dev/null && mv "${cache}.tmp" "$cache" 2>/dev/null
+  return 0
+}
+
 # Fetch everything and write ${out_dir}/data.json atomically.
 # $1=out_dir $2=refresh_minutes-or-empty (recorded as metadata for the UI).
 _dag_dashboard_write_data() {
@@ -596,6 +678,11 @@ _dag_dashboard_write_data() {
     _dag_dash_fetch_output_analytics "$out_dir" "$work" "$now" "$after" "$before" "$key" || return 1
     _dag_dash_emit "$out_dir" 33 "output analytics" "" "$prev_gen"
 
+    # Previous-cycle usage (Last Month page): cached — API calls only on a
+    # cycle roll or roster growth; failures degrade, never abort.
+    _dag_dash_fetch_prev_cycle "$out_dir" "$work" "$hdr" "$base" "$cycles" "$after" "$now" || return 1
+    _dag_dash_emit "$out_dir" 36 "previous cycle" "" "$prev_gen"
+
     : > "${work}/org-dailies.json"
     : > "${work}/org-limits.json"
     local oid od ol n_orgs i_org=0
@@ -667,6 +754,7 @@ _dag_dashboard_write_data() {
       --slurpfile sessions "${work}/sessions.json" \
       --slurpfile modela "${work}/model-analytics.json" \
       --slurpfile outputa "${work}/output-analytics.json" \
+      --slurpfile prevc "${work}/prev-cycle.json" \
       -f "${daemon_dir}/lib/dashboard.jq" > "${out_dir}/data.json.tmp"; then
       rm -f "${out_dir}/data.json.tmp"
       print -ru2 -- "dag dashboard: failed to compute dashboard data (lib/dashboard.jq)"

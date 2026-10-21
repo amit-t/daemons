@@ -75,33 +75,82 @@ const data = {
     contributors: [],
     attribution: null,
   },
+  prev_cycle: {
+    available: true,
+    reason: null,
+    cycle: { after: 1776326400, before: 1778918400, start_date: '2026-04-16', end_date: '2026-05-16', cycle_days: 30 },
+    enterprise: { consumed: 1200, daily: [] },
+    users: [],
+  },
   orgs: [],
   attribution: { org_attributed: 0, unattributed: 0, pct_unattributed: null },
   users: [],
   warnings: [],
 } as unknown as DashboardData
 
-describe('agent output navigation', () => {
+function mockHook() {
+  dashboardHook.useDashboardData.mockReturnValue({
+    data,
+    error: null,
+    stale: false,
+    status: { state: 'static', pct: 100, phase: '', detail: '', interval_seconds: 0, next_refresh_epoch: null, updated_at_epoch: 0, generated_at: data.generated_at },
+    manualRefreshing: false,
+    refreshNow: vi.fn(),
+  })
+}
+
+describe('left-side navigation', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
     window.location.hash = ''
   })
 
-  test('console exposes a visible anchor to the output section', () => {
-    dashboardHook.useDashboardData.mockReturnValue({
-      data,
-      error: null,
-      stale: false,
-      status: { state: 'static', pct: 100, phase: '', detail: '', interval_seconds: 0, next_refresh_epoch: null, updated_at_epoch: 0, generated_at: data.generated_at },
-      manualRefreshing: false,
-      refreshNow: vi.fn(),
-    })
-
+  test('sidebar exposes every section with its hash route', () => {
+    mockHook()
     render(<App />)
 
-    const link = screen.getByRole('link', { name: /agent output/i })
-    expect(link).toHaveAttribute('href', '#agent-output')
+    const nav = screen.getByRole('navigation', { name: 'Dashboard sections' })
+    expect(nav).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /overview/i })).toHaveAttribute('href', '#/')
+    expect(screen.getByRole('link', { name: /organizations/i })).toHaveAttribute('href', '#/orgs')
+    expect(screen.getAllByRole('link', { name: /users/i })[0]).toHaveAttribute('href', '#/users')
+    expect(screen.getByRole('link', { name: /agent output/i })).toHaveAttribute('href', '#/output')
+    expect(screen.getByRole('link', { name: /last month/i })).toHaveAttribute('href', '#/last-month')
+  })
+
+  test('default route shows the overview KPI cards', () => {
+    mockHook()
+    render(<App />)
+
+    expect(screen.getByText('Consumed ACUs')).toBeInTheDocument()
+    expect(screen.getByText('Capped user total')).toBeInTheDocument()
+  })
+
+  test('#/output renders the agent output page', () => {
+    mockHook()
+    window.location.hash = '#/output'
+    render(<App />)
+
     expect(document.getElementById('agent-output')).toBeInTheDocument()
+    expect(screen.queryByText('Consumed ACUs')).not.toBeInTheDocument()
+  })
+
+  test('legacy #agent-output anchor still lands on the output page', () => {
+    mockHook()
+    window.location.hash = '#agent-output'
+    render(<App />)
+
+    expect(document.getElementById('agent-output')).toBeInTheDocument()
+  })
+
+  test('#/last-month renders the comparison page', () => {
+    mockHook()
+    window.location.hash = '#/last-month'
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: /last month/i })).toBeInTheDocument()
+    expect(screen.getByText('Last month total')).toBeInTheDocument()
+    expect(screen.getByText('1,200')).toBeInTheDocument()
   })
 })

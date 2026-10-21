@@ -16,6 +16,9 @@
 #                           missing records arrive as {available:false,donors:{}}> \
 #     --slurpfile sessions <{available, items} Devin Cloud sessions for the cycle> \
 #     --slurpfile modela   <{available, stale, reason, fetched_at, rows} Windsurf model/IDE analytics> \
+#     --slurpfile prevc    <{available, reason, after, before, enterprise, users}
+#                           previous-cycle usage for the Last Month page;
+#                           degraded fetches arrive as {available:false, …}> \
 #     -f lib/dashboard.jq
 
 def ceil_(x): (x | floor) as $f | if x == $f then $f else $f + 1 end;
@@ -509,6 +512,38 @@ def donor_suppressed($raw; $consumed; $drec):
         unmatched_contributors: ($unassigned_contributors | length)
       } else null end)
     },
+    # Previous billing cycle (Last Month page): per-user totals + enterprise
+    # daily for the finished cycle, joined client-side against the current
+    # roster by user_id.
+    prev_cycle: (
+      ($prevc[0] // {available: false, reason: "missing", users: []}) as $p
+      | if ($p.available // false) != true
+        then {available: false, reason: ($p.reason // "missing"), cycle: null, enterprise: null, users: []}
+        else
+          ceil_(($p.before - $p.after) / 86400) as $pdays
+          | {
+              available: true,
+              reason: null,
+              fetched_at: ($p.fetched_at // null),
+              cycle: {
+                after: $p.after,
+                before: $p.before,
+                start_date: ($p.after | gmtime | strftime("%Y-%m-%d")),
+                end_date: ($p.before | gmtime | strftime("%Y-%m-%d")),
+                cycle_days: $pdays
+              },
+              enterprise: {
+                consumed: (($p.enterprise.total_acus // 0) | r2),
+                daily: (($p.enterprise.consumption_by_date // []) | day_points)
+              },
+              users: (($p.users // []) | map({
+                user_id: .user_id,
+                consumed: ((.total_acus // 0) | r2),
+                products: ((.products // {devin: 0, cascade: 0, terminal: 0, review: 0}) | map_values(r2))
+              }))
+            }
+        end
+    ),
     orgs: $org_rows,
     attribution: {
       org_attributed: ($org_attributed | r2),
