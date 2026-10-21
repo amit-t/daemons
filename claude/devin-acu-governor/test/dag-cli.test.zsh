@@ -209,6 +209,44 @@ assert_contains "usage lists slg" "$out" "dag slg"
 out=$(run_dag all-commands)
 assert_contains "all-commands set-limits-global available" "$out" "# Playbook: set-limits-global"
 
+# 5b4. flat-cap: flat per-user Local Agent cap with consumption floor.
+out=$(run_dag flat-cap 250); rc=$?
+assert_exit "flat-cap rc" 0 $rc
+assert_contains "flat-cap playbook" "$out" "# Playbook: flat-cap"
+assert_contains "flat-cap command" "$out" "command: flat-cap"
+assert_contains "flat-cap requested" "$out" "requested shell command: dag flat-cap 250"
+assert_contains "flat-cap amount" "$out" "flat cap: 250 ACUs"
+assert_contains "flat-cap consumption floor" "$out" "never set a cap below consumption"
+assert_contains "flat-cap scope approval" "$out" "do not assume every enterprise member is an engineer"
+assert_contains "flat-cap jq path" "$out" "flat-cap.jq"
+assert_contains "flat-cap jq context key" "$out" "flat_cap_jq"
+assert_contains "flat-cap user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
+assert_contains "flat-cap live verify" "$out" "GET each changed user limit after PATCH"
+assert_contains "flat-cap write gate token" "$out" "CONFIRM DAG WRITE"
+assert_contains "flat-cap planning only" "$out" "amount is planning input only"
+assert_contains "flat-cap ui instruction" "$out" "Enterprise Settings > Consumption"
+assert_contains "flat-cap local agent consumption" "$out" "acus_by_product.cascade + acus_by_product.terminal"
+assert_contains "flat-cap donor record update" "$out" "update the donor record per hard rule 13"
+# Amount normalization + validation.
+out=$(run_dag flat-cap 0250); rc=$?
+assert_exit "flat-cap zero-padded rc" 0 $rc
+assert_contains "flat-cap normalized" "$out" "flat cap: 250 ACUs"
+out=$(run_dag flat-cap 2>&1); rc=$?; assert_exit "flat-cap missing amount" 2 $rc
+assert_contains "flat-cap missing amount msg" "$out" "requires a positive integer ACU amount"
+out=$(run_dag flat-cap xx 2>&1); rc=$?; assert_exit "flat-cap bad amount" 2 $rc
+out=$(run_dag flat-cap -5 2>&1); rc=$?; assert_exit "flat-cap negative" 2 $rc
+out=$(run_dag flat-cap 1.5 2>&1); rc=$?; assert_exit "flat-cap decimal" 2 $rc
+out=$(run_dag flat-cap 0 2>&1); rc=$?; assert_exit "flat-cap zero" 2 $rc
+assert_contains "flat-cap zero msg" "$out" "a zero cap is a block"
+out=$(run_dag flat-cap 1234567890 2>&1); rc=$?; assert_exit "flat-cap 10-digit" 2 $rc
+assert_contains "flat-cap 10-digit msg" "$out" "at most 9 digits"
+out=$(run_dag flat-cap 250 extra 2>&1); rc=$?; assert_exit "flat-cap extra args" 2 $rc
+# usage + all-commands surface it.
+out=$(run_dag 2>&1)
+assert_contains "usage lists flat-cap" "$out" "dag flat-cap <acus>"
+out=$(run_dag all-commands)
+assert_contains "all-commands flat-cap available" "$out" "# Playbook: flat-cap"
+
 # 5c. new-cycle prompt assembly: own playbook + guard/ledger context; no args allowed.
 out=$(run_dag new-cycle); rc=$?
 assert_exit "newcycle rc" 0 $rc
@@ -722,7 +760,7 @@ assert_eq "dag.align.co beats stale alias" "--co|align|alice@corp.com" "$out"
 
 # Org ceiling: every boost-family prompt carries the zero-sum org rebalance
 # planner + ceiling, and no playbook offers growing an org cap to Σ member caps.
-for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new" "slg"; do
+for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new" "flat-cap 250" "slg"; do
   out=$(run_dag ${=c} 2>/dev/null)
   assert_contains "org_rebalance_jq in ${c}" "$out" "org_rebalance_jq: "
   assert_contains "org ceiling in ${c}" "$out" "org ceiling: Σ every org's local + cloud caps <= 24000"
@@ -731,7 +769,7 @@ for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critica
     _fail "${c}: prompt still offers org growth / parent reconcile"
   else _ok; fi
 done
-for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new"; do
+for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critical" "set-limits" "set-limits-new" "flat-cap 250"; do
   out=$(run_dag ${=c} 2>/dev/null)
   assert_contains "org rebalance step in ${c}" "$out" "**Org-gate zero-sum rebalance (hard rule 15).**"
   assert_contains "same-preview org table in ${c}" "$out" "zero-sum org-move table"

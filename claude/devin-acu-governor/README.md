@@ -54,6 +54,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits` | ✅ user limits + ledger | Discover active current-member engineers/user IDs, compute remaining-pool prorated caps, PATCH each active user's Local Agent override, live-GET verify each write |
 | `dag set-limits <email>` | ✅ target user + donor limits + ledger | Cap only one active current-member user who has no explicit cap yet, funded zero-sum by Borrowing headroom from active capped users; no other uncapped users are capped |
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
+| `dag flat-cap <acus>` | ✅ user limits + ledger | Flat per-user Local Agent cap for every active current-member engineer via `lib/flat-cap.jq`: proposed cap = `<acus>`, raised to at least `ceil(current-cycle Local Agent consumption)` for anyone already above it — never below consumption; roster scope approval, zero-sum org-gate rebalance in the same preview, `CONFIRM DAG WRITE`, live-GET verify; reductions recorded in the donor record |
 | `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
 | `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every org (Vontier included); refused before any PATCH (exit 3) when Σ of every org's local + cloud caps would rise above `DAG_MONTHLY_ACU_POOL`; live-GET verify each |
@@ -166,6 +167,21 @@ No recipient is ever capped below its own current consumption. Donor floor: `max
 ```zsh
 dag set-limits-new
 ```
+
+## `dag flat-cap <acus>` — Flat per-user cap with a consumption floor
+
+Goal: normalize the whole active layer to one number. Every active current-member engineer gets the same explicit Local Agent cap (`<acus>`); a user whose current-cycle **Local Agent** consumption (`cascade + terminal`, not total ACUs) already exceeds it gets at least `ceil(consumed)` — a cap is never set below consumption. Writes new caps, raises caps below the flat, reduces caps above it; equal caps plan no write.
+
+- **Planner:** `lib/flat-cap.jq` computes every cap, sum, and per-org delta (hard rule 1). Hard rule 11 holds: a flat amount above `max_headroom` (default 250, backstop 500) clamps low consumers to `consumed + max_headroom`, with a warning.
+- **Scope:** active current-member engineers only. The roster preview shows included and excluded/inactive users for scope approval — not every enterprise member is an engineer. Scope approval never authorizes writes.
+- **Not zero-sum at the user layer:** Σ explicit user caps moves to wherever the flat lands it (`sum_before → sum_after`, `delta` shown). The org gates still move zero-sum via `lib/org-rebalance.jq` in the same preview and the same `CONFIRM DAG WRITE`; Σ org caps stays ≤ `DAG_MONTHLY_ACU_POOL`, unfunded room is reported blocked (hard rules 15–16).
+- **Reductions are recorded:** every lowered cap lands in the donor record (`recipient: "flat-cap batch"`, sticky `baseline_cap`), so the DONOR suppression keeps reduced users out of later boost discovery (hard rule 13).
+
+```zsh
+dag flat-cap 250     # preview flat 250-ACU caps; write only after CONFIRM DAG WRITE
+```
+
+Takes exactly one positive integer — `dag flat-cap 0` exits 2 (a zero cap is a block, not a flat plan).
 
 ## Org ceiling — zero-sum org gates
 
@@ -417,7 +433,7 @@ Argument rules:
 Every Borrow lowers somebody's cap. Without memory, a consistent donor (cap reduced far below what they started with, real usage tiny) eventually trips the dashboard's `warning`/`critical`/`over` labels and gets pointlessly re-boosted every cycle review. The donor record fixes that.
 
 - **File:** `$DAG_STATE_DIR/donors.json` (`donor_record` in every playbook's Run context). JSON, no database.
-- **Written by:** every flow that reduces a user cap — `boost`, `boost all`, `boost.org`, `boost over/warning/critical`, targeted `set-limits <email>`, `set-limits-new` — right after the confirmed PATCHes and ledger update. Each entry keeps a **sticky `baseline_cap`** (the cap before the first reduction this cycle), latest `cap_after`, `given_total`, and per-reduction history.
+- **Written by:** every flow that reduces a user cap — `boost`, `boost all`, `boost.org`, `boost over/warning/critical`, targeted `set-limits <email>`, `set-limits-new`, `flat-cap` — right after the confirmed PATCHes and ledger update. Each entry keeps a **sticky `baseline_cap`** (the cap before the first reduction this cycle), latest `cap_after`, `given_total`, and per-reduction history.
 - **DONOR state:** a recorded donor whose raw state is `warning`/`critical`/`over` but whose `consumed < 0.85 × baseline_cap` is labeled `donor` (dashboard) / `DONOR` (`dag usage`) instead — the pressure badge is an artifact of the DAG reduction, not real usage. They drop out of the dashboard's warning/critical/over chips and warnings, and out of every `boost over/warning/critical/all` recipient discovery. They remain first-class Borrow donor candidates. Once real usage reaches 85% of the baseline, suppression ends and normal states apply.
 - **Billing-cycle wipe:** the record is valid only while its `cycle_start` matches the live cycle's start epoch (cycles run mid-month to mid-month, e.g. the 16th through the 15th). A stale record is ignored everywhere and overwritten on the next donor write; `dag new-cycle` rewrites it empty. No cron needed — the wipe is the cycle comparison.
 - A recipient whose boost restores their cap to `baseline_cap` or above gets their donor entry removed — they are made whole.
@@ -643,7 +659,7 @@ Model enable/disable is still Admin Portal UI work unless Devin ships an API. Th
 
 Generic Devin API/DAG command lab. It launches a Claude-agent session with:
 - the common `dag` API contract and write-safety rules;
-- the complete current DAG playbooks (`set-limits`, `set-limits-new`, `boost`, `over`, `warning`, `user`, `status`, `models`);
+- the complete current DAG playbooks (`set-limits`, `set-limits-new`, `flat-cap`, `boost`, `over`, `warning`, `user`, `status`, `models`);
 - startup instructions to fetch `https://docs.devin.ai/llms.txt` before making API claims;
 - pinned documentation seeds for ACU limits, API overview/auth/pagination, and UsageConfig;
 - a "spin it up" contract for promoting useful ad hoc work into either an exact existing `dag ...` command or a ready-to-implement new command spec.
@@ -904,11 +920,12 @@ For the strongest Claude/Codex startup parity, the engines could run in customiz
 | `lib/sessions.zsh` | `dag sessions` flag parsing, time-window resolution, artifact-path planning, Run-context lines (no API calls, no writes) |
 | `web/dashboard-app/` | React dashboard app (Vite + recharts); `dist/` and `node_modules/` are gitignored, built on first `dag dashboard` run |
 | `lib/compute-caps.jq` | Per-user cap proration, preserving `user_id` |
+| `lib/flat-cap.jq` | Flat per-user cap plan for `dag flat-cap` (consumption floor, hard-rule-11 clamp, per-org deltas) |
 | `lib/boost-plan.jq` | Boost + Borrow zero-sum plan |
 | `lib/boost-check.jq` | Pool-headroom check for overage path |
 | `lib/borrow-caps.jq` | Zero-sum cap-seeding for `set-limits-new` and targeted `set-limits <email>` (uncapped users funded by Borrowing from lowest consumers) |
 | `playbooks/_common.md` | API contract, safety rules, UI instructions |
-| `playbooks/{set-limits,set-limits-new,org-cap,new-cycle,boost,boost-all,boost-org,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
+| `playbooks/{set-limits,set-limits-new,flat-cap,org-cap,new-cycle,boost,boost-all,boost-org,over,warning,critical,user,status,sessions,models,all-commands}.md` | Agent command flows |
 | `test/` | zsh tests + fixtures |
 
 ## Exit codes

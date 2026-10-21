@@ -47,6 +47,11 @@ Usage:
                               headroom from active capped users
   dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
                               by Borrowing headroom from the lowest-consuming capped users
+  dag flat-cap <acus>         Flat per-user Local Agent cap for every active current-member
+                              engineer: proposed cap = <acus>, raised to at least
+                              ceil(current-cycle Local Agent consumption) for anyone already
+                              above it — never below consumption; roster scope approval,
+                              zero-sum org-gate rebalance, then CONFIRM DAG WRITE
   dag new-cycle               Start-of-cycle full reset: verify the new billing cycle is
                               live, rebuild every active user's cap from the full monthly
                               pool, clear stale excluded-user overrides, rewrite the ledger
@@ -171,6 +176,7 @@ Examples:
   dag --defu status
   dag --cxsh boost.org "Platform Eng"
   dag set-limits alice@corp.com
+  dag flat-cap 250
   dag boost all
   dag boost.org "Platform Eng"
   dag boost over
@@ -397,7 +403,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
     print -r -- "## Existing DAG command playbooks"
     print -r -- ""
     local playbook
-    for playbook in set-limits set-limits-new set-limits-global slg org-cap new-cycle boost boost-all boost-org over warning critical user status sessions models; do
+    for playbook in set-limits set-limits-new flat-cap set-limits-global slg org-cap new-cycle boost boost-all boost-org over warning critical user status sessions models; do
       print -r -- ""
       print -r -- "### ${playbook}"
       cat "${daemon_dir}/playbooks/${playbook}.md"
@@ -413,6 +419,7 @@ dag_build_prompt() {  # $1 = command, rest = extra run-context lines
   print -r -- "- today: $(date +%F)"
   print -r -- "- DAG_MONTHLY_ACU_POOL: ${DAG_MONTHLY_ACU_POOL}"
   print -r -- "- compute_caps_jq: ${daemon_dir}/lib/compute-caps.jq"
+  print -r -- "- flat_cap_jq: ${daemon_dir}/lib/flat-cap.jq"
   print -r -- "- boost_check_jq: ${daemon_dir}/lib/boost-check.jq"
   print -r -- "- boost_plan_jq: ${daemon_dir}/lib/boost-plan.jq"
   print -r -- "- borrow_caps_jq: ${daemon_dir}/lib/borrow-caps.jq"
@@ -688,6 +695,37 @@ main() {
       fi
       ;;
     set-limits-new) ;;
+    flat-cap)
+      local flat_word="${1:-}"
+      if [[ -z "$flat_word" ]]; then
+        print -ru2 -- "dag flat-cap: requires a positive integer ACU amount (usage: dag flat-cap <acus>)"
+        exit 2
+      fi
+      if (( $# > 1 )); then
+        print -ru2 -- "dag flat-cap: takes exactly one ACU amount (got: $*)"
+        exit 2
+      fi
+      if [[ "$flat_word" != <0-> ]]; then
+        print -ru2 -- "dag flat-cap: amount must be a positive integer (got: ${flat_word})"
+        exit 2
+      fi
+      if (( ${#flat_word} > 9 )); then
+        print -ru2 -- "dag flat-cap: amount too large (got: ${flat_word}); use at most 9 digits"
+        exit 2
+      fi
+      local flat_value=$(( 10#$flat_word ))
+      if (( flat_value == 0 )); then
+        print -ru2 -- "dag flat-cap: amount 0 is not allowed — a zero cap is a block, not a flat plan"
+        exit 2
+      fi
+      context_lines=(
+        "requested shell command: dag flat-cap ${flat_value}"
+        "flat cap: ${flat_value} ACUs proposed per active current-member engineer; a user whose current-cycle Local Agent consumption already exceeds ${flat_value} gets at least ceil(consumed) — never set a cap below consumption"
+        "scope: active current-member engineers only — show the included roster AND the excluded/inactive list for scope approval before planning; do not assume every enterprise member is an engineer"
+        "planner: every proposed cap, sum, and org delta comes from flat_cap_jq — no hand math (hard rule 1)"
+        "amount is planning input only; every write still requires CONFIRM DAG WRITE"
+      )
+      ;;
     new-cycle)
       if (( $# > 0 )); then
         print -ru2 -- "dag new-cycle: takes no arguments (got: $*); it rebuilds the whole cap table for the new cycle"
