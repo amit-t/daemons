@@ -47,11 +47,9 @@ Usage:
                               headroom from active capped users
   dag set-limits-new          Cap only users who have NO explicit cap yet, funded zero-sum
                               by Borrowing headroom from the lowest-consuming capped users
-  dag flat-cap <acus>         Flat per-user Local Agent cap for every active current-member
-                              engineer: proposed cap = <acus>, raised to at least
-                              ceil(current-cycle Local Agent consumption) for anyone already
-                              above it — never below consumption; roster scope approval,
-                              zero-sum org-gate rebalance, then CONFIRM DAG WRITE
+  dag flat-cap <acus> [org_id|org_name|user_id|email|display_name]
+                              Flat per-user Local Agent cap; optional selector scopes users
+                              to one billing org or one active current-member user
   dag new-cycle               Start-of-cycle full reset: verify the new billing cycle is
                               live, rebuild every active user's cap from the full monthly
                               pool, clear stale excluded-user overrides, rewrite the ledger
@@ -698,11 +696,11 @@ main() {
     flat-cap)
       local flat_word="${1:-}"
       if [[ -z "$flat_word" ]]; then
-        print -ru2 -- "dag flat-cap: requires a positive integer ACU amount (usage: dag flat-cap <acus>)"
+        print -ru2 -- "dag flat-cap: requires a positive integer ACU amount (usage: dag flat-cap <acus> [org_id|org_name|user_id|email|display_name])"
         exit 2
       fi
-      if (( $# > 1 )); then
-        print -ru2 -- "dag flat-cap: takes exactly one ACU amount (got: $*)"
+      if (( $# > 2 )); then
+        print -ru2 -- "dag flat-cap: takes an ACU amount and at most one quoted org/user selector (got: $*)"
         exit 2
       fi
       if [[ "$flat_word" != <0-> ]]; then
@@ -718,10 +716,17 @@ main() {
         print -ru2 -- "dag flat-cap: amount 0 is not allowed — a zero cap is a block, not a flat plan"
         exit 2
       fi
+      local flat_selector="${2:-}"
+      if (( $# == 2 )) && [[ -z "$flat_selector" || "$flat_selector" == --* ]]; then
+        print -ru2 -- "dag flat-cap: selector must be a non-empty org/user value, not an option (got: ${flat_selector:-<empty>})"
+        exit 2
+      fi
       context_lines=(
-        "requested shell command: dag flat-cap ${flat_value}"
-        "flat cap: ${flat_value} ACUs proposed per active current-member engineer; a user whose current-cycle Local Agent consumption already exceeds ${flat_value} gets at least ceil(consumed) — never set a cap below consumption"
-        "scope: active current-member engineers only — show the included roster AND the excluded/inactive list for scope approval before planning; do not assume every enterprise member is an engineer"
+        "requested shell command: dag flat-cap ${flat_value}${flat_selector:+ ${flat_selector}}"
+        "flat cap: ${flat_value} ACUs proposed per active current-member engineer in the selected scope; a user whose current-cycle Local Agent consumption already exceeds ${flat_value} gets at least ceil(consumed) — never set a cap below consumption"
+        "scope selector: ${flat_selector:-none — every active current-member engineer}"
+        "scope resolution: when a selector is present, compare it case-insensitively and exactly against org_id/org name and user_id/email/display name in the live rosters; ambiguous or missing matches stop without writes; org scope uses resolved billing_org_id, user scope uses the exact user_id"
+        "scope: show the included roster AND the excluded/inactive users in the selected scope for approval before planning; no out-of-scope user may appear in the write set"
         "planner: every proposed cap, sum, and org delta comes from flat_cap_jq — no hand math (hard rule 1)"
         "amount is planning input only; every write still requires CONFIRM DAG WRITE"
       )

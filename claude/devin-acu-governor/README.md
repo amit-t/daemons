@@ -54,7 +54,7 @@ UI note printed after limit work: open `app.devin.ai > Enterprise Settings > Con
 | `dag set-limits` | ✅ user limits + ledger | Discover active current-member engineers/user IDs, compute remaining-pool prorated caps, PATCH each active user's Local Agent override, live-GET verify each write |
 | `dag set-limits <email>` | ✅ target user + donor limits + ledger | Cap only one active current-member user who has no explicit cap yet, funded zero-sum by Borrowing headroom from active capped users; no other uncapped users are capped |
 | `dag set-limits-new` | ✅ user limits + ledger | Cap only active current-member users who have **no explicit cap** yet, funded zero-sum by Borrowing headroom from the lowest-consuming active capped users; PATCH recipients + donors; live-GET verify; Σ active caps unchanged |
-| `dag flat-cap <acus>` | ✅ user limits + ledger | Flat per-user Local Agent cap for every active current-member engineer via `lib/flat-cap.jq`: proposed cap = `<acus>`, raised to at least `ceil(current-cycle Local Agent consumption)` for anyone already above it — never below consumption; roster scope approval, zero-sum org-gate rebalance in the same preview, `CONFIRM DAG WRITE`, live-GET verify; reductions recorded in the donor record |
+| `dag flat-cap <acus> [org_id\|org_name\|user_id\|email\|display_name]` | ✅ scoped user limits + ledger | Flat per-user Local Agent cap via `lib/flat-cap.jq`; with no selector, every active current-member engineer is in scope; an exact case-insensitive org selector includes only users billed to that org, while a user selector includes exactly one active current-member user; roster scope approval, scoped sums, zero-sum org-gate rebalance in the same preview, `CONFIRM DAG WRITE` only after preview, live-GET verify; reductions recorded in the donor record |
 | `dag new-cycle` | ✅ user limits + ledger | Start-of-cycle full reset: verify the new billing cycle is live (guarded), rebuild every active user's cap from the full monthly pool via `compute-caps.jq`, clear stale excluded-user overrides, live-GET verify, rewrite the ledger fresh |
 | `dag set-limits-global` (also `dag set limits global`, `dag set-limits global`) | ✅ org limits + ledger | Org-level `set-limits-new`: seed explicit org-level Local Agent caps for orgs that have **none**, computed from live consumption and funded zero-sum by Borrowing headroom from explicitly capped orgs; PATCH + live-GET verify |
 | `dag set limit global [local\|cloud] <acus> [org_id\|org_name]` | ✅ org limit | Local one-time command: set org-level agent limit(s) for one gate — `local` (default, `local_agent.cycle_acu_limit`) or `cloud` (`cloud_agent.cycle_acu_limit`); without a selector the amount applies to every org (Vontier included); refused before any PATCH (exit 3) when Σ of every org's local + cloud caps would rise above `DAG_MONTHLY_ACU_POOL`; live-GET verify each |
@@ -168,20 +168,34 @@ No recipient is ever capped below its own current consumption. Donor floor: `max
 dag set-limits-new
 ```
 
-## `dag flat-cap <acus>` — Flat per-user cap with a consumption floor
+## `dag flat-cap <acus> [selector]` — Scoped flat per-user cap with a consumption floor
 
-Goal: normalize the whole active layer to one number. Every active current-member engineer gets the same explicit Local Agent cap (`<acus>`); a user whose current-cycle **Local Agent** consumption (`cascade + terminal`, not total ACUs) already exceeds it gets at least `ceil(consumed)` — a cap is never set below consumption. Writes new caps, raises caps below the flat, reduces caps above it; equal caps plan no write.
+Goal: normalize the selected active layer to one number. With no selector, every active current-member engineer gets the same explicit Local Agent cap (`<acus>`). An exact, case-insensitive selector can scope the run to one billing organization or one active current-member user: org scope includes only users billed to that resolved `billing_org_id`; user scope includes exactly the resolved `user_id`. A user whose current-cycle **Local Agent** consumption (`cascade + terminal`, not total ACUs) already exceeds the amount gets at least `ceil(consumed)` — a cap is never set below consumption. Writes new caps, raises caps below the flat, reduces caps above it; equal caps plan no write.
 
 - **Planner:** `lib/flat-cap.jq` computes every cap, sum, and per-org delta (hard rule 1). Hard rule 11 holds: a flat amount above `max_headroom` (default 250, backstop 500) clamps low consumers to `consumed + max_headroom`, with a warning.
-- **Scope:** active current-member engineers only. The roster preview shows included and excluded/inactive users for scope approval — not every enterprise member is an engineer. Scope approval never authorizes writes.
+- **Resolution:** compare a present selector case-insensitively and exactly against live `org_id`/org name and current-member `user_id`/email/display name. Missing or ambiguous matches stop without writes; the command never guesses. A quoted multiword selector remains one argument.
+- **Scope:** active current-member engineers only. The roster preview shows the included and excluded/inactive users in the selected scope, and keeps out-of-scope users out of the write set. Scope approval never authorizes writes.
 - **Not zero-sum at the user layer:** Σ explicit user caps moves to wherever the flat lands it (`sum_before → sum_after`, `delta` shown). The org gates still move zero-sum via `lib/org-rebalance.jq` in the same preview and the same `CONFIRM DAG WRITE`; Σ org caps stays ≤ `DAG_MONTHLY_ACU_POOL`, unfunded room is reported blocked (hard rules 15–16).
 - **Reductions are recorded:** every lowered cap lands in the donor record (`recipient: "flat-cap batch"`, sticky `baseline_cap`), so the DONOR suppression keeps reduced users out of later boost discovery (hard rule 13).
 
 ```zsh
-dag flat-cap 250     # preview flat 250-ACU caps; write only after CONFIRM DAG WRITE
+dag flat-cap 250                  # enterprise scope; preview, then CONFIRM DAG WRITE
+dag flat-cap 250 "Hub Core"       # exact org name; only users billed to Hub Core
+dag flat-cap 250 alice@corp.com   # exact current-member email; one user scope
+dag flat-cap 250 "Alice Smith"    # exact current-member display name; one user scope
 ```
 
-Takes exactly one positive integer — `dag flat-cap 0` exits 2 (a zero cap is a block, not a flat plan).
+Takes one positive integer and at most one quoted selector. `dag flat-cap 0` and empty or option-looking selectors exit 2 locally. Unknown or ambiguous names stop during live roster resolution, before planning or writes. The included/excluded roster and scoped sums must be previewed first. `CONFIRM DAG WRITE` is accepted only after that preview and does not allow out-of-scope mutation.
+
+The global dotted wrapper forwards the same selector unchanged and hoists launcher selectors from any argument position:
+
+```zsh
+dag.flat-cap 250 "Hub Core"
+dag.flat-cap 250 "Hub Core" --defu
+dag.flat-cap.defu 250 "Hub Core"
+dag.flat-cap.cx 250 "Hub Core"        # Codex parent pin
+dag.flat-cap.cxsh 250 alice@corp.com
+```
 
 ## Org ceiling — zero-sum org gates
 

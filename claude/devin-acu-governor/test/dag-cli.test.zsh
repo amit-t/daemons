@@ -218,6 +218,9 @@ assert_contains "flat-cap requested" "$out" "requested shell command: dag flat-c
 assert_contains "flat-cap amount" "$out" "flat cap: 250 ACUs"
 assert_contains "flat-cap consumption floor" "$out" "never set a cap below consumption"
 assert_contains "flat-cap scope approval" "$out" "do not assume every enterprise member is an engineer"
+assert_contains "flat-cap default selector" "$out" "scope selector: none — every active current-member engineer"
+assert_contains "flat-cap scope resolution guard" "$out" "compare it case-insensitively and exactly against org_id/org name and user_id/email/display name"
+assert_contains "flat-cap write gate" "$out" "amount is planning input only; every write still requires CONFIRM DAG WRITE"
 assert_contains "flat-cap jq path" "$out" "flat-cap.jq"
 assert_contains "flat-cap jq context key" "$out" "flat_cap_jq"
 assert_contains "flat-cap user api" "$out" "/v3beta1/enterprise/users/{user_id}/consumption/acu-limits"
@@ -227,6 +230,17 @@ assert_contains "flat-cap planning only" "$out" "amount is planning input only"
 assert_contains "flat-cap ui instruction" "$out" "Enterprise Settings > Consumption"
 assert_contains "flat-cap local agent consumption" "$out" "acus_by_product.cascade + acus_by_product.terminal"
 assert_contains "flat-cap donor record update" "$out" "update the donor record per hard rule 13"
+# A quoted organization name, email, and display name each remain one selector.
+out=$(run_dag flat-cap 250 "Hub Core"); rc=$?
+assert_exit "flat-cap org selector rc" 0 $rc
+assert_contains "flat-cap org selector requested" "$out" "requested shell command: dag flat-cap 250 Hub Core"
+assert_contains "flat-cap org selector exact" "$out" "scope selector: Hub Core"
+out=$(run_dag flat-cap 250 alice@corp.com); rc=$?
+assert_exit "flat-cap email selector rc" 0 $rc
+assert_contains "flat-cap email selector exact" "$out" "scope selector: alice@corp.com"
+out=$(run_dag flat-cap 250 "Alice Smith"); rc=$?
+assert_exit "flat-cap display selector rc" 0 $rc
+assert_contains "flat-cap display selector exact" "$out" "scope selector: Alice Smith"
 # Amount normalization + validation.
 out=$(run_dag flat-cap 0250); rc=$?
 assert_exit "flat-cap zero-padded rc" 0 $rc
@@ -240,10 +254,13 @@ out=$(run_dag flat-cap 0 2>&1); rc=$?; assert_exit "flat-cap zero" 2 $rc
 assert_contains "flat-cap zero msg" "$out" "a zero cap is a block"
 out=$(run_dag flat-cap 1234567890 2>&1); rc=$?; assert_exit "flat-cap 10-digit" 2 $rc
 assert_contains "flat-cap 10-digit msg" "$out" "at most 9 digits"
-out=$(run_dag flat-cap 250 extra 2>&1); rc=$?; assert_exit "flat-cap extra args" 2 $rc
+out=$(run_dag flat-cap 250 extra third 2>&1); rc=$?; assert_exit "flat-cap extra args" 2 $rc
+assert_contains "flat-cap extra args msg" "$out" "at most one quoted org/user selector"
+out=$(run_dag flat-cap 250 --org 2>&1); rc=$?; assert_exit "flat-cap option selector" 2 $rc
+out=$(run_dag flat-cap 250 "" 2>&1); rc=$?; assert_exit "flat-cap empty selector" 2 $rc
 # usage + all-commands surface it.
 out=$(run_dag 2>&1)
-assert_contains "usage lists flat-cap" "$out" "dag flat-cap <acus>"
+assert_contains "usage lists flat-cap" "$out" "dag flat-cap <acus> [org_id|org_name|user_id|email|display_name]"
 out=$(run_dag all-commands)
 assert_contains "all-commands flat-cap available" "$out" "# Playbook: flat-cap"
 
@@ -722,6 +739,11 @@ out=$(dag.align --agent=devin alice@corp.com)
 assert_eq "dag.align agent= hoist" "--agent=devin|align|alice@corp.com" "$out"
 out=$(dag.routing --cf alice@corp.com)
 assert_eq "dag.routing cf hoist" "--cf|routing|alice@corp.com" "$out"
+out=$(dag.flat-cap 250 "Hub Core"); rc=$?
+assert_exit "dag.flat-cap wrapper rc" 0 $rc
+assert_eq "dag.flat-cap wrapper forwarding" "flat-cap|250|Hub Core" "$out"
+out=$(dag.flat-cap 250 "Hub Core" --defu)
+assert_eq "dag.flat-cap defu hoist" "--defu|flat-cap|250|Hub Core" "$out"
 out=$(dag.boost --defu all)
 assert_eq "dag.boost defu hoist" "--defu|boost|all" "$out"
 out=$(dag.boost --del alice@corp.com 50)
@@ -743,6 +765,14 @@ for v in claude codex devin co cf deo def des del det dey defu \
     assert_eq "dag.${c}.${v} forwarding" "--${v}|${c}|alice@corp.com" "$out"
   done
 done
+for v in claude codex devin co cf deo def des del det dey defu \
+         cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau cxm; do
+  out=$(dag.flat-cap.${v} 250 "Hub Core"); rc=$?
+  assert_exit "dag.flat-cap.${v} rc" 0 $rc
+  assert_eq "dag.flat-cap.${v} forwarding" "--${v}|flat-cap|250|Hub Core" "$out"
+done
+out=$(dag.flat-cap.cx 250 "Hub Core")
+assert_eq "dag.flat-cap.cx = --codex" "--codex|flat-cap|250|Hub Core" "$out"
 out=$(dag.align.cx alice@corp.com)
 assert_eq "dag.align.cx = --codex" "--codex|align|alice@corp.com" "$out"
 out=$(dag.routing.cx alice@corp.com)
