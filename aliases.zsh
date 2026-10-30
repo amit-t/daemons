@@ -95,13 +95,14 @@ _dag_dotted() {
 }
 # Profiles .bash_aliases may predefine these as plain aliases; drop them so
 # the `name() {` form parses and the hoisting functions take precedence.
-unalias dag.align dag.routing dag.boost dag.org-cap 2>/dev/null
+unalias dag.align dag.routing dag.boost dag.org-cap dag.flat-cap 2>/dev/null
 dag.align()   { _dag_dotted align "$@" }
 dag.routing() { _dag_dotted routing "$@" }
 dag.boost()   { _dag_dotted boost "$@" }
 dag.org-cap() { _dag_dotted org-cap "$@" }
-# Pinned dotted variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v>
-# = dag --<v> align|routing|org-cap.
+dag.flat-cap() { _dag_dotted flat-cap "$@" }
+# Pinned dotted variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v> /
+# dag.flat-cap.<v> = dag --<v> align|routing|org-cap|flat-cap.
 # cx = --codex; every other variant is its own selector flag. Remaining args
 # still go through _dag_dotted, so extra selectors keep hoisting.
 typeset -gA _dag_dotted_variants=(
@@ -111,7 +112,7 @@ typeset -gA _dag_dotted_variants=(
 for _dag_pin in cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau cxm; do
   _dag_dotted_variants[$_dag_pin]=--$_dag_pin
 done
-for _dag_cmd in align routing org-cap; do
+for _dag_cmd in align routing org-cap flat-cap; do
   for _dag_pin in ${(k)_dag_dotted_variants}; do
     unalias "dag.${_dag_cmd}.${_dag_pin}" 2>/dev/null
     functions[dag.${_dag_cmd}.${_dag_pin}]="_dag_dotted ${_dag_cmd} ${_dag_dotted_variants[$_dag_pin]} \"\$@\""

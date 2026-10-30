@@ -178,7 +178,10 @@ Goal: normalize the whole active layer to one number. Every active current-membe
 - **Reductions are recorded:** every lowered cap lands in the donor record (`recipient: "flat-cap batch"`, sticky `baseline_cap`), so the DONOR suppression keeps reduced users out of later boost discovery (hard rule 13).
 
 ```zsh
-dag flat-cap 250     # preview flat 250-ACU caps; write only after CONFIRM DAG WRITE
+dag flat-cap 250       # preview flat 250-ACU caps; write only after CONFIRM DAG WRITE
+dag.flat-cap 250       # dotted global wrapper (aliases.zsh); selectors hoist
+dag.flat-cap --defu 250
+dag.flat-cap.codex 250 # pinned engine variants: dag.flat-cap.<v>, same <v> set as dag.align.<v>
 ```
 
 Takes exactly one positive integer — `dag flat-cap 0` exits 2 (a zero cap is a block, not a flat plan).
@@ -476,7 +479,7 @@ dag.align --defu alice@corp.com    # every launcher selector works, any position
 dag.align alice@corp.com --cxlh    # --agent x, --claude/--codex/--devin, --co/--cf,
 dag.boost --del alice@corp.com 50  # --deo/--def/--des/--del/--det/--dey, --defu, --cx* pins
 dag.align.defu alice@corp.com      # pinned variants: dag.align.<v> / dag.routing.<v> /
-dag.routing.cxsh alice@corp.com    # dag.org-cap.<v>
+dag.routing.cxsh alice@corp.com    # dag.org-cap.<v> / dag.flat-cap.<v>
 dag.org-cap.cx "Platform Eng" +300 # <v> = claude codex devin cx(=--codex) co cf deo def des
                                    #       del det dey defu cxl* cxs* cxa* (l/m/h/u) cxm
 ```
