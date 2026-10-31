@@ -755,11 +755,18 @@ out=$(dag.org-cap --defu "Platform Eng" +300)
 assert_eq "dag.org-cap defu hoist" "--defu|org-cap|Platform Eng|+300" "$out"
 out=$(dag.org-cap Acme 1200 --cxlh)
 assert_eq "dag.org-cap trailing cxlh hoist" "--cxlh|org-cap|Acme|1200" "$out"
-# Pinned variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v> for every
-# launcher selector.
+out=$(dag.flat-cap 250); rc=$?
+assert_exit "dag.flat-cap wrapper rc" 0 $rc
+assert_eq "dag.flat-cap wrapper forwarding" "flat-cap|250" "$out"
+out=$(dag.flat-cap --defu 250)
+assert_eq "dag.flat-cap defu hoist" "--defu|flat-cap|250" "$out"
+out=$(dag.flat-cap 250 --cxlh)
+assert_eq "dag.flat-cap trailing cxlh hoist" "--cxlh|flat-cap|250" "$out"
+# Pinned variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v> /
+# dag.flat-cap.<v> for every launcher selector.
 for v in claude codex devin co cf deo def des del det dey defu \
          cxl cxll cxlm cxlh cxlu cxs cxsl cxsm cxsh cxsu cxa cxal cxam cxah cxau cxm; do
-  for c in align routing org-cap; do
+  for c in align routing org-cap flat-cap; do
     out=$(dag.${c}.${v} alice@corp.com); rc=$?
     assert_exit "dag.${c}.${v} rc" 0 $rc
     assert_eq "dag.${c}.${v} forwarding" "--${v}|${c}|alice@corp.com" "$out"
@@ -779,6 +786,8 @@ out=$(dag.routing.cx alice@corp.com)
 assert_eq "dag.routing.cx = --codex" "--codex|routing|alice@corp.com" "$out"
 out=$(dag.org-cap.cx Acme +300)
 assert_eq "dag.org-cap.cx = --codex" "--codex|org-cap|Acme|+300" "$out"
+out=$(dag.flat-cap.cx 250)
+assert_eq "dag.flat-cap.cx = --codex" "--codex|flat-cap|250" "$out"
 out=$(dag.align.defu alice@corp.com --agent codex)
 assert_eq "dag.align.defu still hoists extra selectors" "--defu|--agent|codex|align|alice@corp.com" "$out"
 # Pre-existing plain aliases must not shadow the pinned functions on re-source.

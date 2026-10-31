@@ -183,6 +183,9 @@ dag flat-cap 250                  # enterprise scope; preview, then CONFIRM DAG 
 dag flat-cap 250 "Hub Core"       # exact org name; only users billed to Hub Core
 dag flat-cap 250 alice@corp.com   # exact current-member email; one user scope
 dag flat-cap 250 "Alice Smith"    # exact current-member display name; one user scope
+dag.flat-cap 250                  # dotted global wrapper (aliases.zsh); selectors hoist
+dag.flat-cap --defu 250
+dag.flat-cap.codex 250            # pinned engine variants: dag.flat-cap.<v>, same <v> set as dag.align.<v>
 ```
 
 Takes one positive integer and at most one quoted selector. `dag flat-cap 0` and empty or option-looking selectors exit 2 locally. Unknown or ambiguous names stop during live roster resolution, before planning or writes. The included/excluded roster and scoped sums must be previewed first. `CONFIRM DAG WRITE` is accepted only after that preview and does not allow out-of-scope mutation.
@@ -490,7 +493,7 @@ dag.align --defu alice@corp.com    # every launcher selector works, any position
 dag.align alice@corp.com --cxlh    # --agent x, --claude/--codex/--devin, --co/--cf,
 dag.boost --del alice@corp.com 50  # --deo/--def/--des/--del/--det/--dey, --defu, --cx* pins
 dag.align.defu alice@corp.com      # pinned variants: dag.align.<v> / dag.routing.<v> /
-dag.routing.cxsh alice@corp.com    # dag.org-cap.<v>
+dag.routing.cxsh alice@corp.com    # dag.org-cap.<v> / dag.flat-cap.<v>
 dag.org-cap.cx "Platform Eng" +300 # <v> = claude codex devin cx(=--codex) co cf deo def des
                                    #       del det dey defu cxl* cxs* cxa* (l/m/h/u) cxm
 ```

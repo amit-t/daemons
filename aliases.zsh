@@ -101,8 +101,8 @@ dag.routing() { _dag_dotted routing "$@" }
 dag.boost()   { _dag_dotted boost "$@" }
 dag.org-cap() { _dag_dotted org-cap "$@" }
 dag.flat-cap() { _dag_dotted flat-cap "$@" }
-# Pinned dotted variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v>
-# = dag --<v> align|routing|org-cap.
+# Pinned dotted variants: dag.align.<v> / dag.routing.<v> / dag.org-cap.<v> /
+# dag.flat-cap.<v> = dag --<v> align|routing|org-cap|flat-cap.
 # cx = --codex; every other variant is its own selector flag. Remaining args
 # still go through _dag_dotted, so extra selectors keep hoisting.
 typeset -gA _dag_dotted_variants=(
