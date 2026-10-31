@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { CycleInfo, ModelAnalyticsInfo, OrgRow, OutputAnalyticsInfo, OutputDimension, UserRow } from '../types'
+import type { CycleInfo, DailyPoint, ModelAnalyticsInfo, OrgRow, OutputAnalyticsInfo, OutputDimension, PrevCycleCycle, PrevCycleUser, UserOutput, UserRow } from '../types'
 import { fmt, fmtPct, shortDay } from '../format'
 import { ForecastBadge, StatusBadge } from './StatusBadge'
 import { CopyEmail } from './CopyEmail'
@@ -35,6 +35,12 @@ interface Props {
   cycle: CycleInfo
   modelAnalytics: ModelAnalyticsInfo
   outputAnalytics?: OutputAnalyticsInfo
+  historicalOutput?: UserOutput | null
+  historicalOutputAnalytics?: OutputAnalyticsInfo
+  historicalUsage?: PrevCycleUser | null
+  historicalCycle?: PrevCycleCycle | null
+  outputPeriod?: 'current' | 'previous'
+  onOutputPeriodChange?: (period: 'current' | 'previous') => void
   orgs: OrgRow[]
   onClose: () => void
 }
@@ -122,10 +128,119 @@ function OutputBarList({ rows, labelKey }: { rows: OutputDimension[]; labelKey: 
   )
 }
 
+interface LifecycleRow {
+  date: string
+  net: number | null
+  agentAcus: number | null
+  perAgentAcu: number | null
+}
+
+function dateBucket(value: string): string {
+  return value.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? value
+}
+
+function lifecycleRows(output: UserOutput | null | undefined, usage: DailyPoint[] | null | undefined): LifecycleRow[] {
+  const outputByDate = new Map<string, number>()
+  for (const point of output?.daily ?? []) {
+    const date = dateBucket(point.date)
+    outputByDate.set(date, (outputByDate.get(date) ?? 0) + point.net)
+  }
+  const usageByDate = new Map<string, number>()
+  for (const point of usage ?? []) {
+    const date = dateBucket(point.date)
+    usageByDate.set(date, (usageByDate.get(date) ?? 0) + point.cascade + point.terminal)
+  }
+  return [...new Set([...outputByDate.keys(), ...usageByDate.keys()])].sort().map((date) => {
+    const net = outputByDate.get(date) ?? null
+    const agentAcus = usageByDate.get(date) ?? null
+    return {
+      date,
+      net,
+      agentAcus,
+      perAgentAcu: net !== null && agentAcus !== null && agentAcus > 0 ? net / agentAcus : null,
+    }
+  })
+}
+
+function OutputLifecycle({
+  output,
+  usage,
+  previous,
+}: {
+  output: UserOutput | null | undefined
+  usage: DailyPoint[] | null | undefined
+  previous: boolean
+}) {
+  const rows = lifecycleRows(output, usage)
+  return (
+    <section className="detail-panel output-lifecycle">
+      <h3 className="subpanel-title">Accepted net vs Agent ACUs lifecycle</h3>
+      <div className="output-freshness">
+        <span>daily calendar buckets; output API dates are an approximation at non-UTC billing boundaries</span>
+      </div>
+      {previous && !usage ? (
+        <div className="detail-empty">previous-cycle daily ACU data unavailable in this snapshot; current-cycle daily data is not used</div>
+      ) : null}
+      {rows.length === 0 ? (
+        <div className="detail-empty">no daily output or Agent ACU data returned for this interval</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th className="num">Accepted net</th>
+                <th className="num">Agent ACUs</th>
+                <th className="num">Net per agent ACU</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.date}>
+                  <td>{row.date}</td>
+                  <td className="num">{fmt(row.net)}</td>
+                  <td className="num">{fmt(row.agentAcus)}</td>
+                  <td className="num">{fmt(row.perAgentAcu)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 // Per-user drill-down drawer: daily ACU line over the cycle, Devin Cloud
 // session stats, and (when the Windsurf analytics key is configured) the
 // model and IDE split for Devin Desktop / Local usage.
-export function UserDetail({ user, cycle, modelAnalytics, outputAnalytics, orgs, onClose }: Props) {
+export function UserDetail({
+  user,
+  cycle,
+  modelAnalytics,
+  outputAnalytics,
+  historicalOutput,
+  historicalOutputAnalytics,
+  historicalUsage,
+  historicalCycle,
+  outputPeriod = 'current',
+  onOutputPeriodChange,
+  orgs,
+  onClose,
+}: Props) {
+  const shownOutputAnalytics =
+    outputPeriod === 'previous'
+      ? historicalOutputAnalytics ?? {
+          ...outputAnalytics,
+          available: false,
+          stale: false,
+          state: 'unavailable' as const,
+          reason: 'missing_previous_snapshot',
+          totals: null,
+          members: [],
+        }
+      : outputAnalytics
+  const shownOutput = outputPeriod === 'previous' ? historicalOutput : user.output
   const orgName = user.billing_org_id ? (orgs.find((o) => o.org_id === user.billing_org_id)?.name ?? null) : null
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -204,7 +319,7 @@ export function UserDetail({ user, cycle, modelAnalytics, outputAnalytics, orgs,
 
         <div className="cards detail-cards">
           <div className="card accent">
-            <div className="card-label">Cycle ACUs</div>
+            <div className="card-label">Current cycle ACUs</div>
             <div className="card-value">{fmt(user.consumed)}</div>
             <div className="card-sub">
               cap {capText}
@@ -248,7 +363,7 @@ export function UserDetail({ user, cycle, modelAnalytics, outputAnalytics, orgs,
         </div>
 
         <section className="panel detail-panel">
-          <h2 className="panel-title">Daily ACU usage</h2>
+          <h2 className="panel-title">Daily ACU usage (current cycle)</h2>
           <ResponsiveContainer width="100%" height={200}>
             <ComposedChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid stroke="#1f2a25" strokeDasharray="3 3" vertical={false} />
@@ -295,37 +410,71 @@ export function UserDetail({ user, cycle, modelAnalytics, outputAnalytics, orgs,
           </ResponsiveContainer>
         </section>
 
-        {outputAnalytics ? (
+        {shownOutputAnalytics ? (
           <section className="panel detail-panel user-output-panel">
             <div className="output-heading">
-              <h2 className="panel-title">Accepted agent output</h2>
-              {outputAnalytics.stale && <span className="badge badge-warning">stale</span>}
+              <h2 className="panel-title">
+                {outputPeriod === 'previous' ? 'Previous billing cycle · Accepted agent output' : 'Accepted agent output'}
+              </h2>
+              {shownOutputAnalytics.stale && <span className="badge badge-warning">stale</span>}
             </div>
-            {!outputAnalytics.available ? (
-              <div className="detail-empty">
-                output analytics unavailable — {outputAnalytics.reason === 'old_snapshot' ? 'regenerate with dag dashboard' : outputAnalytics.reason ?? 'fetch failed'}
+            {onOutputPeriodChange ? (
+              <div className="controls">
+                <button type="button" className={`tab${outputPeriod === 'current' ? ' on' : ''}`} onClick={() => onOutputPeriodChange('current')}>
+                  Current cycle
+                </button>
+                <button type="button" className={`tab${outputPeriod === 'previous' ? ' on' : ''}`} onClick={() => onOutputPeriodChange('previous')}>
+                  Last month
+                </button>
               </div>
-            ) : !user.output ? (
+            ) : null}
+            {outputPeriod === 'previous' && historicalCycle ? (
+              <div className="output-freshness">
+                <span>Total ACUs: {fmt(historicalUsage?.consumed)}</span>
+                <span>Agent ACUs: {historicalUsage ? fmt(historicalUsage.products.cascade + historicalUsage.products.terminal) : '—'}</span>
+              </div>
+            ) : null}
+            <div className="output-freshness">
+              <span>
+                {outputPeriod === 'previous' && historicalCycle
+                  ? `Previous billing cycle: ${historicalCycle.start_date} → ${historicalCycle.end_date}`
+                  : outputPeriod === 'previous'
+                    ? 'Previous billing cycle: dates unavailable'
+                    : `Current cycle: ${cycle.start_date} → ${cycle.end_date}`}
+              </span>
+            </div>
+            {!shownOutputAnalytics.available ? (
+              <div className="detail-empty">
+                output analytics unavailable — {shownOutputAnalytics.reason === 'old_snapshot' ? 'regenerate with dag dashboard' : shownOutputAnalytics.reason ?? 'fetch failed'}
+              </div>
+            ) : !shownOutput ? (
               <div className="detail-empty">no output attribution available for this member</div>
-            ) : !user.output.has_rows ? (
+            ) : !shownOutput.has_rows ? (
               <div className="detail-empty">no attributed output rows returned for this member</div>
             ) : (
               <>
                 <div className="output-cards">
-                  <div className="card accent"><div className="card-label">Accepted inserted</div><div className="card-value">{fmt(user.output.loc_inserted)}</div></div>
-                  <div className="card"><div className="card-label">Accepted deleted</div><div className="card-value">{fmt(user.output.loc_deleted)}</div></div>
-                  <div className="card"><div className="card-label">Accepted net</div><div className="card-value">{fmt(user.output.net)}</div></div>
+                  <div className="card accent"><div className="card-label">Accepted inserted</div><div className="card-value">{fmt(shownOutput.loc_inserted)}</div></div>
+                  <div className="card"><div className="card-label">Accepted deleted</div><div className="card-value">{fmt(shownOutput.loc_deleted)}</div></div>
+                  <div className="card"><div className="card-label">Accepted net</div><div className="card-value">{fmt(shownOutput.net)}</div></div>
                 </div>
                 <div className="output-grid">
-                  <section><h3 className="subpanel-title">Source</h3><OutputBarList rows={user.output.source_split} labelKey="source" /></section>
-                  <section><h3 className="subpanel-title">Model</h3><OutputBarList rows={user.output.model_split} labelKey="model_uid" /></section>
-                  <section><h3 className="subpanel-title">IDE</h3><OutputBarList rows={user.output.ide_split} labelKey="ide" /></section>
-                  <section><h3 className="subpanel-title">OS</h3><OutputBarList rows={user.output.os_split} labelKey="os" /></section>
+                  <section><h3 className="subpanel-title">Source</h3><OutputBarList rows={shownOutput.source_split} labelKey="source" /></section>
+                  <section><h3 className="subpanel-title">Model</h3><OutputBarList rows={shownOutput.model_split} labelKey="model_uid" /></section>
+                  <section><h3 className="subpanel-title">IDE</h3><OutputBarList rows={shownOutput.ide_split} labelKey="ide" /></section>
+                  <section><h3 className="subpanel-title">OS</h3><OutputBarList rows={shownOutput.os_split} labelKey="os" /></section>
                 </div>
               </>
             )}
+            {shownOutputAnalytics.available ? (
+              <OutputLifecycle
+                output={shownOutput}
+                usage={outputPeriod === 'previous' ? historicalUsage?.daily : user.daily}
+                previous={outputPeriod === 'previous'}
+              />
+            ) : null}
             <div className="detail-footer">
-              <span>source data through {outputAnalytics.data_freshness ?? 'unknown'} · snapshot fetched {outputAnalytics.fetched_at ?? 'unknown'}</span>
+              <span>source data through {shownOutputAnalytics.data_freshness ?? 'unknown'} · snapshot fetched {shownOutputAnalytics.fetched_at ?? 'unknown'}</span>
             </div>
           </section>
         ) : null}

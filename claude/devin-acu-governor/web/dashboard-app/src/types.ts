@@ -310,6 +310,7 @@ export interface PrevCycleUser {
   user_id: string
   consumed: number
   products: UserProductTotals
+  daily?: DailyPoint[] | null
 }
 
 export interface PrevCycleCycle {
@@ -365,6 +366,7 @@ export interface DashboardData {
   cloud_sessions?: CloudSessionsInfo
   model_analytics: ModelAnalyticsInfo
   output_analytics?: OutputAnalyticsInfo
+  previous_output_analytics?: OutputAnalyticsInfo
   // Optional: absent in snapshots generated before the Last Month page.
   prev_cycle?: PrevCycleInfo
   orgs: OrgRow[]

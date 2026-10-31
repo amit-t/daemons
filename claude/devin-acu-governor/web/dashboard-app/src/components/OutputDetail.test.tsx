@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { OrgDetail } from './OrgDetail'
 import { UserDetail } from './UserDetail'
@@ -195,5 +195,148 @@ describe('output detail views', () => {
       />,
     )
     expect(screen.getByText('no member-attributed output available for this organization')).toBeInTheDocument()
+  })
+
+  test('renders selected previous billing-cycle output while keeping historical ACUs explicit', () => {
+    const historicalOutput: UserOutput = {
+      ...output,
+      loc_inserted: 9,
+      loc_deleted: 2,
+      net: 7,
+      daily: [{ date: '2026-04-16', loc_inserted: 9, loc_deleted: 2, net: 7 }],
+    }
+    render(
+      <UserDetail
+        user={user}
+        cycle={cycle}
+        modelAnalytics={modelAnalytics}
+        outputAnalytics={outputAnalytics}
+        historicalOutput={historicalOutput}
+        historicalOutputAnalytics={{ ...outputAnalytics, start_date: '2026-04-16', end_date: '2026-05-15' }}
+        historicalUsage={{ user_id: user.user_id, consumed: 11, products: { devin: 2, cascade: 3, terminal: 1, review: 0 } }}
+        historicalCycle={{ after: 1, before: 2, start_date: '2026-04-16', end_date: '2026-05-15', cycle_days: 30 }}
+        outputPeriod="previous"
+        orgs={[org]}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Previous billing cycle · Accepted agent output')).toBeInTheDocument()
+    expect(screen.getByText('Previous billing cycle: 2026-04-16 → 2026-05-15')).toBeInTheDocument()
+    expect(screen.getByText('Total ACUs: 11')).toBeInTheDocument()
+    expect(screen.getByText('Agent ACUs: 4')).toBeInTheDocument()
+    const lifecycle = screen.getByRole('heading', { name: 'Accepted net vs Agent ACUs lifecycle' }).parentElement!
+    expect(within(lifecycle).getByRole('row', { name: /2026-04-16/ })).toHaveTextContent('7')
+    expect(screen.queryByText('34')).not.toBeInTheDocument()
+  })
+
+  test('compares dated accepted net with the selected period Agent ACU lifecycle', () => {
+    const historicalOutput: UserOutput = {
+      ...output,
+      daily: [
+        { date: '2026-04-16', loc_inserted: 8, loc_deleted: 0, net: 8 },
+        { date: '2026-04-17', loc_inserted: 0, loc_deleted: 2, net: -2 },
+        { date: '2026-04-18', loc_inserted: 5, loc_deleted: 0, net: 5 },
+      ],
+    }
+    const historicalUser = {
+      ...user,
+      daily: [
+        { date: '2026-04-16', epoch: 1, acus: 2, devin: 0, cascade: 2, terminal: 0, review: 0 },
+        { date: '2026-04-17', epoch: 2, acus: 0, devin: 0, cascade: 0, terminal: 0, review: 0 },
+      ],
+    }
+    render(
+      <UserDetail
+        user={historicalUser}
+        cycle={cycle}
+        modelAnalytics={modelAnalytics}
+        outputAnalytics={outputAnalytics}
+        historicalOutput={historicalOutput}
+        historicalOutputAnalytics={{ ...outputAnalytics, start_date: '2026-04-16', end_date: '2026-05-15' }}
+        historicalUsage={{
+          user_id: user.user_id,
+          consumed: 11,
+          products: { devin: 2, cascade: 3, terminal: 1, review: 0 },
+          daily: [
+            { date: '2026-04-16', epoch: 1, acus: 2, devin: 0, cascade: 2, terminal: 0, review: 0 },
+            { date: '2026-04-17', epoch: 2, acus: 0, devin: 0, cascade: 0, terminal: 0, review: 0 },
+            { date: '2026-04-19', epoch: 4, acus: 1, devin: 0, cascade: 1, terminal: 0, review: 0 },
+          ],
+        }}
+        historicalCycle={{ after: 1, before: 2, start_date: '2026-04-16', end_date: '2026-05-15', cycle_days: 30 }}
+        outputPeriod="previous"
+        orgs={[org]}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Previous billing cycle: 2026-04-16 → 2026-05-15')).toBeInTheDocument()
+    const first = screen.getByRole('row', { name: /2026-04-16/ })
+    expect(first).toHaveTextContent('8')
+    expect(first).toHaveTextContent('2')
+    expect(first).toHaveTextContent('4')
+    const zero = screen.getByRole('row', { name: /2026-04-17/ })
+    expect(zero).toHaveTextContent('-2')
+    expect(zero).toHaveTextContent('0')
+    expect(zero).toHaveTextContent('—')
+    const outputOnly = screen.getByRole('row', { name: /2026-04-18/ })
+    expect(outputOnly).toHaveTextContent('5')
+    expect(outputOnly).toHaveTextContent('—')
+    const usageOnly = screen.getByRole('row', { name: /2026-04-19/ })
+    expect(usageOnly).toHaveTextContent('—')
+    expect(usageOnly).toHaveTextContent('1')
+    expect(usageOnly).toHaveTextContent('—')
+
+    cleanup()
+    const currentUser = {
+      ...user,
+      daily: [{ date: '2026-06-15', epoch: 3, acus: 3, devin: 0, cascade: 3, terminal: 0, review: 0 }],
+      output: { ...output, daily: [{ date: '2026-06-15', loc_inserted: 6, loc_deleted: 0, net: 6 }] },
+    }
+    render(
+      <UserDetail
+        user={currentUser}
+        cycle={cycle}
+        modelAnalytics={modelAnalytics}
+        outputAnalytics={outputAnalytics}
+        orgs={[org]}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Current cycle: 2026-05-16 → 2026-06-15')).toBeInTheDocument()
+    const current = screen.getByRole('row', { name: /2026-06-15/ })
+    expect(current).toHaveTextContent('6')
+    expect(current).toHaveTextContent('3')
+    expect(current).toHaveTextContent('2')
+  })
+
+  test('does not substitute current daily ACUs for missing historical daily usage', () => {
+    const historicalOutput: UserOutput = {
+      ...output,
+      daily: [{ date: '2026-04-16', loc_inserted: 8, loc_deleted: 0, net: 8 }],
+    }
+    render(
+      <UserDetail
+        user={{ ...user, daily: [{ date: '2026-04-16', epoch: 1, acus: 99, devin: 0, cascade: 99, terminal: 0, review: 0 }] }}
+        cycle={cycle}
+        modelAnalytics={modelAnalytics}
+        outputAnalytics={outputAnalytics}
+        historicalOutput={historicalOutput}
+        historicalOutputAnalytics={outputAnalytics}
+        historicalUsage={{ user_id: user.user_id, consumed: 11, products: { devin: 2, cascade: 3, terminal: 1, review: 0 }, daily: null }}
+        historicalCycle={null}
+        outputPeriod="previous"
+        orgs={[org]}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(/previous-cycle daily ACU data unavailable/)).toBeInTheDocument()
+    expect(screen.getByText('Previous billing cycle: dates unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('Current cycle: 2026-05-16 → 2026-06-15')).not.toBeInTheDocument()
+    const row = screen.getByRole('row', { name: /2026-04-16/ })
+    expect(row).toHaveTextContent('—')
+    expect(row).not.toHaveTextContent('99')
   })
 })
