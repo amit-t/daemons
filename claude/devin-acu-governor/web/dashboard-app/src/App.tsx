@@ -13,7 +13,7 @@ import { Sidebar } from './components/Sidebar'
 import { LastMonth } from './components/LastMonth'
 import { orgCapTotals } from './orgCapTotals'
 import { useRoute } from './routes'
-import type { OutputAnalyticsInfo } from './types'
+import type { OutputAnalyticsInfo, UserOutput } from './types'
 
 const LEGACY_OUTPUT_ANALYTICS: OutputAnalyticsInfo = {
   available: false,
@@ -46,6 +46,7 @@ export default function App() {
   // Selection is by id, not row object, so a background refresh swaps in the
   // freshly fetched row while the drawer stays open.
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [outputPeriod, setOutputPeriod] = useState<'current' | 'previous'>('current')
   const route = useRoute()
 
   if (!data) {
@@ -71,6 +72,15 @@ export default function App() {
   const selectedOrg =
     route.page === 'org' ? (data.orgs.find((o) => o.org_id === route.orgId) ?? null) : null
   const outputAnalytics = data.output_analytics ?? LEGACY_OUTPUT_ANALYTICS
+  const previousOutputAnalytics = data.previous_output_analytics
+  const historicalOutput: UserOutput | null =
+    outputPeriod === 'previous' && previousOutputAnalytics
+      ? (previousOutputAnalytics.members.find((member) => member.user_id === selectedUserId)?.output ?? null)
+      : null
+  const historicalUsage =
+    outputPeriod === 'previous' && selectedUserId
+      ? (data.prev_cycle?.users.find((user) => user.user_id === selectedUserId) ?? null)
+      : null
   const cyclePct = Math.min(100, (cycle.elapsed_days / cycle.cycle_days) * 100)
   const burnPct = data.pool > 0 ? Math.min(100, (ent.consumed / data.pool) * 100) : 0
   const capTotals = data.cap_totals
@@ -182,7 +192,10 @@ export default function App() {
           onBack={() => {
             window.location.hash = '#/orgs'
           }}
-          onSelectUser={(u) => setSelectedUserId(u.user_id)}
+          onSelectUser={(u) => {
+            setOutputPeriod('current')
+            setSelectedUserId(u.user_id)
+          }}
         />
       ) : (
         <div className="boot">
@@ -194,16 +207,35 @@ export default function App() {
     ) : route.page === 'orgs' ? (
       orgsPage
     ) : route.page === 'users' ? (
-      <UserTable users={data.users} orgs={data.orgs} onSelect={(u) => setSelectedUserId(u.user_id)} />
+      <UserTable
+        users={data.users}
+        orgs={data.orgs}
+        onSelect={(u) => {
+          setOutputPeriod('current')
+          setSelectedUserId(u.user_id)
+        }}
+      />
     ) : route.page === 'output' ? (
-      <OutputAnalytics analytics={outputAnalytics} users={data.users} tab={route.tab} />
+      <OutputAnalytics
+        analytics={outputAnalytics}
+        previousAnalytics={previousOutputAnalytics}
+        prev={data.prev_cycle}
+        users={data.users}
+        tab={route.tab}
+        period={outputPeriod}
+        onPeriodChange={setOutputPeriod}
+        onSelectUser={(u) => setSelectedUserId(u.user_id)}
+      />
     ) : route.page === 'last-month' ? (
       <LastMonth
         prev={data.prev_cycle}
         users={data.users}
         cycle={cycle}
         enterpriseConsumed={ent.consumed}
-        onSelectUser={(u) => setSelectedUserId(u.user_id)}
+        onSelectUser={(u) => {
+          setOutputPeriod('previous')
+          setSelectedUserId(u.user_id)
+        }}
       />
     ) : (
       overview
@@ -249,6 +281,12 @@ export default function App() {
           cycle={cycle}
           modelAnalytics={data.model_analytics}
           outputAnalytics={outputAnalytics}
+          historicalOutput={historicalOutput}
+          historicalOutputAnalytics={previousOutputAnalytics}
+          historicalUsage={historicalUsage}
+          historicalCycle={data.prev_cycle?.cycle}
+          outputPeriod={outputPeriod}
+          onOutputPeriodChange={setOutputPeriod}
           orgs={data.orgs}
           onClose={() => setSelectedUserId(null)}
         />

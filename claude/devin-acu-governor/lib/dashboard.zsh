@@ -386,10 +386,27 @@ _dag_dash_output_failure() {
 }
 
 _dag_dash_fetch_output_analytics() {
-  local out_dir=$1 work=$2 now=$3 after=$4 before=$5 cog_key=${6:-}
+  local out_dir=$1 work=$2 now=$3 after=$4 before=$5 cog_key=${6:-} mode=${7:-current}
   local out="${work}/output-analytics.json" prev="${out_dir}/data.json"
+  [[ "$mode" == "previous" ]] && out="${work}/previous-output-analytics.json"
   local ttl_min="${DAG_OUTPUT_ANALYTICS_TTL_MINUTES:-60}"
   local api_key="" key_source="" start_date end_date requested_start_date eff_end=$(( now < before ? now : before ))
+  local previous_cycle="${work}/prev-cycle.json"
+
+  if [[ "$mode" == "previous" ]]; then
+    local previous_available previous_reason previous_after previous_before
+    previous_available=$(jq -r '.available // false' "$previous_cycle" 2>/dev/null)
+    previous_reason=$(jq -r '.reason // empty' "$previous_cycle" 2>/dev/null)
+    previous_after=$(jq -r '.after // empty' "$previous_cycle" 2>/dev/null)
+    previous_before=$(jq -r '.before // empty' "$previous_cycle" 2>/dev/null)
+    if [[ -z "$previous_after" || -z "$previous_before" || ( "$previous_available" != "true" && "$previous_reason" == "no_previous_cycle" ) ]]; then
+      jq -n '{available: false, stale: false, state: "unavailable", reason: "no_previous_cycle", rows: []}' > "$out"
+      return 0
+    fi
+    after="$previous_after"
+    before="$previous_before"
+    eff_end=$(( before - 86400 ))
+  fi
 
   if api_key=$(dag_resolve_service_key); then
     key_source="windsurf"
@@ -419,13 +436,15 @@ _dag_dash_fetch_output_analytics() {
 
   local prev_sect=""
   if [[ -f "$prev" ]]; then
-    prev_sect=$(jq -c --arg start "$start_date" --arg end "$end_date" --arg key_source "$key_source" '
-      if (.output_analytics.available // false) == true
-         and .output_analytics.start_date == $start
-         and .output_analytics.end_date == $end
-         and .output_analytics.key_source == $key_source
-         and (.output_analytics.rows | type) == "array"
-      then .output_analytics
+    local section_name="output_analytics"
+    [[ "$mode" == "previous" ]] && section_name="previous_output_analytics"
+    prev_sect=$(jq -c --arg start "$start_date" --arg end "$end_date" --arg key_source "$key_source" --arg section "$section_name" '
+      if (.[ $section ] | .available // false) == true
+         and .[$section].start_date == $start
+         and .[$section].end_date == $end
+         and .[$section].key_source == $key_source
+         and (.[$section].rows | type) == "array"
+      then .[$section]
       else empty
       end
     ' "$prev" 2>/dev/null)
@@ -433,7 +452,7 @@ _dag_dash_fetch_output_analytics() {
   if [[ -n "$prev_sect" ]]; then
     local prev_epoch
     prev_epoch=$(jq -r '.fetched_at_epoch // 0' <<<"$prev_sect")
-    if (( prev_epoch > 0 && now - prev_epoch < ttl_min * 60 )); then
+    if [[ "$mode" == "previous" ]] || (( prev_epoch > 0 && now - prev_epoch < ttl_min * 60 )); then
       print -r -- "$prev_sect" > "$out"
       return 0
     fi
@@ -571,6 +590,7 @@ _dag_dash_fetch_prev_cycle() {
       users: map({
         user_id: .user_id,
         total_acus: (.daily.total_acus // 0),
+        daily: (.daily.consumption_by_date // []),
         products: ([(.daily.consumption_by_date // [])[].acus_by_product] | {
           devin: ([.[].devin // 0] | add // 0),
           cascade: ([.[].cascade // 0] | add // 0),
@@ -675,13 +695,14 @@ _dag_dashboard_write_data() {
     # Windsurf model/IDE analytics: optional second key; degrades internally.
     _dag_dash_fetch_model_analytics "$out_dir" "$work" "$now" "$after" "$before" || return 1
     _dag_dash_emit "$out_dir" 30 "model analytics" "" "$prev_gen"
-    _dag_dash_fetch_output_analytics "$out_dir" "$work" "$now" "$after" "$before" "$key" || return 1
-    _dag_dash_emit "$out_dir" 33 "output analytics" "" "$prev_gen"
-
     # Previous-cycle usage (Last Month page): cached — API calls only on a
     # cycle roll or roster growth; failures degrade, never abort.
     _dag_dash_fetch_prev_cycle "$out_dir" "$work" "$hdr" "$base" "$cycles" "$after" "$now" || return 1
     _dag_dash_emit "$out_dir" 36 "previous cycle" "" "$prev_gen"
+    _dag_dash_fetch_output_analytics "$out_dir" "$work" "$now" "$after" "$before" "$key" || return 1
+    _dag_dash_emit "$out_dir" 39 "output analytics" "" "$prev_gen"
+    _dag_dash_fetch_output_analytics "$out_dir" "$work" "$now" "$after" "$before" "$key" previous || return 1
+    _dag_dash_emit "$out_dir" 42 "previous output analytics" "" "$prev_gen"
 
     : > "${work}/org-dailies.json"
     : > "${work}/org-limits.json"
@@ -754,6 +775,7 @@ _dag_dashboard_write_data() {
       --slurpfile sessions "${work}/sessions.json" \
       --slurpfile modela "${work}/model-analytics.json" \
       --slurpfile outputa "${work}/output-analytics.json" \
+      --slurpfile previousa "${work}/previous-output-analytics.json" \
       --slurpfile prevc "${work}/prev-cycle.json" \
       -f "${daemon_dir}/lib/dashboard.jq" > "${out_dir}/data.json.tmp"; then
       rm -f "${out_dir}/data.json.tmp"

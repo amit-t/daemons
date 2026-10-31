@@ -57,7 +57,9 @@ case "$url" in
   *v3/enterprise/sessions*)
     emit "${FIXTURES}/sessions.json" "${FAKE_SESSIONS_CODE:-200}" "${FAKE_SESSIONS_BODY:-}" ;;
   *api/v2alpha/analytics/output*)
-    if [[ "$url" == *"page_cursor="* && -n "${FAKE_OUTPUT_PAGE2_BODY:-}" ]]; then
+    if [[ "$url" == *"start_date=2026-04-16"* && -n "${FAKE_OUTPUT_PREVIOUS_BODY:-}" ]]; then
+      emit "${FIXTURES}/output.json" "${FAKE_OUTPUT_PREVIOUS_CODE:-200}" "${FAKE_OUTPUT_PREVIOUS_BODY}"
+    elif [[ "$url" == *"page_cursor="* && -n "${FAKE_OUTPUT_PAGE2_BODY:-}" ]]; then
       if [[ -n "${FAKE_OUTPUT_PAGE2_REPEAT:-}" ]]; then
         emit "${FIXTURES}/output-page-repeat.json" "${FAKE_OUTPUT_PAGE2_CODE:-${FAKE_OUTPUT_CODE:-200}}" ""
       else
@@ -196,6 +198,8 @@ run_dash() {
   FAKE_SESSIONS_CODE="${FAKE_SESSIONS_CODE:-200}" FAKE_SESSIONS_BODY="${FAKE_SESSIONS_BODY:-}" \
   FAKE_WINDSURF_CODE="${FAKE_WINDSURF_CODE:-200}" FAKE_WINDSURF_BODY="${FAKE_WINDSURF_BODY:-}" \
   FAKE_OUTPUT_CODE="${FAKE_OUTPUT_CODE:-200}" FAKE_OUTPUT_BODY="${FAKE_OUTPUT_BODY:-}" \
+  FAKE_OUTPUT_PREVIOUS_CODE="${FAKE_OUTPUT_PREVIOUS_CODE:-200}" \
+  FAKE_OUTPUT_PREVIOUS_BODY="${FAKE_OUTPUT_PREVIOUS_BODY:-}" \
   FAKE_OUTPUT_PAGE2_BODY="${FAKE_OUTPUT_PAGE2_BODY:-}" \
   FAKE_OUTPUT_PAGE2_CODE="${FAKE_OUTPUT_PAGE2_CODE:-200}" \
   FAKE_OUTPUT_PAGE2_REPEAT="${FAKE_OUTPUT_PAGE2_REPEAT:-}" \
@@ -767,8 +771,9 @@ else
 fi
 
 sim_dir="${tmpdir}/dash-simultaneous"
+previous_output_body='{"data":[{"timestamp":"2026-04-16","user_id":"email|alice","user_email":"alice@example.com","source":"CHISEL","model_uid":"previous-model","ide":"cli","os":"darwin","loc_inserted":12,"loc_deleted":2},{"timestamp":"2026-05-15","user_id":null,"user_email":" BOB@EXAMPLE.COM ","source":"CASCADE_CLIENT","model_uid":"previous-model","ide":"chisel","os":"darwin","loc_inserted":5,"loc_deleted":1}],"pagination":{"next_page_cursor":null},"metadata":{"data_freshness":"2026-05-15T03:00:00Z","team_id":"team_previous"}}'
 : > "${tmpdir}/curl-urls.log"
-out=$(run_dash --json-only --out "$sim_dir" 2>&1); rc=$?
+out=$(FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" run_dash --json-only --out "$sim_dir" 2>&1); rc=$?
 assert_exit "simultaneous analytics rc" 0 $rc
 assert_eq "output additive available" "true" "$(jq -r '.output_analytics.available' "${sim_dir}/data.json")"
 assert_eq "original billed model ACUs retained" "40" "$(jq -r '.users[] | select(.email=="alice@example.com") | .models[0].acus' "${sim_dir}/data.json")"
@@ -780,11 +785,27 @@ assert_eq "output unmatched row" "null" "$(jq -r '.output_analytics.rows[] | sel
 assert_eq "output member sum" "191" "$(jq -r '.output_analytics.members[] | select(.email=="alice@example.com") | .output.loc_inserted' "${sim_dir}/data.json")"
 assert_eq "output org sum" "191" "$(jq -r '.orgs[] | select(.org_id=="platform") | .output.loc_inserted' "${sim_dir}/data.json")"
 assert_eq "output unmatched total" "53" "$(jq -r '.output_analytics.attribution.unassigned.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "previous output available" "true" "$(jq -r '.previous_output_analytics.available' "${sim_dir}/data.json")"
+assert_eq "previous output start" "2026-04-16" "$(jq -r '.previous_output_analytics.start_date' "${sim_dir}/data.json")"
+assert_eq "previous output calendar end" "2026-05-15" "$(jq -r '.previous_output_analytics.end_date' "${sim_dir}/data.json")"
+assert_eq "previous output total differs" "17" "$(jq -r '.previous_output_analytics.totals.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "previous output member attribution" "12" "$(jq -r '.previous_output_analytics.members[] | select(.user_id=="email|alice") | .output.loc_inserted' "${sim_dir}/data.json")"
+assert_eq "previous output email attribution" "5" "$(jq -r '.previous_output_analytics.members[] | select(.email=="bob@example.com") | .output.loc_inserted' "${sim_dir}/data.json")"
+if grep -F "start_date=2026-04-16&end_date=2026-05-15" "${tmpdir}/curl-urls.log" >/dev/null; then
+  _ok
+else
+  _fail "previous output query did not use the finished billing-cycle window"
+fi
 if grep -F "api/v2alpha/analytics/consumption" "${tmpdir}/curl-urls.log" >/dev/null && grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then
   _ok
 else
   _fail "both original model and output analytics requests were not made"
 fi
+previous_output_calls_before=$(grep -cF "api/v2alpha/analytics/output?metric=" "${tmpdir}/curl-urls.log")
+out=$(run_dash --json-only --out "$sim_dir" 2>&1); rc=$?
+assert_exit "previous output cache rc" 0 $rc
+previous_output_calls_after=$(grep -cF "api/v2alpha/analytics/output?metric=" "${tmpdir}/curl-urls.log")
+assert_eq "previous output cache reused" "$previous_output_calls_before" "$previous_output_calls_after"
 
 page1_body=$(<"${fixdir}/output-page-1.json")
 pagination_dir="${tmpdir}/dash-output-pages"
@@ -804,6 +825,12 @@ out=$(FAKE_OUTPUT_CODE=401 run_dash --json-only --out "$auth_dir" 2>&1); rc=$?
 assert_exit "output auth failure rc" 0 $rc
 assert_eq "output auth failure state" "auth_failed" "$(jq -r '.output_analytics.reason' "${auth_dir}/data.json")"
 
+previous_auth_dir="${tmpdir}/dash-output-previous-auth"
+out=$(FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" FAKE_OUTPUT_PREVIOUS_CODE=401 run_dash --json-only --out "$previous_auth_dir" 2>&1); rc=$?
+assert_exit "previous output auth failure rc" 0 $rc
+assert_eq "current output survives previous auth failure" "true" "$(jq -r '.output_analytics.available' "${previous_auth_dir}/data.json")"
+assert_eq "previous output auth failure state" "auth_failed" "$(jq -r '.previous_output_analytics.reason' "${previous_auth_dir}/data.json")"
+
 stale_dir="${tmpdir}/dash-output-stale"
 out=$(run_dash --json-only --out "$stale_dir" 2>&1); rc=$?
 assert_exit "output stale seed rc" 0 $rc
@@ -822,12 +849,14 @@ assert_exit "output ttl reuse rc" 0 $rc
 if grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then _fail "output API requested inside TTL"; else _ok; fi
 
 switch_dir="${tmpdir}/dash-output-key-switch"
-out=$(run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
+out=$(FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
 assert_exit "output key switch seed rc" 0 $rc
 : > "${tmpdir}/curl-urls.log"
-out=$(TEST_WINDSURF_KEY="" FAKE_OUTPUT_CODE=401 run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
+out=$(TEST_WINDSURF_KEY="" FAKE_OUTPUT_CODE=401 FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" FAKE_OUTPUT_PREVIOUS_CODE=200 run_dash --json-only --out "$switch_dir" 2>&1); rc=$?
 assert_exit "output key switch rc" 0 $rc
 assert_eq "output key switch source" "auth_failed" "$(jq -r '.output_analytics.reason' "${switch_dir}/data.json")"
+assert_eq "previous output key switch source" "cog" "$(jq -r '.previous_output_analytics.key_source' "${switch_dir}/data.json")"
+assert_eq "previous output key switch remains available" "true" "$(jq -r '.previous_output_analytics.available' "${switch_dir}/data.json")"
 if grep -F "api/v2alpha/analytics/output" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output API not refetched after key-source switch"; fi
 
 no_key_out="${tmpdir}/dash-output-no-key"
@@ -857,13 +886,15 @@ assert_exit "output empty rc" 0 $rc
 assert_eq "output empty state" "no_data" "$(jq -r '.output_analytics.state' "${empty_dir}/data.json")"
 
 rollover_dir="${tmpdir}/dash-output-rollover"
-out=$(run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
+out=$(FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
 assert_exit "output rollover seed rc" 0 $rc
 : > "${tmpdir}/curl-urls.log"
-out=$(TEST_NOW_EPOCH=1781596800 run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
+out=$(TEST_NOW_EPOCH=1781596800 FAKE_OUTPUT_PREVIOUS_BODY="$previous_output_body" run_dash --json-only --out "$rollover_dir" 2>&1); rc=$?
 assert_exit "output rollover rc" 0 $rc
 assert_eq "output rollover start" "2026-06-16" "$(jq -r '.output_analytics.start_date' "${rollover_dir}/data.json")"
+assert_eq "previous output rollover start" "2026-05-16" "$(jq -r '.previous_output_analytics.start_date' "${rollover_dir}/data.json")"
 if grep -F "api/v2alpha/analytics/output?metric=" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "output analytics reused previous cycle inside TTL"; fi
+if grep -F "start_date=2026-05-16&end_date=2026-06-15" "${tmpdir}/curl-urls.log" >/dev/null; then _ok; else _fail "previous output cache was not invalidated on cycle rollover"; fi
 
 long_dir="${tmpdir}/dash-output-long-range"
 long_cycles='{"items":[{"after":0,"before":8640000}]}'
@@ -1122,7 +1153,15 @@ assert_eq "prev cycle user rows" "4" "$(pcf '.prev_cycle.users | length')"
 assert_eq "prev cycle alice consumed" "120.25" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .consumed')"
 assert_eq "prev cycle alice devin" "30" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .products.devin')"
 assert_eq "prev cycle alice cascade" "75.25" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .products.cascade')"
+assert_eq "prev cycle alice daily rows" "2" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .daily | length')"
+assert_eq "prev cycle alice daily date" "2026-05-16" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .daily[0].date')"
+assert_eq "prev cycle alice daily agent acus" "30" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .daily[0].cascade + .daily[0].terminal')"
 if [[ -f "${pcdir}/prev-cycle-cache.json" ]]; then _ok; else _fail "prev-cycle cache not written"; fi
+jq '(.users[] | select(.user_id=="email|alice")) |= del(.daily)' "${pcdir}/prev-cycle-cache.json" > "${pcdir}/prev-cycle-cache.json.tmp"
+mv "${pcdir}/prev-cycle-cache.json.tmp" "${pcdir}/prev-cycle-cache.json"
+out=$(run_dash --json-only --out "$pcdir" 2>&1); rc=$?
+assert_exit "legacy prev cache rc" 0 $rc
+assert_eq "legacy prev cache daily unknown" "null" "$(pcf '.prev_cycle.users[] | select(.user_id=="email|alice") | .daily')"
 if grep -F "time_after=1776326400&time_before=1778918400" "${tmpdir}/curl-urls.log" >/dev/null; then
   _ok
 else
@@ -1155,6 +1194,7 @@ assert_exit "prev fail rc" 0 $rc
 assert_contains "prev fail warned" "$out" "Last Month view degrades"
 assert_eq "prev fail available" "false" "$(jq -r '.prev_cycle.available' "${tmpdir}/dash-prev-fail/data.json")"
 assert_eq "prev fail reason" "fetch_failed" "$(jq -r '.prev_cycle.reason' "${tmpdir}/dash-prev-fail/data.json")"
+assert_eq "prev output survives usage failure" "true" "$(jq -r '.previous_output_analytics.available' "${tmpdir}/dash-prev-fail/data.json")"
 
 # 21d. Frontend wiring: left sidebar navigation, agent output tab pages, and
 #      the Last Month comparison page.

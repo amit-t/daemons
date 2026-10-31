@@ -58,7 +58,87 @@ def output_info($rows):
   };
 def normalized_email:
   if type == "string" then (gsub("^\\s+|\\s+$"; "") | ascii_downcase) else "" end;
-
+def assign_output($rows; $ids; $emails):
+  $rows | map(
+    . as $row
+    | ($ids[($row.user_id // "")] // null) as $id_match
+    | ($emails[($row.user_email // "" | normalized_email)] // null) as $email_match
+    | if $id_match != null
+      then $row + {
+        matched_user_id: $id_match.user_id,
+        matched_org_id: $id_match.billing_org_id,
+        match_method: "user_id"
+      }
+      elif ($row.user_id // "") == "" and $email_match != null
+      then $row + {
+        matched_user_id: $email_match.user_id,
+        matched_org_id: $email_match.billing_org_id,
+        match_method: "email"
+      }
+      else $row + {
+        matched_user_id: null,
+        matched_org_id: null,
+        match_method: null
+      }
+      end
+  );
+def output_section($analytics; $assigned; $members):
+  ($assigned | map(select(.matched_user_id != null))
+   | group_by(.matched_user_id)
+   | map({key: .[0].matched_user_id, value: .})
+   | from_entries) as $by_user
+  | ($assigned | map(select(.matched_user_id == null))
+     | group_by([.user_id // "", (.user_email // "" | normalized_email)])
+     | map({
+         user_id: (.[0].user_id // null),
+         name: (.[0].user_email // .[0].user_id // "unknown"),
+         email: (.[0].user_email // ""),
+         user_email: (.[0].user_email // ""),
+         billing_org_id: null,
+         output: output_info(.)
+       })) as $unassigned
+  | ($assigned | map(select(.matched_user_id != null)) | output_totals(.)) as $matched
+  | ($assigned | map(select(.matched_user_id == null)) | output_totals(.)) as $unassigned_totals
+  | {
+      available: ($analytics.available // false),
+      stale: ($analytics.stale // false),
+      state: ($analytics.state // (if ($analytics.available // false) then "fresh" else "unavailable" end)),
+      reason: ($analytics.reason // null),
+      fetched_at: ($analytics.fetched_at // null),
+      fetched_at_epoch: ($analytics.fetched_at_epoch // null),
+      data_freshness: ($analytics.data_freshness // null),
+      data_freshness_epoch: (try ($analytics.data_freshness | fromdateiso8601) catch null),
+      start_date: ($analytics.start_date // null),
+      requested_start_date: ($analytics.requested_start_date // null),
+      end_date: ($analytics.end_date // null),
+      range_clamped: ($analytics.range_clamped // false),
+      team_id: ($analytics.team_id // null),
+      group_id: ($analytics.group_id // null),
+      key_source: ($analytics.key_source // null),
+      rows: $assigned,
+      totals: (if ($analytics.available // false) then output_totals($assigned) else null end),
+      daily: (if ($analytics.available // false) then output_daily($assigned) else [] end),
+      source_split: (if ($analytics.available // false) then output_groups($assigned; "source") else [] end),
+      model_split: (if ($analytics.available // false) then output_groups($assigned; "model_uid") else [] end),
+      ide_split: (if ($analytics.available // false) then output_groups($assigned; "ide") else [] end),
+      os_split: (if ($analytics.available // false) then output_groups($assigned; "os") else [] end),
+      members: (if ($analytics.available // false)
+        then ($members | map(. + {
+          output: (if ($analytics.state // "") == "no_data" then null else output_info($by_user[.user_id] // []) end)
+        }))
+        else [] end),
+      contributors: (if ($analytics.available // false) then (
+        $members | map(. + {
+          output: (if ($analytics.state // "") == "no_data" then null else output_info($by_user[.user_id] // []) end)
+        }) + $unassigned
+      ) else [] end),
+      attribution: (if ($analytics.available // false) then {
+        matched: $matched,
+        unassigned: $unassigned_totals,
+        matched_contributors: ([$assigned[] | select(.matched_user_id != null) | .matched_user_id] | unique | length),
+        unmatched_contributors: ($unassigned | length)
+      } else null end)
+    };
 # The live API serves consumption_by_date[].date as a Unix epoch (PST midnight);
 # accept a "YYYY-MM-DD" string too and emit both forms.
 def day_forms:
@@ -238,6 +318,8 @@ def donor_suppressed($raw; $consumed; $drec):
    | map({key: .[0].user_email, value: .}) | from_entries) as $ma_by_email
 | ($outputa[0] // {available: false, stale: false, state: "unavailable", reason: "missing", rows: []}) as $oa
 | ($oa.rows // []) as $output_rows
+| ($previousa[0] // {available: false, stale: false, state: "unavailable", reason: "missing", rows: []}) as $poa
+| ($poa.rows // []) as $previous_output_rows
 | ($userlist | map({
     user_id: .user_id,
     email: (.email // "" | normalized_email),
@@ -252,29 +334,8 @@ def donor_suppressed($raw; $consumed; $drec):
    | map(select(length == 1) | {key: .[0].user_id, value: .[0]}) | from_entries) as $unique_member_ids
 | ($member_keys | map(select(.email != "")) | group_by(.email)
    | map(select(length == 1) | {key: .[0].email, value: .[0]}) | from_entries) as $unique_member_emails
-| ($output_rows | map(
-    . as $row
-    | ($unique_member_ids[($row.user_id // "")] // null) as $id_match
-    | ($unique_member_emails[($row.user_email // "" | normalized_email)] // null) as $email_match
-    | if $id_match != null
-      then $row + {
-        matched_user_id: $id_match.user_id,
-        matched_org_id: $id_match.billing_org_id,
-        match_method: "user_id"
-      }
-      elif ($row.user_id // "") == "" and $email_match != null
-      then $row + {
-        matched_user_id: $email_match.user_id,
-        matched_org_id: $email_match.billing_org_id,
-        match_method: "email"
-      }
-      else $row + {
-        matched_user_id: null,
-        matched_org_id: null,
-        match_method: null
-      }
-      end
-  )) as $output_assigned
+| ($output_rows | assign_output(.; $unique_member_ids; $unique_member_emails)) as $output_assigned
+| ($previous_output_rows | assign_output(.; $unique_member_ids; $unique_member_emails)) as $previous_output_assigned
 | ($output_assigned | map(select(.matched_user_id != null)) | group_by(.matched_user_id)
    | map({key: .[0].matched_user_id, value: .}) | from_entries) as $output_by_user
 | ($output_assigned | map(select(.matched_org_id != null)) | group_by(.matched_org_id)
@@ -353,26 +414,8 @@ def donor_suppressed($raw; $consumed; $drec):
     user_id: .user_id,
     email: .email,
     name: .name,
-    billing_org_id: .billing_org_id,
-    output: .output
-  })) as $output_members
-| ($output_assigned
-   | map(select(.matched_user_id == null))
-     | group_by([.user_id // "", (.user_email // "" | normalized_email)])
-   | map({
-       user_id: (.[0].user_id // null),
-       name: (.[0].user_email // .[0].user_id // "unknown"),
-       email: (.[0].user_email // ""),
-       user_email: (.[0].user_email // ""),
-       billing_org_id: null,
-       output: output_info(.)
-     })) as $unassigned_contributors
-| ($output_assigned
-   | map(select(.matched_user_id != null))
-   | output_totals(.)) as $matched_output
-| ($output_assigned
-   | map(select(.matched_user_id == null))
-   | output_totals(.)) as $unassigned_output
+    billing_org_id: .billing_org_id
+  })) as $member_roster
 # Org-gate overcommit: sum explicit user caps attributed to each org and
 # compare against that org's Local Agent cap. Even though each user's own
 # cap has headroom, the org-level Local Agent cap can still block them if
@@ -480,38 +523,8 @@ def donor_suppressed($raw; $consumed; $drec):
       # rate-limit carry-forward) without refetching the Windsurf API.
       rows: ($ma.rows // [])
     },
-    output_analytics: {
-      available: ($oa.available // false),
-      stale: ($oa.stale // false),
-      state: ($oa.state // (if $oa.available then "fresh" else "unavailable" end)),
-      reason: ($oa.reason // null),
-      fetched_at: ($oa.fetched_at // null),
-      fetched_at_epoch: ($oa.fetched_at_epoch // null),
-      data_freshness: ($oa.data_freshness // null),
-      data_freshness_epoch: (try ($oa.data_freshness | fromdateiso8601) catch null),
-      start_date: ($oa.start_date // null),
-      requested_start_date: ($oa.requested_start_date // null),
-      end_date: ($oa.end_date // null),
-      range_clamped: ($oa.range_clamped // false),
-      team_id: ($oa.team_id // null),
-      group_id: ($oa.group_id // null),
-      key_source: ($oa.key_source // null),
-      rows: $output_assigned,
-      totals: (if $oa.available then output_totals($output_assigned) else null end),
-      daily: (if $oa.available then output_daily($output_assigned) else [] end),
-      source_split: (if $oa.available then output_groups($output_assigned; "source") else [] end),
-      model_split: (if $oa.available then output_groups($output_assigned; "model_uid") else [] end),
-      ide_split: (if $oa.available then output_groups($output_assigned; "ide") else [] end),
-      os_split: (if $oa.available then output_groups($output_assigned; "os") else [] end),
-      members: (if $oa.available then $output_members else [] end),
-      contributors: (if $oa.available then ($output_members + $unassigned_contributors) else [] end),
-      attribution: (if $oa.available then {
-        matched: $matched_output,
-        unassigned: $unassigned_output,
-        matched_contributors: ([$output_assigned[] | select(.matched_user_id != null) | .matched_user_id] | unique | length),
-        unmatched_contributors: ($unassigned_contributors | length)
-      } else null end)
-    },
+    output_analytics: output_section($oa; $output_assigned; $member_roster),
+    previous_output_analytics: output_section($poa; $previous_output_assigned; $member_roster),
     # Previous billing cycle (Last Month page): per-user totals + enterprise
     # daily for the finished cycle, joined client-side against the current
     # roster by user_id.
@@ -539,7 +552,13 @@ def donor_suppressed($raw; $consumed; $drec):
               users: (($p.users // []) | map({
                 user_id: .user_id,
                 consumed: ((.total_acus // 0) | r2),
-                products: ((.products // {devin: 0, cascade: 0, terminal: 0, review: 0}) | map_values(r2))
+                products: ((.products // {devin: 0, cascade: 0, terminal: 0, review: 0}) | map_values(r2)),
+                daily: (if (.daily | type) == "array"
+                        then (.daily | day_points)
+                        elif (.daily.consumption_by_date | type) == "array"
+                        then (.daily.consumption_by_date | day_points)
+                        else null
+                        end)
               }))
             }
         end
