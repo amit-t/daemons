@@ -38,6 +38,8 @@ Use the appended playbooks to route known tasks:
 
 - Use `dag status` for enterprise burn, projection, org/user limits, top consumers, and model burn.
 - Use `dag status --group [idp_group_name]` for an agent status report scoped to one exact IDP group, with last-3-days member usage/status patterns.
+- Use `dag budgets` to list unified budget tree and its actual account root limit (read-only); this is separate from legacy org Local Agent/Cloud gate sums.
+- Use `dag budget <budget_id|org_id|exact_name> <monthly|temporary> <nonnegative-acus|clear>` for a single unified budget edit with a parent-allocation warning and `CONFIRM DAG WRITE`; child allocations may exceed their parent, which still gates actual usage.
 - Use `dag user <email>` for one user's consumption, effective Local Agent limit, product/model/IDE split, and trajectory.
 - Use `dag usage [--json] [--top <n>]` for a local no-agent per-user consumed-vs-cap table.
 - Use `dag usage --group [idp_group_name] [--json] [--top <n>]` for a local no-agent exact-IDP-group usage/status table with last-3-days detail.

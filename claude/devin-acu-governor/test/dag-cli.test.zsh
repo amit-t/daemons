@@ -36,6 +36,35 @@ assert_exit "help rc" 0 $rc
 out=$(run_dag frobnicate 2>&1); rc=$?
 assert_exit "unknown rc" 2 $rc
 
+out=$(run_dag budgets); rc=$?
+assert_exit "budgets rc" 0 $rc
+assert_contains "budgets playbook" "$out" "# Playbook: budget"
+assert_contains "budgets read-only context" "$out" "mode: read-only list"
+assert_contains "budgets no writes" "$out" "no API writes"
+out=$(run_dag budget budget-1 monthly 120); rc=$?
+assert_exit "budget monthly rc" 0 $rc
+assert_contains "budget monthly field" "$out" "field: cycle_acu_limit"
+assert_contains "budget monthly value" "$out" "JSON value: 120"
+assert_contains "budget confirmation gate" "$out" "CONFIRM DAG WRITE"
+out=$(run_dag budget org-1 temporary 80); rc=$?
+assert_exit "budget temporary rc" 0 $rc
+assert_contains "budget temporary field" "$out" "field: temporary_cycle_acu_limit"
+out=$(run_dag budget exact-name monthly clear); rc=$?
+assert_exit "budget clear rc" 0 $rc
+assert_contains "budget clear value" "$out" "JSON value: null"
+for bad_args in \
+  "budget-1 monthly -1" \
+  "budget-1 monthly 1.5" \
+  "budget-1 monthly +1" \
+  "budget-1 weekly 10" \
+  "budget-1 monthly 1234567890" \
+  "budget-1 monthly"; do
+  out=$(run_dag budget ${(z)bad_args} 2>&1); rc=$?
+  assert_exit "bad budget args ${bad_args}" 2 $rc
+done
+out=$(run_dag budgets extra 2>&1); rc=$?
+assert_exit "budgets args" 2 $rc
+
 # 4. boost arg validation (amount now optional; bare boost = boost all).
 out=$(run_dag boost); rc=$?; assert_exit "boost noargs = boost all" 0 $rc
 assert_contains "boost noargs playbook" "$out" "# Playbook: boost all"
@@ -803,7 +832,7 @@ for c in "boost a@x.com" "boost all" "boost over" "boost warning" "boost critica
   out=$(run_dag ${=c} 2>/dev/null)
   assert_contains "org_rebalance_jq in ${c}" "$out" "org_rebalance_jq: "
   assert_contains "org ceiling in ${c}" "$out" "org ceiling: Σ every org's local + cloud caps <= 24000"
-  assert_contains "rule 16 ceiling in ${c}" "$out" "16. **Org ceiling + cloud default-zero.**"
+  assert_contains "rule 16 ceiling in ${c}" "$out" "16. **Legacy org-gate ceiling + cloud default-zero.**"
   if [[ "$out" == *"raising the org cap to \`Σ member caps\`"* || "$out" == *"reconcile the parent"* ]]; then
     _fail "${c}: prompt still offers org growth / parent reconcile"
   else _ok; fi

@@ -114,20 +114,20 @@ chmod +x "${tmpdir}/bin/open"
 
 # Fake python3: deterministic stand-in for the port check (-c with one runtime
 # arg → always free), the free-port pick (-c without runtime args → 8999), and
-# the custom dashboard server (-c with port/out/request-file → log argv, then
-# idle until killed).
+# the custom dashboard server script (log argv, then idle until killed).
 cat > "${tmpdir}/bin/python3" <<'EOF'
 #!/usr/bin/env zsh
 if [[ "${1:-}" == "-c" ]]; then
-  if (( $# >= 5 )); then
-    print -r -- "custom http.server port=${3} --bind 127.0.0.1 --directory ${4} __dag_refresh_now request_file=${5}" >> "${SERVE_LOG}"
-    while true; do sleep 1; done
-  elif (( $# >= 3 )); then
+  if (( $# >= 3 )); then
     exit 0
   else
     print -r -- 8999
     exit 0
   fi
+fi
+if [[ "${1:-}" == *"dashboard-server.py" ]]; then
+  print -r -- "custom dashboard-server.py port=${2} --bind 127.0.0.1 --directory ${3} __dag_refresh_now request_file=${4} auth_header=${5} api_base=${6}" >> "${SERVE_LOG}"
+  while true; do sleep 1; done
 fi
 exit 0
 EOF
@@ -137,7 +137,7 @@ chmod +x "${tmpdir}/bin/python3"
 mkdir -p "${tmpdir}/deadpy"
 cat > "${tmpdir}/deadpy/python3" <<'EOF'
 #!/usr/bin/env zsh
-if [[ "${1:-}" == "-c" && $# -lt 5 ]]; then exit 0; fi
+if [[ "${1:-}" == "-c" ]]; then exit 0; fi
 exit 1
 EOF
 chmod +x "${tmpdir}/deadpy/python3"
@@ -226,13 +226,13 @@ if jq -e . "${out_dir}/data.json" >/dev/null 2>&1; then _ok; else _fail "data.js
 
 # 3. Server invoked local-only: bound to 127.0.0.1 and the staged out_dir.
 serve_line=$(tail -1 "${tmpdir}/serve.log" 2>/dev/null)
-assert_contains "server module" "$serve_line" "http.server"
+assert_contains "server module" "$serve_line" "dashboard-server.py"
 assert_contains "server port" "$serve_line" "8642"
 assert_contains "server local bind" "$serve_line" "--bind 127.0.0.1"
 assert_contains "server directory" "$serve_line" "--directory ${out_dir:A}"
 assert_contains "server manual refresh endpoint" "$serve_line" "__dag_refresh_now"
-dashboard_src=$(<"${script_dir}/../lib/dashboard.zsh")
-assert_contains "server manual refresh header gate" "$dashboard_src" "X-DAG-Refresh"
+dashboard_server_src=$(<"${script_dir}/../lib/dashboard-server.py")
+assert_contains "server manual refresh header gate" "$dashboard_server_src" "X-DAG-Refresh"
 
 # 4. Keys never leak into stdout or any generated file (cog_ and Windsurf).
 if [[ "$out" == *test-cog-key-SECRET* ]]; then _fail "cog key leaked to stdout"; else _ok; fi
