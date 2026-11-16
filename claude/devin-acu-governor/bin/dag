@@ -149,8 +149,11 @@ Usage:
   dag doctor                  Probe both API keys and report which capabilities they hold
   dag dashboard [--no-open] [--json-only] [--rebuild] [--out <dir>] [--port <n>] [--refresh <5|10|15|30>]
                               Local React ACU burn-rate + forecast dashboard served on
-                              127.0.0.1 (read-only, no agent); --refresh refetches data
-                              in the background, page updates without reloading
+                              127.0.0.1; --refresh refetches data in the background,
+                              page updates without reloading; budget edits require explicit Save
+  dag budgets                 List the unified budget tree (read-only)
+  dag budget <budget_id|org_id|exact_name> <monthly|temporary> <nonnegative-acus|clear>
+                              Edit one unified budget after preview and CONFIRM DAG WRITE
   dag setup-extract           Print pasteable target-machine keychain setup commands
                               with the currently configured DAG keys (secret output)
   dag help                    Show this help
@@ -214,7 +217,7 @@ Config (environment.env; shell env vars override):
 
 Keys, one-time setup:
   Required — Devin API v3 service-user key (app.devin.ai > Settings > Service users,
-  enterprise-scoped, permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions/ViewAccountSessions + ViewAccountMetrics + ViewAccountMembership):
+  enterprise-scoped, legacy permissions ViewAccountConsumption + ManageBilling + ViewOrgSessions/ViewAccountSessions + ViewAccountMetrics + ViewAccountMembership; unified beta budgets additionally require ManageAcuLimits):
     security add-generic-password -s devin-cog-key -a "$USER" -w 'cog_...'
     Fallback: export DEVIN_COG_KEY=cog_...
   Optional — Windsurf service key (windsurf.com/team/settings; Analytics Read +
@@ -552,6 +555,21 @@ main() {
       source "${daemon_dir}/lib/dashboard.zsh"
       dag_dashboard "$@"
       exit $?
+      ;;
+    budgets)
+      (( $# == 0 )) || { print -ru2 -- 'dag budgets: takes no arguments'; exit 2; }
+      cmd='budget'
+      context_lines=('requested shell command: dag budgets' 'mode: read-only list; execute only step 1 of playbooks/budget.md; no API writes')
+      ;;
+    budget)
+      if (( $# != 3 )) || [[ -z "$1" || "$1" == -* || "$2" != (monthly|temporary) || ( "$3" != clear && "$3" != <-> ) || ${#3} -gt 9 ]]; then
+        print -ru2 -- 'usage: dag budget <budget_id|org_id|exact_name> <monthly|temporary> <nonnegative-acus|clear>'
+        exit 2
+      fi
+      local budget_field='cycle_acu_limit' budget_value="$3"
+      [[ "$2" == temporary ]] && budget_field='temporary_cycle_acu_limit'
+      [[ "$3" == clear ]] && budget_value='null'
+      context_lines=("requested shell command: dag budget $1 $2 $3" "budget selector: $1" "field: $budget_field" "JSON value: $budget_value" 'scope: one unified budget; no donor cuts or zero-sum requirement; display parent and root account budget allocation warning before CONFIRM DAG WRITE')
       ;;
     setup-extract)
       source "${daemon_dir}/lib/setup-extract.zsh"
@@ -1004,7 +1022,7 @@ main() {
     else
       print -ru2 -- "dag: no Devin API v3 service-user key (cog_...) found."
       print -ru2 -- "  Create one at app.devin.ai > Settings > Service users (enterprise-scoped),"
-      print -ru2 -- "  permissions: ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics."
+      print -ru2 -- "  permissions: legacy ViewAccountConsumption, ManageBilling, ViewOrgSessions, ViewAccountMetrics; unified beta budgets additionally require ManageAcuLimits."
       print -ru2 -- "  Keychain: security add-generic-password -s ${DAG_COG_KEYCHAIN_SERVICE:-devin-cog-key} -a \"\$USER\" -w 'cog_...'"
       print -ru2 -- "  Or: export DEVIN_COG_KEY=cog_..."
       exit 1

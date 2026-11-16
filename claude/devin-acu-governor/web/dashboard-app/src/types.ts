@@ -336,6 +336,26 @@ export interface RefreshInfo {
   interval_ms: number | null
 }
 
+export type BudgetStatus = 'active' | 'inactive' | string
+
+export interface Budget {
+  budget_id: string
+  name: string
+  parent_budget_id: string | null
+  org_ids: string[]
+  status: BudgetStatus
+  cycle_acu_limit: number | null
+  temporary_cycle_acu_limit: number | null
+}
+
+export interface BudgetDetail {
+  tiers: Array<Record<string, unknown>>
+  requests: Array<Record<string, unknown>>
+  availability: { tiers?: boolean; requests?: boolean }
+  tiers_error?: string
+  requests_error?: string
+}
+
 // status.json — the live refresh channel written by lib/dashboard.zsh next to
 // data.json. Polled ~1s by the app to drive the countdown + progress bar.
 export interface RefreshStatusFile {

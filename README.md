@@ -20,6 +20,8 @@ source /Users/amittiwari/Projects/Tools-Utilities/daemons/aliases.zsh
 
 That keeps global commands available while this repository remains the source of truth.
 
+The `claude/devin-acu-governor` dashboard serves the unified Devin beta budget tree locally. `dag budgets` is read-only; `dag budget ...` is an explicit, confirmation-gated budget action. Legacy Local Agent/Cloud gate commands remain available for deployments without beta budget support.
+
 ## Current daemons
 
 - [`codex/ai-cmux-orchestrator`](./codex/ai-cmux-orchestrator) — `aico`, a cMUX AI workspace orchestrator that opens a base Codex orchestrator with `cxscb` while suppressing Codex Apps/external MCP startup (parent agent selectable per launch with `--agent claude|codex|devin` or the `--claude`/`--codex`/`--devin` shorthands; kid panes unchanged), creates/reuses kid-named Claude and extra Codex side panels (`kid-claude`, `kid-codex`) by default, leaves `kid-devin` disabled unless `AICO_CREATE_DEVIN_PANEL=true`, lets Claude/Codex/Devin panels be independently disabled, makes ordinary non-trivial tasks default to kid-panel decomposition with goal-marking delegation prompts, names the workspace after the current project, runs a durable 60-second AICO poller with safe event-inbox notices plus Claude auto-resume, and supports an exact `Reset` command that refuses active enabled-agent work before closing enabled AICO-managed AI surfaces down to one basic terminal.

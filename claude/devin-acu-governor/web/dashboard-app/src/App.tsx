@@ -14,6 +14,8 @@ import { LastMonth } from './components/LastMonth'
 import { orgCapTotals } from './orgCapTotals'
 import { useRoute } from './routes'
 import type { OutputAnalyticsInfo, UserOutput } from './types'
+import { Budgets } from './components/Budgets'
+import type { Budget } from './types'
 
 const LEGACY_OUTPUT_ANALYTICS: OutputAnalyticsInfo = {
   available: false,
@@ -46,6 +48,7 @@ export default function App() {
   // Selection is by id, not row object, so a background refresh swaps in the
   // freshly fetched row while the drawer stays open.
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [budgets, setBudgets] = useState<Budget[]>([])
   const [outputPeriod, setOutputPeriod] = useState<'current' | 'previous'>('current')
   const route = useRoute()
 
@@ -179,6 +182,16 @@ export default function App() {
     </>
   )
 
+  const budgetsPage = (
+    <Budgets
+      budgets={budgets}
+      orgs={data.orgs}
+      selectedId={route.page === 'budget' ? route.budgetId : undefined}
+      onBudgets={setBudgets}
+      refreshNow={refreshNow}
+    />
+  )
+
   const body =
     route.page === 'org' ? (
       selectedOrg ? (
@@ -204,6 +217,8 @@ export default function App() {
           </p>
         </div>
       )
+    ) : route.page === 'budgets' || route.page === 'budget' ? (
+      budgetsPage
     ) : route.page === 'orgs' ? (
       orgsPage
     ) : route.page === 'users' ? (
@@ -270,7 +285,7 @@ export default function App() {
 
       <div className="layout">
         <aside className="layout-side">
-          <Sidebar route={route} orgCount={data.orgs.length} userCount={data.users.length} />
+          <Sidebar route={route} orgCount={data.orgs.length} userCount={data.users.length} budgetCount={budgets.length} />
         </aside>
         <main className="layout-main">{body}</main>
       </div>
@@ -293,7 +308,7 @@ export default function App() {
       )}
 
       <footer>
-        generated {data.generated_at} · local-only console · data via Devin v3 API (read-only) ·
+        generated {data.generated_at} · local-only console · data via Devin v3 API ·
         regenerate: <code>dag dashboard</code>
       </footer>
     </>

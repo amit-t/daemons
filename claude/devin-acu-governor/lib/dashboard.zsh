@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# dag dashboard — local, read-only ACU burn-rate + forecast dashboard.
+# dag dashboard — local ACU burn-rate + forecast dashboard with budget controls.
 # Fetches Devin v3 consumption (cycles, enterprise daily, orgs, per-org daily,
 # users, per-user daily, per-user Local Agent limits, Devin Cloud sessions,
 # cached previous-cycle usage for the Last Month page) and
@@ -11,8 +11,8 @@
 # server also accepts POST /__dag_refresh_now, writing a local signal file that
 # interrupts the countdown for an immediate backend refetch. Local-only: the
 # server binds 127.0.0.1 and nothing here is ever deployed.
-# Read-only: GET requests only, no API writes. The cog_ key travels only as a
-# curl Authorization header — never printed, logged, or written to a file.
+# Budget writes are narrowly gated by the local server; the cog_ key travels
+# only as an Authorization header — never printed, logged, or written to output.
 #
 # Requires: $daemon_dir set and lib/key-resolve.zsh sourced (bin/dag does both).
 # DAG_NOW_EPOCH overrides "now" for deterministic tests.
@@ -891,74 +891,27 @@ _dag_dash_wait_manual_refresh() {  # $1=request_file $2=watch_pid
 # /__dag_refresh_now writes a local signal file that the zsh loop consumes.
 # $1=out_dir $2=port $3=refresh-request-file.
 _dag_dash_serve_start() {
-  local out_dir=$1 port=$2 request_file=$3 py
+  local out_dir=$1 port=$2 request_file=$3 py key auth_dir header_file api_base
   py=$(_dag_dash_python)
   if ! (( $+commands[$py] )) && [[ ! -x "$py" ]]; then
     print -ru2 -- "dag dashboard: '${py}' not found — needed to serve the dashboard locally."
     return 1
   fi
-  "$py" -c '
-import http.server
-import os
-import pathlib
-import socketserver
-import sys
-import time
-import urllib.parse
-
-PORT = int(sys.argv[1])
-DIRECTORY = sys.argv[2]
-REQUEST_FILE = sys.argv[3]
-ENDPOINT = "/__dag_refresh_now"
-
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=DIRECTORY, **kwargs)
-
-    def log_message(self, format, *args):
-        return
-
-    def _send_json(self, code, body):
-        payload = (body + "\n").encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def do_POST(self):
-        path = urllib.parse.urlsplit(self.path).path
-        if path != ENDPOINT:
-            self.send_error(404)
-            return
-        if self.headers.get("X-DAG-Refresh") != "1":
-            self._send_json(403, "{\"ok\":false,\"error\":\"missing refresh header\"}")
-            return
-        try:
-            request_path = pathlib.Path(REQUEST_FILE)
-            request_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = request_path.with_name(f"{request_path.name}.tmp.{os.getpid()}")
-            tmp_path.write_text(f"{time.time_ns()}\n", encoding="utf-8")
-            os.replace(tmp_path, request_path)
-        except OSError:
-            self._send_json(500, "{\"ok\":false,\"error\":\"failed to queue refresh\"}")
-            return
-        self._send_json(202, "{\"ok\":true}")
-
-    def do_GET(self):
-        path = urllib.parse.urlsplit(self.path).path
-        if path == ENDPOINT:
-            self.send_error(405)
-            return
-        super().do_GET()
-
-class ReuseServer(socketserver.TCPServer):
-    allow_reuse_address = True
-
-with ReuseServer(("127.0.0.1", PORT), Handler) as httpd:
-    httpd.serve_forever()
-' "$port" "$out_dir" "$request_file" >/dev/null 2>&1 &
+  if ! key=$(dag_resolve_cog_key); then
+    print -ru2 -- "dag dashboard: no Devin API v3 service-user key available for the local budget server."
+    return 1
+  fi
+  auth_dir=$(mktemp -d "${TMPDIR:-/tmp}/dag-dashboard-auth.XXXXXX") || return 1
+  chmod 700 "$auth_dir"
+  header_file="${auth_dir}/authorization"
+  print -r -- "Authorization: Bearer ${key}" > "$header_file" || {
+    rm -rf "$auth_dir"
+    return 1
+  }
+  chmod 600 "$header_file"
+  _dag_dash_auth_dir="$auth_dir"
+  api_base="${DAG_API_BASE_V3:-https://api.devin.ai}"
+  "$py" "${daemon_dir}/lib/dashboard-server.py" "$port" "$out_dir" "$request_file" "$header_file" "$api_base" >/dev/null 2>&1 &
   _dag_dash_server_pid=$!
   sleep "${DAG_DASHBOARD_SERVE_GRACE:-0.3}"
   if ! kill -0 "$_dag_dash_server_pid" 2>/dev/null; then
@@ -973,6 +926,10 @@ _dag_dash_serve_stop() {
     kill "$_dag_dash_server_pid" 2>/dev/null
     wait "$_dag_dash_server_pid" 2>/dev/null
     _dag_dash_server_pid=""
+  fi
+  if [[ -n "${_dag_dash_auth_dir:-}" ]]; then
+    rm -rf "$_dag_dash_auth_dir"
+    _dag_dash_auth_dir=""
   fi
 }
 
@@ -1069,7 +1026,7 @@ dag_dashboard() {
     fi
   fi
 
-  local _dag_dash_server_pid=""
+  local _dag_dash_server_pid="" _dag_dash_auth_dir=""
   local _dag_dash_refresh_request_file="${out_dir}/.dag-refresh-request"
   rm -f "$_dag_dash_refresh_request_file"
   # `always` does not run when the shell dies on a signal — without these traps

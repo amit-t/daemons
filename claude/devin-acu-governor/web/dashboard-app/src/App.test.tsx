@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import App from './App'
 import type { DashboardData } from './types'
@@ -117,6 +117,19 @@ describe('left-side navigation', () => {
     expect(screen.getAllByRole('link', { name: /users/i })[0]).toHaveAttribute('href', '#/users')
     expect(screen.getByRole('link', { name: /agent output/i })).toHaveAttribute('href', '#/output')
     expect(screen.getByRole('link', { name: /last month/i })).toHaveAttribute('href', '#/last-month')
+  })
+
+  test('navigates to live Budgets route and marks sidebar selection', async () => {
+    mockHook()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ items: [{ budget_id: 'account', name: 'Account', parent_budget_id: null, org_ids: [], status: 'active', cycle_acu_limit: 100, temporary_cycle_acu_limit: null }] }),
+    })))
+    render(<App />)
+    fireEvent.click(screen.getByRole('link', { name: /budgets/i }))
+    await waitFor(() => expect(window.location.hash).toBe('#/budgets'))
+    expect(await screen.findByRole('heading', { name: 'Budgets' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /budgets/i })).toHaveAttribute('aria-current', 'page')
   })
 
   test('default route shows the overview KPI cards', () => {

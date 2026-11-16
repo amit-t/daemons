@@ -4,7 +4,17 @@ React (Vite + TypeScript + recharts) frontend for `dag dashboard`. Local-only: s
 
 ## How it runs
 
-`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist` next to the generated `data.json` in the output dir, and serves that dir through the localhost-only Python server embedded in `lib/dashboard.zsh`. The app fetches `./data.json` on load and polls `./status.json` — the lightweight live refresh channel the backend rewrites far more often than the heavy snapshot — every second with `cache: no-store`. `status.json` drives a `next refresh in 4m 32s` countdown (from `next_refresh_epoch`) and, while the backend loop is fetching, a `Refreshing N%` progress bar (with the current phase) that replaces the `Refresh now` button. Clicking `Refresh now` sends a same-origin, header-gated POST to `./__dag_refresh_now`; the server writes a local signal file, the zsh dashboard loop interrupts the countdown (or wakes static mode), and the app shows immediate `Refreshing…` feedback until `status.json` catches up. When `status.json` advertises a new `generated_at`, the app pulls the fresh `data.json` and updates in place — no page reload.
+`dag dashboard` builds this app once (`npm install && npm run build` → `dist/`, both gitignored), copies `dist` next to the generated `data.json` in the output dir, and serves that dir through `lib/dashboard-server.py`, launched by `lib/dashboard.zsh` on localhost only. Consumption data remains snapshot/read-only; explicitly confirmed unified budget writes use protected local proxy routes with live preflight and verification. The app fetches `./data.json` on load and polls `./status.json` — the lightweight live refresh channel the backend rewrites far more often than the heavy snapshot — every second with `cache: no-store`. `status.json` drives a `next refresh in 4m 32s` countdown (from `next_refresh_epoch`) and, while the backend loop is fetching, a `Refreshing N%` progress bar (with the current phase) that replaces the `Refresh now` button. Clicking `Refresh now` sends a same-origin, header-gated POST to `./__dag_refresh_now`; the server writes a local signal file, the zsh dashboard loop interrupts the countdown (or wakes static mode), and the app shows immediate `Refreshing…` feedback until `status.json` catches up. When `status.json` advertises a new `generated_at`, the app pulls the fresh `data.json` and updates in place — no page reload.
+
+## Unified budget UX
+
+`#/budgets` fetches `GET /__dag_budgets`, which reads every live Devin budget page using `first=200` and `after`. The account tree and searchable table distinguish allocations from snapshot-derived consumed/projected organization usage. `#/budget/<id>` fetches tiers and pending requests through `GET /__dag_budget_detail?budget_id=<id>`, renders supported fields in read-only tables, and links organizations to `#/org/<id>`.
+
+The editor submits only after explicit Save, validates monthly/temporary values as empty or nonnegative integer text, compares expected live values, and requires acknowledgement when direct child allocation exceeds a finite parent or contains an unbounded child. A stale `409` closes the editor and forces a live refetch before reopening. A partial-success verification result is marked ambiguous and forces review before retrying. The local server requires same-origin plus `X-DAG-Write: 1`; its authorization header is held in a private temporary file outside the served directory.
+
+Budget updates also carry expected parent-effective, direct-child-allocation, and account-root-effective values captured before editing; the server compares all three against the live budget list before PATCH.
+
+When the documented detail endpoints are available, active budgets expose Manage tiers and Manage requests controls. Tier creation uses fixed `policy: manual`; tier updates send changed name/limit fields only after live expected-value checks. Pending request approval defaults to its live requested limit and remains editable; denial requires an explicit irreversible-action confirmation. Every action reloads live detail and does not add a fake New budget control.
 
 Force a rebuild after changing app source: `dag dashboard --rebuild`.
 
@@ -23,8 +33,8 @@ npm test -- --run  # Vitest + React Testing Library interaction tests
 |---|---|
 | `src/types.ts` | Shape of `data.json` + `status.json` (mirror `lib/dashboard.jq` / `lib/dashboard.zsh` output) |
 | `src/useDashboardData.ts` | Polls `status.json` (1 s) for refresh state, pulls `data.json` on a new `generated_at`, POSTs manual refresh requests, exposes in-flight feedback, keeps last good snapshot on fetch failure |
-| `src/routes.ts` | Hash router: `#/` overview, `#/orgs`, `#/users`, `#/output[/<tab>]`, `#/last-month`, `#/org/<org_id>`; legacy `#agent-output` folds into `#/output` |
-| `src/components/Sidebar.tsx` | Left-side navigation (Overview, Organizations, Users, Agent output, Last month) with org/user counts; the per-org page highlights Organizations; collapses to a horizontal strip under 900px |
+| `src/routes.ts` | Hash router: `#/` overview, `#/budgets`, `#/budget/<id>`, `#/orgs`, `#/users`, `#/output[/<tab>]`, `#/last-month`, `#/org/<org_id>`; legacy `#agent-output` folds into `#/output` |
+| `src/components/Sidebar.tsx` | Left-side navigation (Overview, Budgets, Organizations, Users, Agent output, Last month) with budget/org/user counts; the per-org page highlights Organizations; collapses to a horizontal strip under 900px |
 | `src/components/RefreshControls.tsx` | Console-meta row: live countdown, immediate manual `Refreshing…` state, `Refreshing N%` progress bar, `Refresh now` button; isolates the per-second tick from the charts |
 | `src/App.tsx` | Layout: header with `RefreshControls`, cycle progress, left sidebar + routed page body; Overview keeps the KPI cards (single fixed row of 7 incl. capped user total and capped org total), burn/user-split panels, warnings; Organizations and Users pages carry the tables |
 | `src/orgCapTotals.ts` | Capped-org-total KPI: Σ of each org's local + cloud gate limits plus capped/uncapped org counts, computed client-side from `data.orgs` so pre-existing `data.json` snapshots render it without regeneration. Every org counts, Vontier included (each ACU bills to exactly one org, so Σ of all org caps is the enterprise ceiling); the card turns red when Σ exceeds `data.pool` (the 24,000 ACU ceiling) or any org is uncapped |
@@ -37,12 +47,17 @@ npm test -- --run  # Vitest + React Testing Library interaction tests
 | `src/components/OutputAnalytics.tsx` | Agent output page (`#/output/<tab>`), broken into addressable tab pages: Overview (accepted inserted/deleted/net LoC cards, source split, attribution disclosure), Daily, Splits (source/model/IDE/OS), Members (sortable member-attributed estimates); freshness/unavailable/stale states shown on every tab |
 | `src/lastMonth.ts` | Pure join: previous-cycle per-user usage keyed by `user_id` against the current roster, with Δ (run-rate projection vs the finished previous cycle) and % change; null-safe for roster users the cache has never seen |
 | `src/components/LastMonth.tsx` | Last Month page (`#/last-month`): previous-cycle window header, enterprise last-month/this-cycle/Δ cards, searchable sortable comparison table (last month total + Devin Cloud + Local Agent, this cycle, projected, Δ), Details into the user drawer; explicit old-snapshot / first-cycle / fetch-failed states |
+| `src/components/Budgets.tsx` | Live unified budget account tree, organization tab, searchable table, detail view, snapshot usage meters, tiers/requests read-only tables, and Save-only limit editor |
+| `src/budgetMath.ts` | Effective-limit, direct-child allocation, root/parent warning, cycle-safe descendant organization, and strict input parsing helpers |
+| `lib/dashboard-server.py` | Local static server, refresh signal, live budget proxy, origin/write gate, pagination, verification, and static path hardening |
 | `src/components/CopyEmail.tsx` | Click-to-copy email token with a transient `copied` / `copy failed` tag (used in the detail drawer; the table has its own compact Copy action) |
 | `src/components/SortableTable.tsx` | Generic sortable table (nulls always sink to bottom; optional `onRowClick`) |
 | `src/clipboard.ts` | `copyToClipboard(text)` — async Clipboard API with a hidden-textarea `execCommand` fallback |
 | `src/app.css` | Phosphor ops theme (dark graphite, amber accent, IBM Plex Mono / Chakra Petch) |
 
 Fonts are bundled via `@fontsource` so the app works fully offline.
+
+Verification: `pnpm exec vitest run src/components/Budgets.test.tsx src/budgetMath.test.ts src/App.test.tsx src/routes.test.ts`; `pnpm run build`.
 
 ## Agent output analytics
 

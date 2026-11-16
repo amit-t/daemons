@@ -18,10 +18,15 @@ export type Route =
   | { page: 'output'; tab: OutputTab }
   | { page: 'last-month' }
   | { page: 'org'; orgId: string }
+  | { page: 'budgets' }
+  | { page: 'budget'; budgetId: string }
 
 const OUTPUT_TABS: OutputTab[] = ['overview', 'daily', 'splits', 'members']
 
 export function parseRoute(hash: string): Route {
+  const budget = hash.match(/^#\/budget\/(.+)$/)
+  if (budget) return { page: 'budget', budgetId: decodeURIComponent(budget[1]) }
+  if (hash === '#/budgets') return { page: 'budgets' }
   const org = hash.match(/^#\/org\/(.+)$/)
   if (org) return { page: 'org', orgId: decodeURIComponent(org[1]) }
   if (hash === '#/orgs') return { page: 'orgs' }

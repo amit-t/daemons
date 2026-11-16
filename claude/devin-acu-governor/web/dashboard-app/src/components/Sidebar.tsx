@@ -9,9 +9,10 @@ interface NavItem {
 
 // Left-side navigation. The per-org detail page highlights Organizations;
 // collapses to a horizontal strip on narrow screens (see .layout-side CSS).
-export function Sidebar({ route, orgCount, userCount }: { route: Route; orgCount: number; userCount: number }) {
+export function Sidebar({ route, orgCount, userCount, budgetCount }: { route: Route; orgCount: number; userCount: number; budgetCount: number }) {
   const items: NavItem[] = [
     { hash: '#/', label: 'Overview', page: 'overview' },
+    { hash: '#/budgets', label: 'Budgets', page: 'budgets', count: budgetCount },
     { hash: '#/orgs', label: 'Organizations', page: 'orgs', count: orgCount },
     { hash: '#/users', label: 'Users', page: 'users', count: userCount },
     { hash: '#/output', label: 'Agent output', page: 'output' },
